@@ -1,0 +1,19 @@
+[
+    {
+        "id": "FR-02d1a608ae",
+        "date": "2026-01-18",
+        "station_id": null,
+        "fuel_type": "Diesel Max",
+        "previous": 1.41,
+        "present": 0.3,
+        "calibration": 0.06,
+        "price_per_l": 150,
+        "computed_liters": 0,
+        "amount": 0,
+        "variance": false,
+        "variance_reason": "",
+        "status": "pending",
+        "created_at": "2026-01-18T10:23:13+01:00",
+        "by": "admin"
+    }
+]

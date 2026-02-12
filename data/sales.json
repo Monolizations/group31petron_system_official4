@@ -1,0 +1,112 @@
+[
+    {
+        "id": "S260107-d67a95839d",
+        "date": "2026-01-07",
+        "time": "09:23:22",
+        "customer": "Walk-in Customer",
+        "payment_method": "GCash",
+        "total": 58.5,
+        "amount_received": 0,
+        "change": 0,
+        "items": [
+            {
+                "id": "DSL-MAX",
+                "name": "Diesel Max",
+                "qty": 1,
+                "price": 58.5,
+                "amount": 58.5,
+                "type": "fuel"
+            }
+        ],
+        "cashier": "staff",
+        "station_id": null
+    },
+    {
+        "id": "S260115-4a7b568d85",
+        "date": "2026-01-15",
+        "time": "09:41:56",
+        "customer": "Walk-in Customer",
+        "payment_method": "Credit",
+        "total": 234,
+        "amount_received": 0,
+        "change": 0,
+        "items": [
+            {
+                "id": "DSL-MAX",
+                "name": "Diesel Max",
+                "qty": 4,
+                "price": 58.5,
+                "amount": 234,
+                "type": "fuel"
+            }
+        ],
+        "cashier": "Admin",
+        "station_id": null
+    },
+    {
+        "id": "S260118-8812948749",
+        "date": "2026-01-18",
+        "time": "12:27:27",
+        "customer": "Walk-in Customer",
+        "payment_method": "Cash",
+        "total": 550,
+        "amount_received": 0,
+        "change": 0,
+        "items": [
+            {
+                "id": "SRV-OIL",
+                "name": "Change Oil",
+                "qty": 1,
+                "price": 400,
+                "amount": 400,
+                "type": "services"
+            },
+            {
+                "id": "SRV-FILTER",
+                "name": "Oil Filter Change",
+                "qty": 1,
+                "price": 150,
+                "amount": 150,
+                "type": "services"
+            }
+        ],
+        "status": "Pending (Staff)",
+        "cashier": "Staff",
+        "approved_by": null,
+        "station_id": null,
+        "updated_at": "2026-01-18 12:27:27"
+    },
+    {
+        "id": "S260118-dd07f65790",
+        "date": "2026-01-18",
+        "time": "16:31:10",
+        "customer": "Walk-in",
+        "payment_method": "Cash",
+        "total": 600,
+        "amount_received": 0,
+        "change": 0,
+        "items": [
+            {
+                "id": "SRV-BRAKE",
+                "name": "Brakes Service",
+                "qty": 1,
+                "price": 500,
+                "amount": 500,
+                "type": "services"
+            },
+            {
+                "id": "SRV-VULC",
+                "name": "Vulcanizing",
+                "qty": 1,
+                "price": 100,
+                "amount": 100,
+                "type": "services"
+            }
+        ],
+        "status": "Pending (Staff)",
+        "cashier": "april pagaling",
+        "approved_by": null,
+        "station_id": 1,
+        "updated_at": "2026-01-18 16:31:10"
+    }
+]

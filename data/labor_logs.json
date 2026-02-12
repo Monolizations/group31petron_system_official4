@@ -1,0 +1,68 @@
+[
+  {
+    "id": "L_1",
+    "staff_id": "EMP_1",
+    "staff_name": "Juan Dela Cruz",
+    "date": "2025-12-16",
+    "time_in": "14:56",
+    "time_out": "14:56",
+    "hours": 0.0,
+    "charge": 1.0,
+    "status": "completed"
+  },
+  {
+    "id": "L_2",
+    "staff_id": "EMP_4",
+    "staff_name": "Ana Garcia",
+    "date": "2025-12-16",
+    "time_in": "14:55",
+    "time_out": "14:56",
+    "hours": 0.0,
+    "charge": 5.0,
+    "status": "completed"
+  },
+  {
+    "id": "L_3",
+    "staff_id": "EMP_2",
+    "staff_name": "Maria Santos",
+    "date": "2025-12-16",
+    "time_in": "14:47",
+    "time_out": "14:55",
+    "hours": 0.1,
+    "charge": 14.0,
+    "status": "completed"
+  },
+  {
+    "id": "L_4",
+    "staff_id": "EMP_2",
+    "staff_name": "Maria Santos",
+    "date": "2025-12-02",
+    "time_in": "22:32",
+    "time_out": "22:32",
+    "hours": 0.0,
+    "charge": 1.0,
+    "status": "completed"
+  },
+  {
+    "id": "L_5",
+    "staff_id": "EMP_1",
+    "staff_name": "Juan Dela Cruz",
+    "date": "2025-12-02",
+    "time_in": "22:32",
+    "time_out": "22:32",
+    "hours": 0.0,
+    "charge": 1.0,
+    "status": "completed"
+  },
+  {
+    "id": "L_6",
+    "staff_id": "EMP_4",
+    "staff_name": "Ana Garcia",
+    "date": "2025-12-01",
+    "time_in": "10:05",
+    "time_out": "22:11",
+    "hours": 36.1,
+    "charge": 7220.0,
+    "status": "completed"
+  }
+]

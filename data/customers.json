@@ -1,0 +1,38 @@
+[
+  {
+    "id": "CUST_ABC",
+    "company": "ABC Transport Corp",
+    "contact": "John Smith",
+    "phone": "028881234",
+    "email": "john@abctransport.com",
+    "address": "",
+    "type": "credit",
+    "credit_limit": 50000,
+    "balance": 0,
+    "status": "active"
+  },
+  {
+    "id": "CUST_XYZ",
+    "company": "XYZ Logistics",
+    "contact": "Jane Doe",
+    "phone": "028885678",
+    "email": "jane@xyzlogistics.com",
+    "address": "",
+    "type": "credit",
+    "credit_limit": 100000,
+    "balance": 0,
+    "status": "active"
+  },
+  {
+    "id": "CUST_QDS",
+    "company": "Quick Delivery Services",
+    "contact": "Mike Wilson",
+    "phone": "028889012",
+    "email": "",
+    "address": "",
+    "type": "cash",
+    "credit_limit": 0,
+    "balance": 0,
+    "status": "active"
+  }
+]

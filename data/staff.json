@@ -1,0 +1,44 @@
+{
+  "staff": [
+    {
+      "id": "EMP_1",
+      "emp_id": "EMP-001",
+      "name": "Juan Dela Cruz",
+      "role": "mechanic",
+      "rate": 150,
+      "phone": "09171234567",
+      "email": "",
+      "status": "active"
+    },
+    {
+      "id": "EMP_2",
+      "emp_id": "EMP-002",
+      "name": "Maria Santos",
+      "role": "cashier",
+      "rate": 100,
+      "phone": "09181234567",
+      "email": "",
+      "status": "active"
+    },
+    {
+      "id": "EMP_3",
+      "emp_id": "EMP-003",
+      "name": "Pedro Reyes",
+      "role": "attendant",
+      "rate": 90,
+      "phone": "09191234567",
+      "email": "",
+      "status": "active"
+    },
+    {
+      "id": "EMP_4",
+      "emp_id": "EMP-004",
+      "name": "Ana Garcia",
+      "role": "manager",
+      "rate": 200,
+      "phone": "09201234567",
+      "email": "",
+      "status": "active"
+    }
+  ]
+}
