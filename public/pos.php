@@ -6,51 +6,166 @@ require_login();
 
 $me = current_user();
 $station_id = user_station_id();
-$isAdmin = in_array($me['role'] ?? '', ['admin', 'superadmin', 'manager']);
+$role = role_key($me['role'] ?? '');
+$isAdmin = in_array($role, ['admin', 'superadmin']);
 $msg = '';
 $last_sale_id = '';
+$error = '';
+
+// Handle password verification
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['verify'])) {
+    if ($role === 'admin') {
+        $stmt = $pdo->prepare("SELECT password FROM users WHERE station_id = ? AND status = 'active' AND role IN ('manager','Manager')");
+        $stmt->execute([$station_id]);
+        $hashes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $ok = false;
+        foreach ($hashes as $hash) {
+            if (password_verify($_POST['verify_password'] ?? '', $hash)) { $ok = true; break; }
+        }
+
+        if ($ok) {
+            $_SESSION['pos_verified'] = true;
+            $_SESSION['pos_verified_time'] = time();
+        } else {
+            $error = 'Incorrect password.';
+        }
+    } elseif ($role === 'superadmin') {
+        $_SESSION['pos_verified'] = true;
+        $_SESSION['pos_verified_time'] = time();
+    }
+}
+
+// Check session verification (valid for 10 mins)
+if (isset($_SESSION['pos_verified']) && $_SESSION['pos_verified'] && (time() - $_SESSION['pos_verified_time'] < 600)) {
+    $_SESSION['pos_verified_time'] = time(); // extend
+}
 
 // Ensure tables exist (Auto-fix for missing tables)
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS sales (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id VARCHAR(64) NOT NULL PRIMARY KEY,
         station_id INT,
         user_id INT,
         customer VARCHAR(255),
-        payment_method VARCHAR(50),
-        total DECIMAL(10,2),
-        sale_date DATE,
+        payment_method VARCHAR(32) NOT NULL,
+        total DECIMAL(12,2) NOT NULL,
+        sale_date DATE NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         due_date DATE NULL,
-        status VARCHAR(50) DEFAULT 'Completed'
+        status VARCHAR(50) DEFAULT 'Completed',
+        is_locked TINYINT(1) DEFAULT 0,
+        gcash_ref_number VARCHAR(50) NULL
     )");
     $pdo->exec("CREATE TABLE IF NOT EXISTS sale_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        sale_id INT,
+        sale_id VARCHAR(64),
         name VARCHAR(255),
         qty INT,
-        price DECIMAL(10,2),
-        amount DECIMAL(10,2)
+        price DECIMAL(12,2),
+        amount DECIMAL(12,2),
+        FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
     )");
+    
+    // Add gcash_ref_number column if it doesn't exist
+    try {
+        $pdo->exec("ALTER TABLE sales ADD COLUMN gcash_ref_number VARCHAR(50) NULL");
+    } catch (PDOException $e) {
+        // Column already exists, ignore error
+    }
 } catch (PDOException $e) {}
 
 // Handle New Transaction
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // ADMIN ACTIONS: Approve / Reject
+    // ADMIN ACTIONS: Approve / Reject / Unlock
     if (isset($_POST['action']) && $isAdmin) {
         $sale_id = $_POST['sale_id'] ?? '';
         $action = $_POST['action'];
-        
-        if ($sale_id && in_array($action, ['approve', 'reject'])) {
+
+        // Unlock Transaction
+        if ($action === 'unlock' && isset($_POST['unlock_reason']) && !empty($_POST['unlock_reason'])) {
             try {
-                $new_status = ($action === 'approve') ? 'Completed' : 'Rejected';
-                $stmt = $pdo->prepare("UPDATE sales SET status = ? WHERE id = ?");
-                $stmt->execute([$new_status, $sale_id]);
-                
-                $action_verb = ($action === 'approve') ? 'Approved' : 'Rejected';
-                log_activity($pdo, $me['id'], "Transaction $action_verb", "$action_verb transaction #$sale_id");
-                
-                $msg = "✅ Transaction #$sale_id has been " . strtolower($action_verb) . ".";
+                // Password verification required
+                if (!isset($_SESSION['pos_verified'])) {
+                    $error = 'Password verification required to unlock transactions.';
+                } else {
+                    $role = role_key($me['role'] ?? '');
+                    if ($role === 'admin') {
+                        $stmt = $pdo->prepare("SELECT password FROM users WHERE station_id = ? AND status = 'active' AND role IN ('manager','Manager')");
+                        $stmt->execute([$station_id]);
+                        $hashes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+                        $ok = false;
+                        foreach ($hashes as $hash) {
+                            if (password_verify($_POST['unlock_password'] ?? '', $hash)) { $ok = true; break; }
+                        }
+
+                        if (!$ok) {
+                            $error = 'Incorrect password.';
+                        }
+                    } elseif ($role === 'superadmin') {
+                        $ok = true;
+                    } else {
+                        $error = 'Only Admin can unlock transactions.';
+                    }
+                }
+
+                if (!isset($error) && $ok) {
+                    $unlock_reason = $_POST['unlock_reason'] ?? '';
+
+                    // Unlock the transaction
+                    $stmt = $pdo->prepare("UPDATE sales SET is_locked = 0, override_reason = ?, override_by = ?, override_at = NOW() WHERE id = ?");
+                    $stmt->execute([$unlock_reason, $me['id'], $sale_id]);
+
+                    log_activity($pdo, $me['id'], 'Admin Unlock Transaction', 'UNLOCKED Transaction #' . $sale_id . ' - Reason: ' . substr($unlock_reason, 0, 100));
+
+                    $msg = "✅ Transaction #" . $sale_id . " unlocked successfully.";
+                    $completed_transactions = []; // Refresh list
+                }
+            } catch (Exception $e) {
+                $msg = "❌ Error: " . $e->getMessage();
+            }
+        }
+
+        // Approve / Reject
+        if ($action && in_array($action, ['approve', 'reject'])) {
+            try {
+                // Password verification required
+                if (!isset($_SESSION['pos_verified'])) {
+                    $error = 'Password verification required to approve/reject transactions.';
+                } else {
+                    $role = role_key($me['role'] ?? '');
+                    if ($role === 'admin') {
+                        // Admin must verify using manager password
+                        $stmt = $pdo->prepare("SELECT password FROM users WHERE station_id = ? AND status = 'active' AND role IN ('manager','Manager')");
+                        $stmt->execute([$station_id]);
+                        $hashes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+                        $ok = false;
+                        foreach ($hashes as $hash) {
+                            if (password_verify($_POST['verify_password'] ?? '', $hash)) { $ok = true; break; }
+                        }
+
+                        if (!$ok) {
+                            $error = 'Incorrect password.';
+                        }
+                    } elseif ($role === 'superadmin') {
+                        $ok = true;
+                    } else {
+                        $error = 'Only Admin can approve/reject transactions.';
+                    }
+                }
+
+                if (!isset($error) && $ok) {
+                    $new_status = ($action === 'approve') ? 'Completed' : 'Rejected';
+                    $stmt = $pdo->prepare("UPDATE sales SET status = ?, is_locked = ? WHERE id = ?");
+                    $stmt->execute([$new_status, 1, $sale_id]);
+
+                    $action_verb = ($action === 'approve') ? 'Approved' : 'Rejected';
+                    log_activity($pdo, $me['id'], "Transaction $action_verb", "$action_verb transaction #$sale_id");
+
+                    $msg = "✅ Transaction #$sale_id has been " . strtolower($action_verb) . ".";
+                }
             } catch (Exception $e) {
                 $msg = "❌ Error: " . $e->getMessage();
             }
@@ -63,29 +178,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $quantity = (int)($_POST['quantity'] ?? 1);
     $price = (float)($_POST['price'] ?? 0);
     $payment_type = $_POST['payment_type'] ?? 'Cash';
+    $gcash_ref_number = trim($_POST['gcash_ref_number'] ?? '');
     $discount = (float)($_POST['discount'] ?? 0);
     
     $subtotal = $quantity * $price;
     $total = $subtotal - $discount;
-    
-    if ($item_name && $quantity > 0 && $price >= 0) {
+
+    // Validation: GCash requires reference number
+    if ($payment_type === 'GCash' && empty($gcash_ref_number)) {
+        $msg = "❌ Error: GCash reference number is required for GCash payments.";
+    } elseif ($item_name && $quantity > 0 && $price >= 0) {
         try {
             $pdo->beginTransaction();
-            
+
             // Insert Sale - Status is 'Pending' for Staff, 'Completed' for Admin (if they encode directly)
             // Per requirement: Admin validates staff entries. Staff entries are Pending.
             $initial_status = $isAdmin ? 'Completed' : 'Pending';
-            
-            $stmt = $pdo->prepare("INSERT INTO sales (station_id, user_id, customer, payment_method, total, sale_date, created_at, status) VALUES (?, ?, ?, ?, ?, CURDATE(), NOW(), ?)");
-            $stmt->execute([$station_id, $me['id'], $customer_name, $payment_type, $total, $initial_status]);
-            $sale_id = $pdo->lastInsertId();
+            $sale_id = uniqid('SALE-');
+            $is_locked = $isAdmin ? 1 : 0;
+
+            $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, customer, payment_method, total, sale_date, created_at, status, is_locked, gcash_ref_number) VALUES (?, ?, ?, ?, ?, ?, CURDATE(), NOW(), ?, ?, ?)");
+            $stmt->execute([$sale_id, $station_id, $me['id'], $customer_name, $payment_type, $total, $initial_status, $is_locked, ($payment_type === 'GCash' ? $gcash_ref_number : null)]);
             $last_sale_id = $sale_id;
-            
-            // Insert Item (Assuming sale_items table exists or creating it on the fly if needed in logic, but here we assume standard schema)
-            // If sale_items table doesn't exist, this might fail, but based on context it seems to exist.
+
+            // Insert Item
             $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, name, qty, price, amount) VALUES (?, ?, ?, ?, ?)");
             $stmtItem->execute([$sale_id, $item_name, $quantity, $price, $subtotal]);
-            
+
             $pdo->commit();
             $msg = $isAdmin ? "✅ Transaction completed successfully." : "✅ Transaction submitted for approval.";
         } catch (Exception $e) {
@@ -114,11 +233,29 @@ if ($isAdmin) {
                 (SELECT SUM(qty) FROM sale_items WHERE sale_id = s.id) as total_qty
                 FROM sales s
                 LEFT JOIN users u ON s.user_id = u.id
-                WHERE s.status = 'Pending' AND s.station_id = ?
+                WHERE s.status = 'Pending' AND s.station_id = ? AND s.is_locked = 0
                 ORDER BY s.created_at DESC";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$station_id]);
         $pending_transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {}
+}
+
+// Fetch Completed Transactions for Admin Unlock
+$completed_transactions = [];
+if ($isAdmin) {
+    try {
+        // Get completed sales with staff name and item summary
+        $sql = "SELECT s.*, u.name as staff_name,
+                (SELECT GROUP_CONCAT(CONCAT(name, ' (', qty, ')') SEPARATOR ', ') FROM sale_items WHERE sale_id = s.id) as items_summary,
+                (SELECT SUM(qty) FROM sale_items WHERE sale_id = s.id) as total_qty
+                FROM sales s
+                LEFT JOIN users u ON s.user_id = u.id
+                WHERE s.status = 'Completed' AND s.is_locked = 1 AND s.station_id = ?
+                ORDER BY s.finalized_at DESC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$station_id]);
+        $completed_transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Exception $e) {}
 }
 
@@ -139,9 +276,34 @@ include __DIR__ . '/../partials/header.php';
 <script>setTimeout(() => document.getElementById('toast').remove(), 3000);</script>
 <?php endif; ?>
 
+<?php if ($isAdmin && !isset($_SESSION['pos_verified'])): ?>
+<div class="card" style="max-width: 400px; margin: 40px auto; padding: 30px;">
+    <h3 class="h3" style="text-align: center; margin-bottom: 20px;"><i class="fas fa-lock"></i> Security Check</h3>
+    <p style="text-align: center; color: #666; margin-bottom: 20px;">
+        Admin privileges required. Please enter your password to approve/reject transactions.
+    </p>
+
+    <?php if (isset($error)): ?>
+        <div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 4px; margin-bottom: 15px; text-align: center;">
+            <?php echo htmlspecialchars($error); ?>
+        </div>
+    <?php endif; ?>
+
+    <form method="post">
+        <div style="margin-bottom: 20px;">
+            <input type="password" name="verify_password" class="inp" style="width: 100%; padding: 12px;" placeholder="Enter Password" required autofocus>
+        </div>
+        <button type="submit" name="verify" class="btn primary" style="width: 100%;">Verify & Continue</button>
+    </form>
+</div>
+<?php endif; ?>
+
 <?php if ($isAdmin): ?>
 <!-- ADMIN VIEW: Pending Transactions Table -->
 <div class="card" style="padding: 0;">
+    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb;">
+        <h3 style="margin: 0; color: #003d7a;">Pending Transactions</h3>
+    </div>
     <div class="table-wrap">
         <table class="table">
             <thead>
@@ -163,7 +325,7 @@ include __DIR__ . '/../partials/header.php';
                 <?php else: ?>
                     <?php foreach($pending_transactions as $t): ?>
                     <tr>
-                        <td>#<?php echo $t['id']; ?></td>
+                        <td>#<?php echo htmlspecialchars($t['id']); ?></td>
                         <td><b><?php echo htmlspecialchars($t['customer']); ?></b></td>
                         <td><?php echo htmlspecialchars(mb_strimwidth($t['items_summary'], 0, 40, "...")); ?></td>
                         <td><?php echo number_format($t['total_qty'], 2); ?></td>
@@ -193,6 +355,49 @@ include __DIR__ . '/../partials/header.php';
         </table>
     </div>
 </div>
+
+<!-- ADMIN VIEW: Completed Transactions for Unlock -->
+<?php if (!empty($completed_transactions)): ?>
+<div class="card" style="padding: 0; margin-top: 30px;">
+    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb;">
+        <h3 style="margin: 0; color: #003d7a;">Completed Transactions (Locked)</h3>
+    </div>
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Transaction ID</th>
+                    <th>Customer</th>
+                    <th>Product Summary</th>
+                    <th>Total Amount</th>
+                    <th>Payment</th>
+                    <th>Staff Encoder</th>
+                    <th>Finalized</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach($completed_transactions as $t): ?>
+                <tr>
+                    <td>#<?php echo htmlspecialchars($t['id']); ?></td>
+                    <td><b><?php echo htmlspecialchars($t['customer']); ?></b></td>
+                    <td><?php echo htmlspecialchars(mb_strimwidth($t['items_summary'], 0, 40, "...")); ?></td>
+                    <td style="font-weight:bold; color:var(--petron-blue);">₱<?php echo number_format($t['total'], 2); ?></td>
+                    <td><span class="badge"><?php echo htmlspecialchars($t['payment_method']); ?></span></td>
+                    <td><?php echo htmlspecialchars($t['staff_name']); ?></td>
+                    <td><?php echo date('M d, H:i', strtotime($t['finalized_at'] ?? $t['created_at'])); ?></td>
+                    <td>
+                        <button type="button" class="btn small primary" onclick="openUnlockModal('<?php echo htmlspecialchars($t['id']); ?>', '<?php echo htmlspecialchars($t['customer']); ?>')">
+                            <i class="fas fa-unlock"></i> Unlock
+                        </button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- Modal (View Transaction) -->
 <div class="modal" id="viewTransModal">
@@ -280,6 +485,36 @@ function closeModal(id) {
 }
 </script>
 
+
+<script>
+function toggleGcashRef() {
+    const paymentType = document.getElementById('payment_method_pos').value;
+    const gcashRefField = document.getElementById('gcash_ref_field');
+    const gcashRefInput = document.getElementById('gcash_ref_number');
+    
+    if (paymentType === 'GCash') {
+        gcashRefField.style.display = 'block';
+        gcashRefInput.required = true;
+    } else {
+        gcashRefField.style.display = 'none';
+        gcashRefInput.required = false;
+        gcashRefInput.value = '';
+    }
+}
+
+function validatePayment() {
+    const paymentType = document.getElementById('payment_method_pos').value;
+    const gcashRefInput = document.getElementById('gcash_ref_number');
+    
+    if (paymentType === 'GCash' && !gcashRefInput.value.trim()) {
+        alert('GCash reference number is required for GCash payments.');
+        return false;
+    }
+    
+    return true;
+}
+</script>
+
 <?php else: ?>
 <!-- STAFF VIEW: Encoding Form -->
 <div class="card" style="padding: 20px; max-width: 900px; margin: 0 auto;">
@@ -317,11 +552,18 @@ function closeModal(id) {
                 
                 <div class="form-group mb-3">
                     <label class="lbl">Payment Type</label>
-                    <select name="payment_type" class="inp full">
+                    <select name="payment_type" id="payment_method_pos" class="inp full" onchange="toggleGcashRef()">
+                        <option value="">Select payment type</option>
                         <option value="Cash">Cash</option>
-                        <option value="Card">Card</option>
                         <option value="GCash">GCash</option>
                     </select>
+                </div>
+                
+                <!-- GCash Reference Number Field -->
+                <div class="form-group mb-3" id="gcash_ref_field" style="display: none;">
+                    <label class="lbl">GCash Reference Number</label>
+                    <input type="text" name="gcash_ref_number" id="gcash_ref_number" class="inp full" placeholder="e.g., 1234567890">
+                    <small class="muted">Required for GCash payments</small>
                 </div>
                 
                 <div class="form-group mb-3">
@@ -338,7 +580,7 @@ function closeModal(id) {
         
         <div class="actions" style="margin-top: 30px; display: flex; gap: 10px; justify-content: flex-end;">
             <button type="button" class="btn ghost" onclick="window.location.reload()">Cancel</button>
-            <button type="submit" class="btn primary">Save Transaction</button>
+            <button type="submit" class="btn primary" onclick="return validatePayment();">Save Transaction</button>
         </div>
     </form>
 </div>
@@ -371,6 +613,27 @@ function calcTotal() {
     const discount = parseFloat(document.querySelector('[name=discount]').value) || 0;
     const total = (qty * price) - discount;
     document.getElementById('displayTotal').innerText = '₱' + total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function openUnlockModal(saleId, customerName) {
+    const reason = prompt('Reason for unlocking transaction #' + saleId + ' (' + customerName + '):\n\nRequired for audit trail (minimum 10 characters)');
+    if (reason && reason.length >= 10) {
+        const password = prompt('Enter your password to confirm unlock:');
+        if (password) {
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.innerHTML = `
+                <input type="hidden" name="action" value="unlock">
+                <input type="hidden" name="sale_id" value="${saleId}">
+                <input type="hidden" name="unlock_reason" value="${reason}">
+                <input type="hidden" name="unlock_password" value="${password}">
+            `;
+            document.body.appendChild(form);
+            form.submit();
+        }
+    } else if (reason && reason.length > 0) {
+        alert('Reason must be at least 10 characters for audit trail compliance.');
+    }
 }
 </script>
 
