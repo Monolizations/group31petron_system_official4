@@ -112,10 +112,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
     
-    // ADMIN: Verify Pump Reading
+    // MANAGER: Verify Pump Reading
     } elseif ($action === 'verify_reading') {
-        if (!in_array($me['role'], ['admin', 'superadmin'])) {
-            $msg = "❌ Error: Only admins can verify readings.";
+        if (!in_array($me['role'], ['manager', 'admin', 'superadmin'])) {
+            $msg = "❌ Error: Only managers can verify readings.";
         } else {
             $id = $_POST['id'];
             $status = $_POST['status'];
@@ -136,10 +136,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
     
-    // ADMIN: Verify Delivery
+    // MANAGER: Verify Delivery
     } elseif ($action === 'verify_delivery') {
-        if (!in_array($me['role'], ['admin', 'superadmin'])) {
-            $msg = "❌ Error: Only admins can verify deliveries.";
+        if (!in_array($me['role'], ['manager', 'admin', 'superadmin'])) {
+            $msg = "❌ Error: Only managers can verify deliveries.";
         } else {
             $id = $_POST['id'];
             $status = $_POST['status'];
@@ -160,10 +160,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
     
-    // ADMIN: Approve Adjustment
+    // MANAGER: Approve Adjustment
     } elseif ($action === 'approve_adjustment') {
-        if (!in_array($me['role'], ['admin', 'superadmin'])) {
-            $msg = "❌ Error: Only admins can approve adjustments.";
+        if (!in_array($me['role'], ['manager', 'admin', 'superadmin'])) {
+            $msg = "❌ Error: Only managers can approve adjustments.";
         } else {
             $id = $_POST['id'];
             $status = $_POST['status'];
@@ -184,10 +184,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
     
-    // ADMIN: Run Reconciliation
+    // MANAGER: Run Reconciliation
     } elseif ($action === 'run_reconciliation') {
-        if (!in_array($me['role'], ['admin', 'superadmin'])) {
-            $msg = "❌ Error: Only admins can run reconciliation.";
+        if (!in_array($me['role'], ['manager', 'admin', 'superadmin'])) {
+            $msg = "❌ Error: Only managers can run reconciliation.";
         } else {
             $reconciliation_date = $_POST['reconciliation_date'];
             $fuel_type = $_POST['fuel_type'];
@@ -529,9 +529,6 @@ require_once __DIR__ . '/../partials/header.php';
           <label>Shift</label>
           <select id="filterShift" class="form-control" onchange="applyFilters()">
             <option value="">All Shifts</option>
-            <option value="Morning" <?php echo $filter_shift == 'Morning' ? 'selected' : ''; ?>>Morning</option>
-            <option value="Afternoon" <?php echo $filter_shift == 'Afternoon' ? 'selected' : ''; ?>>Afternoon</option>
-            <option value="Evening" <?php echo $filter_shift == 'Evening' ? 'selected' : ''; ?>>Evening</option>
           </select>
         </div>
         <div class="col-md-3">
@@ -1091,6 +1088,19 @@ function viewAdjustmentDetails(id) {
 function viewVarianceDetails(id) {
     window.open(`fuel_variance_details.php?id=${id}`, '_blank');
 }
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateShifts('filterShift', 'All Shifts')
+        .then(() => console.log('Shifts loaded'))
+        .catch(error => {
+            console.error('Failed to load shifts:', error);
+            alert('Failed to load shifts. Please refresh.');
+        });
+});
 </script>
 
 <?php require_once __DIR__ . '/../partials/footer.php'; ?>

@@ -493,16 +493,61 @@ include __DIR__ . '/../partials/header.php';
 
 <script>
 function validatePasswords() {
+    // Get form elements
+    const username = document.querySelector('input[name="username"]').value.trim();
     const password = document.getElementById('new_password').value;
     const confirmPassword = document.getElementById('confirm_password').value;
+    const role = document.getElementById('user_role_add').value;
+    const phone = document.querySelector('input[name="phone"]').value.trim();
+    const email = document.querySelector('input[name="email"]').value.trim();
+
+    // Validate username
+    if (!username) {
+        alert('⚠️ Username is required. Please enter a username.');
+        return false;
+    }
+
+    if (username.length < 3) {
+        alert('⚠️ Username must be at least 3 characters long.');
+        return false;
+    }
+
+    if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
+        alert('⚠️ Username can only contain letters, numbers, underscores, periods, and hyphens.');
+        return false;
+    }
+
+    // Validate role
+    if (!role) {
+        alert('⚠️ User role is required. Please select a role.');
+        return false;
+    }
+
+    // Validate password
+    if (!password) {
+        alert('⚠️ Password is required. Please enter a password or leave empty to auto-generate.');
+        return false;
+    }
 
     if (password !== confirmPassword) {
-        alert('Passwords do not match!');
+        alert('⚠️ Passwords do not match! Please ensure both passwords are identical.');
         return false;
     }
 
     if (password.length > 0 && password.length < 8) {
-        alert('Password must be at least 8 characters if entered manually.');
+        alert('⚠️ Password must be at least 8 characters if entered manually.');
+        return false;
+    }
+
+    // Validate phone number format (optional, but if provided must be valid)
+    if (phone && !/^\+?[\d\s\-\(\)]{7,}$/.test(phone)) {
+        alert('⚠️ Phone number format is invalid. Please enter a valid phone number or leave empty.');
+        return false;
+    }
+
+    // Validate email format (optional, but if provided must be valid)
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        alert('⚠️ Email format is invalid. Please enter a valid email or leave empty.');
         return false;
     }
 

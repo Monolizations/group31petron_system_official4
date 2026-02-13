@@ -382,11 +382,8 @@ require_once __DIR__ . '/../partials/header.php';
               <div class="col-md-6">
                 <div class="mb-3">
                   <label class="form-label">Shift *</label>
-                  <select name="shift" class="form-control" required>
+                  <select name="shift" id="shift_delivery" class="form-control" required>
                     <option value="">-- Select Shift --</option>
-                    <option value="Morning">Morning (6AM-2PM)</option>
-                    <option value="Afternoon">Afternoon (2PM-10PM)</option>
-                    <option value="Evening">Evening (10PM-6AM)</option>
                   </select>
                 </div>
               </div>
@@ -505,12 +502,8 @@ require_once __DIR__ . '/../partials/header.php';
             
             <div class="mb-3">
               <label class="form-label">Fuel Type *</label>
-              <select name="fuel_type" class="form-control" required>
+              <select name="fuel_type" id="fuel_type_delivery" class="form-control" required>
                 <option value="">-- Select Fuel Type --</option>
-                <option value="Gasoline">Gasoline</option>
-                <option value="Diesel">Diesel</option>
-                <option value="Premium">Premium Gasoline</option>
-                <option value="Unleaded">Unleaded</option>
               </select>
             </div>
             
@@ -612,24 +605,16 @@ require_once __DIR__ . '/../partials/header.php';
               <div class="col-md-6">
                 <div class="mb-3">
                   <label class="form-label">Fuel Type *</label>
-                  <select name="fuel_type" class="form-control" required>
+                  <select name="fuel_type" id="fuel_type_adjustment" class="form-control" required>
                     <option value="">-- Select Fuel --</option>
-                    <option value="Gasoline">Gasoline</option>
-                    <option value="Diesel">Diesel</option>
-                    <option value="Premium">Premium</option>
-                    <option value="Unleaded">Unleaded</option>
                   </select>
                 </div>
               </div>
               <div class="col-md-6">
                 <div class="mb-3">
                   <label class="form-label">Adjustment Type *</label>
-                  <select name="adjustment_type" class="form-control" required>
+                  <select name="adjustment_type" id="adjustment_type_fuel" class="form-control" required>
                     <option value="">-- Select Type --</option>
-                    <option value="Loss">Loss</option>
-                    <option value="Transfer">Transfer</option>
-                    <option value="Consumption">Consumption</option>
-                    <option value="Other">Other</option>
                   </select>
                 </div>
               </div>
@@ -810,11 +795,24 @@ require_once __DIR__ . '/../partials/header.php';
 
 </div>
 
+<script src="../assets/js/data_helper.js"></script>
+
 <script>
 // Tab switching - more robust version
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing tabs...');
-    
+
+    // Load fuel types dynamically from backend
+    DataHelper.populateFuelTypes('fuel_type_delivery', '-- Select Fuel Type --')
+        .then(() => DataHelper.populateFuelTypes('fuel_type_adjustment', '-- Select Fuel --'))
+        .then(() => DataHelper.populateShifts('shift_delivery', '-- Select Shift --'))
+        .then(() => DataHelper.populateAdjustmentTypes('adjustment_type_fuel', '-- Select Type --'))
+        .then(() => console.log('Fuel types, shifts, and adjustment types loaded'))
+        .catch(error => {
+            console.error('Failed to load fuel types/shifts/adjustment types:', error);
+            DataHelper.showError('Failed to load fuel types/shifts/adjustment types. Please refresh.');
+        });
+
     // Show correct tab based on URL parameter
     const urlParams = new URLSearchParams(window.location.search);
     const activeTab = urlParams.get('tab') || 'pump';

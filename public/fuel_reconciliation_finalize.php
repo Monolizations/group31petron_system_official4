@@ -8,8 +8,8 @@ $me = current_user();
 $role = role_key($me['role'] ?? '');
 $station_id = user_station_id();
 
-// Admin/Owner only
-if (!in_array($role, ['admin', 'superadmin'])) {
+// Manager/Admin/SuperAdmin can finalize
+if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
     header("Location: dashboard.php");
     exit;
 }

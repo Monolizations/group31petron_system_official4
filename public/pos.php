@@ -432,10 +432,11 @@ function viewTransaction(t) {
                 <div>${t.staff_name}</div>
                 <small class="text-muted">${t.created_at}</small>
             </div>
-            <div>
-                <small class="text-muted">Payment Type</small>
-                <div>${t.payment_method}</div>
-            </div>
+             <div>
+                 <small class="text-muted">Payment Type</small>
+                 <div>${t.payment_method}</div>
+                 ${t.payment_method === 'GCash' && t.gcash_ref_number ? `<small class="text-muted">Ref: ${t.gcash_ref_number}</small>` : ''}
+             </div>
         </div>
         
         <h4 style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;">Product Breakdown</h4>
@@ -550,7 +551,7 @@ function closeModal(id) {
         </div>
         
         <div class="actions" style="margin-top: 30px; display: flex; gap: 10px; justify-content: flex-end;">
-            <button type="button" class="btn ghost" onclick="window.location.reload()">Cancel</button>
+            <button id="btnClear" type="button" class="btn ghost" onclick="window.location.reload()">Cancel</button>
             <button id="btnPay" type="submit" class="btn primary" onclick="return validatePayment();">Save Transaction</button>
         </div>
     </form>
@@ -623,12 +624,62 @@ function toggleGcashRef() {
 }
 
 function validatePayment() {
+    // Get form elements
+    const customerName = document.querySelector('input[name="customer_name"]').value.trim();
+    const itemName = document.querySelector('input[name="item_name"]').value.trim();
+    const quantity = document.querySelector('input[name="quantity"]').value;
+    const price = document.querySelector('input[name="price"]').value;
     const paymentType = document.getElementById('payment_method_pos').value;
     const gcashRefInput = document.getElementById('gcash_ref_number');
     
-    if (paymentType === 'GCash' && !gcashRefInput.value.trim()) {
-        alert('GCash reference number is required for GCash payments.');
+    // Validate customer name
+    if (!customerName) {
+        alert('⚠️ Customer name is required. Please enter a customer name or "Walk-in".');
         return false;
+    }
+    
+    // Validate item name
+    if (!itemName) {
+        alert('⚠️ Item name is required. Please enter the product/service name.');
+        return false;
+    }
+    
+    // Validate quantity
+    if (!quantity || parseFloat(quantity) <= 0) {
+        alert('⚠️ Quantity must be greater than 0.');
+        return false;
+    }
+    
+    // Validate price
+    if (!price || parseFloat(price) < 0) {
+        alert('⚠️ Price must be a valid amount (0 or greater).');
+        return false;
+    }
+    
+    // Validate payment type
+    if (!paymentType) {
+        alert('⚠️ Payment method is required. Please select Cash or GCash.');
+        return false;
+    }
+    
+    // Validate GCash reference if GCash is selected
+    if (paymentType === 'GCash') {
+        if (!gcashRefInput.value.trim()) {
+            alert('⚠️ GCash reference number is required for GCash payments.');
+            return false;
+        }
+        
+        // Validate GCash reference format (at least 5 characters, alphanumeric)
+        const gcashRef = gcashRefInput.value.trim();
+        if (gcashRef.length < 5) {
+            alert('⚠️ GCash reference number must be at least 5 characters long.');
+            return false;
+        }
+        
+        if (!/^[a-zA-Z0-9]+$/.test(gcashRef)) {
+            alert('⚠️ GCash reference number must contain only letters and numbers.');
+            return false;
+        }
     }
     
     return true;

@@ -18,11 +18,13 @@ include __DIR__ . '/../partials/header.php';
   </div>
 </div>
 <?php
-$fuels = [
-  ['name'=>'Diesel Max','price'=>'Read-only'],
-  ['name'=>'XCS Plus','price'=>'Read-only'],
-  ['name'=>'Kerosene','price'=>'Read-only'],
-];
+$fuels = [];
+try {
+    $stmt = $pdo->query("SELECT name, 'Read-only' as price FROM fuel_types ORDER BY name");
+    $fuels = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $fuels = [];
+}
 ?>
 <section class="card">
   <div class="card-head">
