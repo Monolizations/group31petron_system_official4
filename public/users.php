@@ -350,6 +350,10 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Role</label>
                     <select name="role" id="user_role_add" class="inp full" required>
                         <option value="">Select role</option>
+                        <option value="staff">Staff</option>
+                        <option value="manager">Manager</option>
+                        <option value="admin">Admin</option>
+                        <option value="superadmin">Super Admin</option>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -410,6 +414,10 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Role</label>
                     <select name="role" id="user_role_edit" class="inp full" required>
                         <option value="">-- Select Role --</option>
+                        <option value="staff">Staff</option>
+                        <option value="manager">Manager</option>
+                        <option value="admin">Admin</option>
+                        <option value="superadmin">Super Admin</option>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -573,15 +581,6 @@ function generatePassword() {
     document.getElementById('edit_password').value = password;
     alert('Generated password: ' + password);
 }
-</script>
-
-<script src="../assets/js/data_helper.js"></script>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    DataHelper.populateRoles('user_role_add', 'Select role');
-    DataHelper.populateRoles('user_role_edit', '-- Select Role --');
-});
 </script>
 
 <style>
