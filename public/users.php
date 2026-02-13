@@ -8,6 +8,15 @@ $me = current_user();
 $my_role = role_key($me['role'] ?? 'staff');
 $my_station_id = user_station_id();
 
+// DEBUG: Log session and station_id info
+error_log("=== USERS.PHP DEBUG START ===");
+error_log("Current User ID: " . ($me['id'] ?? 'NULL'));
+error_log("Current User Role: " . ($me['role'] ?? 'NULL'));
+error_log("Normalized Role: " . $my_role);
+error_log("Station ID from user_station_id(): " . var_export($my_station_id, true));
+error_log("Session user data: " . var_export($me, true));
+error_log("=== USERS.PHP DEBUG END ===");
+
 // Access Control: Only Admin, Super Admin, and Manager can access
 if (!in_array($my_role, ['admin', 'superadmin', 'manager'])) {
     header("Location: dashboard.php");
@@ -35,25 +44,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'add_user') {
             $name = trim($_POST['name']);
             $username = trim($_POST['username']);
-            $role = role_key($_POST['role'] ?? 'staff');
+            $role_key_input = $_POST['role'] ?? '';
+            $role = role_key($role_key_input);
             $phone = trim($_POST['phone']);
             $email = trim($_POST['email']);
-            $password = $_POST['password'] ?: 'Petron123!'; // Default if empty
-            
-            // Validation
-            if (empty($name) || empty($username)) throw new Exception("Name and Username are required.");
-            
-            // Check username
+            $password = $_POST['password'] ?? '';
+            $confirmPassword = $_POST['confirm_password'] ?? '';
+
+            // Validate all required fields
+            if (empty($name)) throw new Exception("Full Name is required.");
+            if (empty($username)) throw new Exception("Username is required.");
+            if (empty($email)) throw new Exception("Email is required.");
+            if (empty($role_key_input)) throw new Exception("Role is required.");
+            if (empty($password) && empty($confirmPassword)) throw new Exception("Password is required.");
+
+            // Validate password match
+            if ($password !== $confirmPassword) {
+                throw new Exception("Passwords do not match.");
+            }
+
+            // Validate password strength (if provided)
+            if (!empty($password) && strlen($password) < 8) {
+                throw new Exception("Password must be at least 8 characters.");
+            }
+
+            // Generate password if empty
+            if (empty($password)) {
+                $password = generateSecurePassword();
+            }
+
+            // Check username uniqueness
             $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
             $stmt->execute([$username]);
             if ($stmt->fetch()) throw new Exception("Username already exists.");
-            
+
+            // Role creation restrictions
+            if ($my_role === 'manager') {
+                // Manager can only create Staff users
+                if ($role !== 'staff') {
+                    throw new Exception("As a Manager, you can only create Staff users.");
+                }
+            } elseif ($my_role === 'admin') {
+                // Admin can create Staff, Manager, and Admin (not Super Admin)
+                if (!in_array($role, ['staff', 'manager', 'admin'])) {
+                    throw new Exception("As an Admin, you can only create Staff, Manager, or Admin users.");
+                }
+            } elseif ($my_role === 'superadmin') {
+                // Super Admin can create any role
+                if (!in_array($role, ['staff', 'manager', 'admin', 'superadmin'])) {
+                    throw new Exception("Invalid role selected.");
+                }
+            }
+
             $hashed = password_hash($password, PASSWORD_DEFAULT);
             $station_target = ($my_role === 'superadmin' && !empty($_POST['station_id'])) ? $_POST['station_id'] : $my_station_id;
-            
+
             $stmt = $pdo->prepare("INSERT INTO users (name, username, role, email, password, station_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', NOW())");
             $stmt->execute([$name, $username, $role, $email, $hashed, $station_target]);
-            
+
             log_activity($pdo, $me['id'], 'Add User', "Created user $username ($role)");
             $msg = "✅ User added successfully.";
         }
@@ -120,8 +168,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // 3. Reset Password
         elseif ($action === 'reset_password') {
             $id = $_POST['user_id'];
-            $new_pass = $_POST['new_password'] ?: 'Petron123!';
-            
+            $new_pass = $_POST['new_password'] ?? generateSecurePassword();
+
             if ($my_role !== 'superadmin') {
                 $chk = $pdo->prepare("SELECT id FROM users WHERE id = ? AND station_id = ?");
                 $chk->execute([$id, $my_station_id]);
@@ -164,16 +212,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // --- FETCH USERS ---
 $users = [];
+error_log("=== FETCH USERS DEBUG START ===");
+error_log("My Role: " . $my_role);
+error_log("My Station ID: " . var_export($my_station_id, true));
+error_log("Is Superadmin check: " . ($my_role === 'superadmin' ? 'YES' : 'NO'));
+
 if ($my_role === 'superadmin') {
+    error_log("Executing SUPERADMIN query - fetch ALL users");
     $stmt = $pdo->query("SELECT u.*, s.name as station_name FROM users u LEFT JOIN stations s ON u.station_id = s.id ORDER BY u.created_at DESC");
     $users = $stmt->fetchAll();
+    error_log("Superadmin query returned " . count($users) . " users");
     // Fetch stations for dropdown
     $stations = $pdo->query("SELECT id, name FROM stations")->fetchAll();
+    error_log("Stations fetched: " . count($stations));
 } else {
+    error_log("Executing ADMIN/MANAGER query - filter by station_id");
+    error_log("SQL: SELECT * FROM users WHERE station_id = ? ORDER BY role, name");
+    error_log("Param: " . var_export($my_station_id, true));
+    
     $stmt = $pdo->prepare("SELECT * FROM users WHERE station_id = ? ORDER BY role, name");
     $stmt->execute([$my_station_id]);
     $users = $stmt->fetchAll();
+    
+    error_log("Query returned " . count($users) . " users");
+    error_log("Users array: " . var_export($users, true));
 }
+error_log("=== FETCH USERS DEBUG END ===");
 
 include __DIR__ . '/../partials/header.php';
 ?>
@@ -271,7 +335,7 @@ include __DIR__ . '/../partials/header.php';
             <button class="modal-close" onclick="closeModal('addModal')">&times;</button>
         </div>
         <form method="post">
-            <div class="modal-body">
+        <div class="modal-body">
                 <input type="hidden" name="action" value="add_user">
                 
                 <div class="form-group mb-3">
@@ -284,9 +348,8 @@ include __DIR__ . '/../partials/header.php';
                 </div>
                 <div class="form-group mb-3">
                     <label class="lbl">Role</label>
-                    <select name="role" class="inp full" required>
-                        <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
+                    <select name="role" id="user_role_add" class="inp full" required>
+                        <option value="">Select role</option>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -311,12 +374,17 @@ include __DIR__ . '/../partials/header.php';
                 <?php endif; ?>
                 <div class="form-group mb-3">
                     <label class="lbl">Password</label>
-                    <input type="password" name="password" class="inp full" placeholder="Leave empty for 'Petron123!'">
+                    <input type="password" name="password" id="new_password" class="inp full" placeholder="Leave empty to auto-generate secure password" required>
+                </div>
+                <div class="form-group mb-3">
+                    <label class="lbl">Confirm Password</label>
+                    <input type="password" name="confirm_password" id="confirm_password" class="inp full" placeholder="Re-enter password" required>
+                    <small class="muted">Both passwords must match</small>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn ghost" onclick="closeModal('addModal')">Cancel</button>
-                <button type="submit" class="btn primary">Create User</button>
+                <button type="submit" class="btn primary" onclick="if (!validatePasswords()) return false;">Create User</button>
             </div>
         </form>
     </div>
@@ -340,14 +408,8 @@ include __DIR__ . '/../partials/header.php';
                 </div>
                 <div class="form-group mb-3">
                     <label class="lbl">Role</label>
-                    <select name="role" id="edit_role" class="inp full" required>
+                    <select name="role" id="user_role_edit" class="inp full" required>
                         <option value="">-- Select Role --</option>
-                        <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
-                        <?php if ($my_role === 'superadmin'): ?>
-                        <option value="admin">Admin</option>
-                        <option value="superadmin">Super Admin</option>
-                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -402,8 +464,8 @@ include __DIR__ . '/../partials/header.php';
                 <p>Reset password for <strong id="reset_username"></strong>?</p>
                 <div class="form-group mt-3">
                     <label class="lbl">New Password</label>
-                    <input type="text" name="new_password" class="inp full" value="Petron123!" required>
-                    <small class="muted">Default: Petron123!</small>
+                    <input type="password" name="new_password" class="inp full" placeholder="Enter new password or leave empty to auto-generate">
+                    <small class="muted">Leave empty for auto-generated secure password</small>
                 </div>
             </div>
             <div class="modal-footer">
@@ -422,8 +484,29 @@ include __DIR__ . '/../partials/header.php';
 </form>
 
 <script>
+function validatePasswords() {
+    const password = document.getElementById('new_password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
+
+    if (password !== confirmPassword) {
+        alert('Passwords do not match!');
+        return false;
+    }
+
+    if (password.length > 0 && password.length < 8) {
+        alert('Password must be at least 8 characters if entered manually.');
+        return false;
+    }
+
+    return true;
+}
+
 function openAddModal() {
+    if (!validatePasswords()) {
+        return false;
+    }
     document.getElementById('addModal').classList.add('show');
+    return true;
 }
 
 function openEditModal(user) {
@@ -490,6 +573,15 @@ function generatePassword() {
     document.getElementById('edit_password').value = password;
     alert('Generated password: ' + password);
 }
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateRoles('user_role_add', 'Select role');
+    DataHelper.populateRoles('user_role_edit', '-- Select Role --');
+});
 </script>
 
 <style>
