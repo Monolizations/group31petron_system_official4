@@ -211,6 +211,13 @@ async function initPOS(){
   const btnClear = $('#btnClear');
   const btnArchive = $('#btnArchive'); 
 
+
+  // Exit early if required elements don't exist
+  if (!btnPay || !btnClear) {
+    console.warn('POS buttons not found - skipping POS initialization');
+    return;
+  }
+
   const userRole = window.userRole || document.body.getAttribute('data-role') || 'staff';
   let currentSaleId = null; 
   let originalCashier = null;

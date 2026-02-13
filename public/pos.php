@@ -486,35 +486,6 @@ function closeModal(id) {
 </script>
 
 
-<script>
-function toggleGcashRef() {
-    const paymentType = document.getElementById('payment_method_pos').value;
-    const gcashRefField = document.getElementById('gcash_ref_field');
-    const gcashRefInput = document.getElementById('gcash_ref_number');
-    
-    if (paymentType === 'GCash') {
-        gcashRefField.style.display = 'block';
-        gcashRefInput.required = true;
-    } else {
-        gcashRefField.style.display = 'none';
-        gcashRefInput.required = false;
-        gcashRefInput.value = '';
-    }
-}
-
-function validatePayment() {
-    const paymentType = document.getElementById('payment_method_pos').value;
-    const gcashRefInput = document.getElementById('gcash_ref_number');
-    
-    if (paymentType === 'GCash' && !gcashRefInput.value.trim()) {
-        alert('GCash reference number is required for GCash payments.');
-        return false;
-    }
-    
-    return true;
-}
-</script>
-
 <?php else: ?>
 <!-- STAFF VIEW: Encoding Form -->
 <div class="card" style="padding: 20px; max-width: 900px; margin: 0 auto;">
@@ -580,7 +551,7 @@ function validatePayment() {
         
         <div class="actions" style="margin-top: 30px; display: flex; gap: 10px; justify-content: flex-end;">
             <button type="button" class="btn ghost" onclick="window.location.reload()">Cancel</button>
-            <button type="submit" class="btn primary" onclick="return validatePayment();">Save Transaction</button>
+            <button id="btnPay" type="submit" class="btn primary" onclick="return validatePayment();">Save Transaction</button>
         </div>
     </form>
 </div>
@@ -634,6 +605,33 @@ function openUnlockModal(saleId, customerName) {
     } else if (reason && reason.length > 0) {
         alert('Reason must be at least 10 characters for audit trail compliance.');
     }
+}
+
+function toggleGcashRef() {
+    const paymentType = document.getElementById('payment_method_pos').value;
+    const gcashRefField = document.getElementById('gcash_ref_field');
+    const gcashRefInput = document.getElementById('gcash_ref_number');
+    
+    if (paymentType === 'GCash') {
+        gcashRefField.style.display = 'block';
+        gcashRefInput.required = true;
+    } else {
+        gcashRefField.style.display = 'none';
+        gcashRefInput.required = false;
+        gcashRefInput.value = '';
+    }
+}
+
+function validatePayment() {
+    const paymentType = document.getElementById('payment_method_pos').value;
+    const gcashRefInput = document.getElementById('gcash_ref_number');
+    
+    if (paymentType === 'GCash' && !gcashRefInput.value.trim()) {
+        alert('GCash reference number is required for GCash payments.');
+        return false;
+    }
+    
+    return true;
 }
 </script>
 
