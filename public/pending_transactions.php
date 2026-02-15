@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isAdmin) {
 
             // Deduct Inventory
             foreach ($items as $item) {
-                $upd = $pdo->prepare("UPDATE inventory SET stock_level = stock_level - ? WHERE product_name = ? AND station_id = ?");
+                $upd = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_name = ? AND station_id = ?");
                 $upd->execute([$item['qty'], $item['name'], $station_id]);
             }
 
@@ -70,7 +70,7 @@ $sql = "SELECT s.*, u.name as staff_name,
         FROM sales s
         JOIN sale_items si ON s.id = si.sale_id
         LEFT JOIN users u ON s.user_id = u.id
-        LEFT JOIN inventory i ON si.name = i.product_name AND i.station_id = s.station_id
+        LEFT JOIN station_inventory i ON si.name = i.product_name AND i.station_id = s.station_id
         WHERE s.status = 'Pending' AND s.payment_method != 'Credit' AND (s.station_id = ? OR s.station_id IS NULL)
         ORDER BY s.created_at DESC";
 $stmt = $pdo->prepare($sql);

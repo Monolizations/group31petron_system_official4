@@ -66,7 +66,7 @@ if (!empty($query)) {
 
     // Search Inventory
     try {
-        $stmt = $pdo->prepare("SELECT id, product_name, stock_level FROM inventory WHERE product_name LIKE ? AND station_id = ?");
+        $stmt = $pdo->prepare("SELECT id, product_name, stock_level FROM station_inventory WHERE product_name LIKE ? AND station_id = ?");
         $stmt->execute(["%$query%", $myStationId]);
         $inventory = $stmt->fetchAll(PDO::FETCH_ASSOC);
         foreach ($inventory as $inv) {

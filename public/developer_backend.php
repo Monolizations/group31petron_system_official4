@@ -367,9 +367,9 @@ function getDataStats() {
         $stmt = $pdo->query("SELECT COUNT(*) as total FROM products");
         $stats['products'] = $stmt->fetchColumn();
         
-        // Inventory stats
-        $stmt = $pdo->query("SELECT COUNT(*) as total FROM inventory");
-        $stats['inventory_items'] = $stmt->fetchColumn();
+         // Inventory stats
+         $stmt = $pdo->query("SELECT COUNT(*) as total FROM station_inventory");
+         $stats['inventory_items'] = $stmt->fetchColumn();
         
         // Sales stats
         $stmt = $pdo->query("SELECT COUNT(*) as total FROM sales");
@@ -463,7 +463,7 @@ function resetDatabase() {
         $stmt = $pdo->prepare("INSERT INTO products (name, type_id, sku, price, created_at, updated_at) VALUES ('Gasoline Premium', 1, 'FUEL001', 50.50, NOW(), NOW()), ('Engine Oil 5W-30', 2, 'MERCH001', 350.00, NOW(), NOW()), ('Oil Change Service', 3, 'SVC001', 500.00, NOW(), NOW())");
         
         // Create inventory records
-        $stmt = $pdo->prepare("INSERT INTO inventory (product_id, station_id, stock_level, reorder_level, created_at, updated_at) VALUES (?, ?, 1000, 100, NOW(), NOW()), (?, ?, 500, 50, NOW(), NOW()), (?, ?, 200, 20, NOW(), NOW())");
+        $stmt = $pdo->prepare("INSERT INTO station_inventory (product_id, station_id, stock_level, reorder_level, created_at, updated_at) VALUES (?, ?, 1000, 100, NOW(), NOW()), (?, ?, 500, 50, NOW(), NOW()), (?, ?, 200, 20, NOW(), NOW())");
         $stmt->execute([1, $station_id, 2, $station_id, 3, $station_id]);
         
         echo json_encode(['success' => true, 'message' => 'Database reset completed. Basic data restored.']);

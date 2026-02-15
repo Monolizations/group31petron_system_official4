@@ -30,13 +30,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
                 
                 // Update Inventory (Add stock)
                 // Check if exists
-                $inv = $pdo->prepare("SELECT id FROM inventory WHERE product_name = ? AND station_id = ?");
+                $inv = $pdo->prepare("SELECT id FROM station_inventory WHERE product_name = ? AND station_id = ?");
                 $inv->execute([$i['item_name'], $station_id]);
                 if ($inv_id = $inv->fetchColumn()) {
-                    $upd = $pdo->prepare("UPDATE inventory SET stock_level = stock_level + ? WHERE id = ?");
+                    $upd = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level + ? WHERE id = ?");
                     $upd->execute([$qty, $inv_id]);
                 } else {
-                    $ins = $pdo->prepare("INSERT INTO inventory (station_id, product_name, stock_level, type, cost) VALUES (?, ?, ?, 'merch', ?)");
+                    $ins = $pdo->prepare("INSERT INTO station_inventory (station_id, product_name, stock_level, type, cost) VALUES (?, ?, ?, 'merch', ?)");
                     $ins->execute([$station_id, $i['item_name'], $qty, $i['unit_price']]);
                 }
             }

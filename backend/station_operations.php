@@ -35,7 +35,7 @@ try {
                 SELECT s.*, 
                        (SELECT u.name FROM users u WHERE u.station_id = s.id AND u.role = 'admin' LIMIT 1) as admin_name,
                        (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id AND u.status = 'active') as active_users,
-                       (SELECT SUM(stock_level) FROM inventory i WHERE i.station_id = s.id AND i.type = 'fuel') as fuel_level
+                       (SELECT SUM(stock_level) FROM station_inventory i WHERE i.station_id = s.id AND i.type = 'fuel') as fuel_level
                 FROM stations s 
                 WHERE s.id = ?
             ");
@@ -150,7 +150,7 @@ try {
                 SELECT s.*, 
                        (SELECT u.name FROM users u WHERE u.station_id = s.id AND u.role = 'admin' LIMIT 1) as admin_name,
                        (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id AND u.status = 'active') as active_users,
-                       (SELECT SUM(stock_level) FROM inventory i WHERE i.station_id = s.id AND i.type = 'fuel') as fuel_level
+                       (SELECT SUM(stock_level) FROM station_inventory i WHERE i.station_id = s.id AND i.type = 'fuel') as fuel_level
                 FROM stations s 
                 WHERE 1=1
             ";
@@ -210,7 +210,7 @@ try {
             // (Merchandise items are added by admin as needed.)
             try {
                 $fuelTypes = ['Diesel Max','XCS Plus','XCS Advance','Turbo Diesel','Kerosene'];
-                $ins = $pdo->prepare("INSERT INTO inventory (station_id, product_name, stock_level, type) VALUES (?, ?, 0, 'fuel')");
+                $ins = $pdo->prepare("INSERT INTO station_inventory (station_id, product_name, stock_level, type) VALUES (?, ?, 0, 'fuel')");
                 foreach ($fuelTypes as $ft) {
                     $ins->execute([$station_id, $ft]);
                 }

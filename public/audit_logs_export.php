@@ -125,7 +125,7 @@ switch ($log_type) {
                     i.stock_level,
                     u.username,
                     'Main Station' as station
-                FROM inventory i
+                FROM station_inventory i
                 LEFT JOIN users u ON i.user_id = u.id
                 WHERE DATE(i.created_at) BETWEEN ? AND ?";
         $params = [$start_date, $end_date];

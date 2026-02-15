@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $physical = (float)$_POST['physical_stock'];
             
             // Get System Stock
-            $stmt = $pdo->prepare("SELECT stock_level FROM inventory WHERE station_id = ? AND product_name = ? AND type = 'fuel'");
+            $stmt = $pdo->prepare("SELECT stock_level FROM station_inventory WHERE station_id = ? AND product_name = ? AND type = 'fuel'");
             $stmt->execute([$station_id, $fuel_type]);
             $system_stock = (float)$stmt->fetchColumn();
             
@@ -88,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $stmt->execute([$station_id, $fuel_type, $system_stock, $system_stock, $physical, $variance, $status]);
                 
                 // Update Inventory to match physical
-                $upd = $pdo->prepare("UPDATE inventory SET stock_level = ? WHERE station_id = ? AND product_name = ? AND type = 'fuel'");
+                $upd = $pdo->prepare("UPDATE station_inventory SET stock_level = ? WHERE station_id = ? AND product_name = ? AND type = 'fuel'");
                 $upd->execute([$physical, $station_id, $fuel_type]);
                 
                 // Log the action with verification
@@ -250,12 +250,8 @@ include __DIR__ . '/../partials/header.php';
         <input type="hidden" name="action" value="reconcile">
         <div class="form-group" style="margin-bottom:15px;">
             <label class="lbl">Fuel Type</label>
-            <select name="fuel_type" class="inp" required>
+            <select name="fuel_type" id="fuel_type_reconciliation" class="inp" required>
                 <option value="">-- Select Fuel --</option>
-                <option value="Diesel Max">Diesel Max</option>
-                <option value="XCS Plus">XCS Plus</option>
-                <option value="XCS Advance">XCS Advance</option>
-                <option value="Turbo Diesel">Turbo Diesel</option>
             </select>
         </div>
         <div class="form-group" style="margin-bottom:15px;">
@@ -778,209 +774,20 @@ function setupStationSelector() {
                 this.classList.toggle('selected');
             }
             updateStationSelector();
-        });
     });
-    
-    const allOption = dropdown.querySelector('[data-value="all"]');
-    if (allOption) {
-        allOption.classList.add('selected');
-        updateStationSelector();
-    }
-}
-
-function updateStationSelector() {
-    const selected = document.querySelectorAll('.multiselect-option.selected');
-    const selector = document.getElementById('stationSelector');
-    
-    if (selected.length === 0) {
-        selector.value = 'Select stations';
-    } else if (selected.length === 1 && selected[0].dataset.value === 'all') {
-        selector.value = 'All Stations';
-    } else if (selected.length === 1) {
-        selector.value = selected[0].textContent;
-    } else {
-        selector.value = `${selected.length} stations selected`;
-    }
-}
-
-function applyFilters() {
-    const dateRange = document.getElementById('dateRange').value;
-    const selectedStations = Array.from(document.querySelectorAll('.multiselect-option.selected'))
-        .map(opt => opt.dataset.value)
-        .filter(val => val !== 'all');
-    
-    if (!dateRange) {
-        showToast('Please select a date range', 'error');
-        return;
-    }
-    
-    const params = new URLSearchParams({
-        date_range: dateRange,
-        stations: selectedStations
-    });
-    
-    window.location.href = `reconciliation.php?${params.toString()}`;
-}
-
-function clearFilters() {
-    window.location.href = 'reconciliation.php';
-}
-
-function toggleSelectAll() {
-    const selectAll = document.getElementById('selectAll');
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = selectAll.checked;
-    });
-}
-
-function showVarianceDetails(date, station, fuelType) {
-    document.getElementById('varianceModalTitle').textContent = `Variance Details - ${station} | ${fuelType} | ${date}`;
-    
-    // Simulate loading variance details
-    const detailsTable = document.getElementById('varianceDetailsTable');
-    detailsTable.innerHTML = `
-        <tr>
-            <td>Inflow</td>
-            <td>${date}</td>
-            <td>1,250.50 L</td>
-            <td>DEL-001</td>
-        </tr>
-        <tr>
-            <td>Outflow</td>
-            <td>${date}</td>
-            <td>1,180.25 L</td>
-            <td>SAL-045</td>
-        </tr>
-        <tr>
-            <td>Outflow</td>
-            <td>${date}</td>
-            <td>45.75 L</td>
-            <td>SAL-046</td>
-        </tr>
-    `;
-    
-    document.getElementById('varianceModal').style.display = 'block';
-}
-
-function closeVarianceModal() {
-    document.getElementById('varianceModal').style.display = 'none';
-}
-
-function adjustInventory() {
-    showToast('Inventory adjustment initiated', 'info');
-    closeVarianceModal();
-}
-
-function markReconciled() {
-    const selectedRows = document.querySelectorAll('.row-checkbox:checked');
-    
-    if (selectedRows.length === 0) {
-        showToast('Please select records to reconcile', 'error');
-        return;
-    }
-    
-    // Simulate reconciliation process
-    showToast('Reconciling fuel records...', 'info');
-    
-    setTimeout(() => {
-        showToast('Fuel record reconciled successfully', 'success');
-        
-        // Clear checkboxes
-        selectedRows.forEach(checkbox => checkbox.checked = false);
-        document.getElementById('selectAll').checked = false;
-    }, 1500);
-}
-
-function exportReport(format) {
-    const dateRange = document.getElementById('dateRange').value;
-    const selectedStations = Array.from(document.querySelectorAll('.multiselect-option.selected'))
-        .map(opt => opt.dataset.value)
-        .filter(val => val !== 'all');
-    
-    if (!dateRange) {
-        showToast('Please select a date range first', 'error');
-        return;
-    }
-    
-    const params = new URLSearchParams({
-        export_format: format,
-        date_range: dateRange,
-        stations: selectedStations
-    });
-    
-    showToast(`Exporting ${format.toUpperCase()}...`, 'info');
-    window.location.href = `fuel_reconciliation_export.php?${params.toString()}`;
-}
-
-function showToast(message, type = 'success') {
-    const toast = document.getElementById('toast');
-    toast.textContent = message;
-    
-    if (type === 'success') {
-        toast.style.background = '#28A745';
-    } else if (type === 'error') {
-        toast.style.background = '#DC3545';
-    } else if (type === 'info') {
-        toast.style.background = '#007bff';
-    }
-    
-    toast.style.display = 'block';
-    
-    setTimeout(() => {
-        toast.style.display = 'none';
-    }, 3000);
-}
-
-window.addEventListener('click', function(event) {
-    if (event.target.classList.contains('modal')) {
-        event.target.style.display = 'none';
-    }
 });
+</script>
 
-// Password Verification Modal for Reconciliation Finalization
-function openPasswordModal() {
-    document.getElementById('passwordModal').style.display = 'block';
-}
+<script src="../assets/js/data_helper.js"></script>
 
-function closePasswordModal() {
-    document.getElementById('passwordModal').style.display = 'none';
-    document.getElementById('managerPassword').value = '';
-}
-
-function verifyManagerPassword() {
-    const password = document.getElementById('managerPassword').value;
-    
-    if (!password) {
-        showToast('Password is required', 'error');
-        return;
-    }
-    
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.innerHTML = `
-        <input type="hidden" name="action" value="verify_password">
-        <input type="hidden" name="manager_password" value="${password}">
-    `;
-    document.body.appendChild(form);
-    form.submit();
-}
-
-// Add event listener to reconciliation form
+<script>
 document.addEventListener('DOMContentLoaded', function() {
-    const reconForm = document.querySelector('form[action*="reconciliation"]');
-    if (reconForm) {
-        reconForm.addEventListener('submit', function(e) {
-            if (this.querySelector('input[name="action"][value="reconcile"]')) {
-                // Check if already verified
-                if (!sessionStorage.getItem('recon_verified')) {
-                    e.preventDefault();
-                    openPasswordModal();
-                }
-            }
+    DataHelper.populateFuelTypes('fuel_type_reconciliation', '-- Select Fuel --')
+        .then(() => console.log('Fuel types loaded'))
+        .catch(error => {
+            console.error('Failed to load fuel types:', error);
+            alert('Failed to load fuel types. Please refresh.');
         });
-    }
 });
 </script>
 

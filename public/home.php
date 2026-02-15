@@ -24,7 +24,7 @@ $alerts_html = '';
 
 // Low inventory
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM inventory WHERE station_id = ? AND stock_level <= 20");
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM station_inventory WHERE station_id = ? AND stock_level <= 20");
     $stmt->execute([$stationId]);
     $low_stock = $stmt->fetchColumn();
     if($low_stock > 0){

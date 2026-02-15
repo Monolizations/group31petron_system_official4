@@ -71,7 +71,7 @@ try {
 
 // Total Fuel - Check if inventory table exists, otherwise use sample data
 try {
-    $stmt = $pdo->prepare("SELECT SUM(i.stock_level) FROM inventory i 
+    $stmt = $pdo->prepare("SELECT SUM(i.stock_level) FROM station_inventory i 
                            JOIN products p ON i.product_id = p.id 
                            JOIN product_types pt ON p.type_id = pt.id 
                            WHERE pt.name = 'fuel'" . $station_filter);
@@ -88,7 +88,7 @@ try {
 
 // Merchandise Items Count
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM inventory i 
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM station_inventory i 
                            JOIN products p ON i.product_id = p.id 
                            JOIN product_types pt ON p.type_id = pt.id 
                            WHERE pt.name = 'merch'" . $station_filter);
@@ -147,7 +147,7 @@ try {
 
 $metrics['low_stock'] = 0;
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM inventory WHERE stock_level <= reorder_point" . $station_filter);
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM station_inventory WHERE stock_level <= reorder_point" . $station_filter);
     $stmt->execute($station_param);
     $metrics['low_stock'] = $stmt->fetchColumn() ?: 0;
 } catch(Exception $e){}

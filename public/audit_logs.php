@@ -75,15 +75,16 @@ try {
 // Fetch items for inventory logs
 $items_list = [];
 try {
-    $stmt = $pdo->query("SELECT DISTINCT product_name FROM inventory WHERE product_name IS NOT NULL ORDER BY product_name");
+    $stmt = $pdo->query("SELECT DISTINCT product_name FROM station_inventory WHERE product_name IS NOT NULL ORDER BY product_name");
     $items_list = $stmt->fetchAll(PDO::FETCH_COLUMN);
-    
-    // Add fuel types
-    $fuel_types = ['Diesel', 'Gasoline', 'Premium', 'XCS Plus', 'Turbo Diesel'];
+
+    // Add fuel types from database
+    $fuel_stmt = $pdo->query("SELECT name FROM fuel_types ORDER BY name");
+    $fuel_types = $fuel_stmt->fetchAll(PDO::FETCH_COLUMN);
     $items_list = array_merge($items_list, $fuel_types);
 } catch(Exception $e) {
     // Fallback items
-    $items_list = ['Diesel', 'Gasoline', 'Premium', 'XCS Plus', 'Turbo Diesel', 'Engine Oil', 'Tires', 'Filters'];
+    $items_list = ['Fuel'];
 }
 
 // Get audit logs data based on type
@@ -158,7 +159,7 @@ if ($start_date && $end_date) {
                         '192.168.1.' . rand(1, 254) as ip_address,
                         'Inventory System' as user_agent,
                         'Success' as status
-                        FROM inventory i
+                        FROM station_inventory i
                         LEFT JOIN users u ON i.user_id = u.id
                         WHERE DATE(i.created_at) BETWEEN ? AND ?";
                 $params = [$start_date, $end_date];

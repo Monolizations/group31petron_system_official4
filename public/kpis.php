@@ -70,7 +70,7 @@ foreach($fuel_readings as $fr) {
 // 2. DB Metrics (Low Stock & Pending Jobs)
 try {
     // Low Stock (Detailed)
-    $sqlInv = "SELECT s.name, i.product_name FROM inventory i LEFT JOIN stations s ON i.station_id = s.id WHERE i.stock_level <= 20";
+    $sqlInv = "SELECT s.name, i.product_name FROM station_inventory i LEFT JOIN stations s ON i.station_id = s.id WHERE i.stock_level <= 20";
     if ($f_station) $sqlInv .= " AND i.station_id = " . intval($f_station);
     $stmt = $pdo->query($sqlInv);
     $lowStockItems = $stmt->fetchAll(PDO::FETCH_ASSOC);

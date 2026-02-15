@@ -33,7 +33,7 @@ class InventoryOperations {
         try {
             $this->pdo->beginTransaction();
             
-            // RBAC: Staff only for encoding
+            // RBAC: Staff only for encoding (Admin is read-only for hierarchy compliance)
             $role = role_key($this->user['role'] ?? '');
             if ($role !== 'staff') {
                 throw new Exception('Only operations staff can encode received items');
@@ -109,10 +109,10 @@ class InventoryOperations {
         try {
             $this->pdo->beginTransaction();
             
-            // RBAC: Admin only
+            // RBAC: Manager only (Admin is read-only for hierarchy compliance)
             $role = role_key($this->user['role'] ?? '');
-            if ($role !== 'admin') {
-                throw new Exception('Admin privileges required to confirm receipts');
+            if ($role !== 'manager') {
+                throw new Exception('Manager privileges required to confirm receipts');
             }
             
             $stmt = $this->pdo->prepare("

@@ -770,7 +770,7 @@ class JobOrderOperations {
      */
     public function getJobOrdersByStatus($status) {
         $stmt = $this->pdo->prepare("
-            SELECT jo.*, 
+            SELECT jo.*,
                    c.name as customer_name,
                    m.full_name as mechanic_name,
                    sc.name as service_category_name,
@@ -785,6 +785,63 @@ class JobOrderOperations {
         ");
         $stmt->execute([$this->station_id, $status]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Get Complete Job Order Details with Parts Used
+     * Hybrid approach: Product name + inventory details
+     */
+    public function getJobDetailsWithParts($job_id) {
+        // Get basic job order details
+        $stmt = $this->pdo->prepare("
+            SELECT jo.*,
+                   c.name as customer_name,
+                   c.phone as customer_phone,
+                   c.email as customer_email,
+                   m.full_name as mechanic_name,
+                   sc.name as service_name,
+                   u.name as created_by_name,
+                   r.name as reviewed_by_name
+            FROM job_orders jo
+            LEFT JOIN customers c ON c.id = jo.customer_id
+            LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
+            LEFT JOIN service_categories sc ON sc.id = jo.service_category_id
+            LEFT JOIN users u ON u.id = jo.assigned_by
+            LEFT JOIN users r ON r.id = jo.reviewed_by
+            WHERE jo.id = ? AND jo.station_id = ?
+        ");
+        $stmt->execute([$job_id, $this->station_id]);
+        $job = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$job) {
+            return null;
+        }
+
+        // Get parts used with hybrid product information
+        $stmt = $this->pdo->prepare("
+            SELECT jop.*,
+                   p.name as product_name,
+                   si.stock_level as current_stock
+            FROM job_order_parts jop
+            LEFT JOIN products p ON p.id = jop.product_id
+            LEFT JOIN station_inventory si ON si.station_id = ? AND si.product_id = jop.product_id
+            WHERE jop.job_order_id = ?
+            ORDER BY jop.id ASC
+        ");
+        $stmt->execute([$this->station_id, $job_id]);
+        $parts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Add parts to job array
+        $job['parts_used'] = $parts;
+
+        // Calculate totals for breakdown
+        $total_parts_cost = 0;
+        foreach ($parts as $part) {
+            $total_parts_cost += ($part['total_cost'] ?? 0);
+        }
+        $job['total_parts_cost'] = $total_parts_cost;
+
+        return $job;
     }
 }
 
@@ -834,7 +891,11 @@ if (basename($_SERVER['PHP_SELF']) === 'job_order_operations.php') {
                     $_POST['actual_labor_hours'] ?? 0
                 );
                 break;
-                
+
+            case 'get_job_details':
+                $result = $jobOrderOps->getJobDetailsWithParts($_POST['job_id']);
+                break;
+
             default:
                 $result = ['success' => false, 'message' => 'Invalid action'];
         }

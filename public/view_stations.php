@@ -45,8 +45,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         // Seed default fuel inventory rows for the new station so Inventory Management isn't empty.
                         // (Merchandise items are added by admin as needed.)
                         try {
-                            $fuelTypes = ['Diesel Max','XCS Plus','XCS Advance','Turbo Diesel','Kerosene'];
-                            $ins = $pdo->prepare("INSERT INTO inventory (station_id, product_name, stock_level, type) VALUES (?, ?, 0, 'fuel')");
+                            $stmt = $pdo->query("SELECT name FROM fuel_types");
+                            $fuelTypes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+                            $ins = $pdo->prepare("INSERT INTO station_inventory (station_id, product_name, stock_level, type) VALUES (?, ?, 0, 'fuel')");
                             foreach ($fuelTypes as $ft) {
                                 $ins->execute([$new_station_id, $ft]);
                             }

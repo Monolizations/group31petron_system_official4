@@ -72,7 +72,7 @@ try {
             // Fuel Report
             try {
                 $sql = "SELECT p.name as fuel_type, COALESCE(i.stock_level, 0) as stock_level
-                        FROM inventory i
+                        FROM station_inventory i
                         JOIN products p ON i.product_id = p.id
                         JOIN product_types pt ON p.type_id = pt.id
                         WHERE i.station_id = ? AND pt.name = 'fuel'";

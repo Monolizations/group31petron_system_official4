@@ -80,7 +80,7 @@ try {
     foreach($stations as $s) $stationsMap[$s['id']] = $s['name'];
 
     // Fetch Consolidated Inventory (Merch & Fuel Levels from DB)
-    $invSql = "SELECT i.*, s.name as station_name FROM inventory i LEFT JOIN stations s ON i.station_id = s.id WHERE 1=1";
+    $invSql = "SELECT i.*, s.name as station_name FROM station_inventory i LEFT JOIN stations s ON i.station_id = s.id WHERE 1=1";
     $invParams = [];
     if($f_station) { $invSql .= " AND i.station_id = ?"; $invParams[] = $f_station; }
     

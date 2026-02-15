@@ -6,7 +6,7 @@ $station_id = $_GET['station_id'] ?? 0;
 try {
     $stmt = $pdo->prepare("
         SELECT id, product_name, stock_level, selling_price
-        FROM inventory 
+        FROM station_inventory 
         WHERE station_id = ? 
           AND stock_level > 0
           AND type = 'merch'

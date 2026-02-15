@@ -89,7 +89,7 @@ try {
         
         // Fetch current inventory with product types
         $stmt = $pdo->prepare("SELECT i.id, p.name as product_name, pt.name as type, i.stock_level as ending 
-                               FROM inventory i 
+                               FROM station_inventory i 
                                JOIN products p ON i.product_id = p.id 
                                JOIN product_types pt ON p.type_id = pt.id 
                                WHERE i.station_id = ?");
