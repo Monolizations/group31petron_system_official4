@@ -1247,7 +1247,7 @@ include __DIR__ . '/../partials/header.php';
             
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h4>Parts Used (Inventory Deduction)</h4>
-                <button type="button" class="btn btn-primary" onclick="addPartRow()">
+                <button type="button" class="btn btn-primary" onclick="addPartRowToCompletion()">
                     <i class="fas fa-plus"></i> Add Part
                 </button>
             </div>
@@ -1469,8 +1469,8 @@ function completeJobOrder(jobId) {
     document.getElementById('completionModal').style.display = 'block';
 }
 
-function addPartRow() {
-    const container = document.getElementById('partsListContainer');
+ function addPartRowToCompletion() {
+     const container = document.getElementById('partsListContainer');
     const row = document.createElement('div');
     row.className = 'part-row';
     row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;';
