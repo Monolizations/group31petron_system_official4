@@ -283,7 +283,7 @@ $fuelPricing = [];
 try {
     // Load merchandise products from inventory
     $stmt = $pdo->prepare("
-        SELECT p.*, si.stock_level, si.unit, si.status as inventory_status
+        SELECT p.id, p.name, p.type_id, p.price, p.cost, p.sku, si.stock_level, si.unit, si.status as inventory_status
         FROM products p
         INNER JOIN product_types pt ON p.type_id = pt.id
         INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? AND si.status = 'active'
@@ -295,7 +295,7 @@ try {
     
     // Load fuel products with current pricing
     $stmt = $pdo->prepare("
-        SELECT p.*, si.stock_level, si.unit, si.status as inventory_status,
+        SELECT p.id, p.name, p.type_id, p.price, p.cost, p.sku, si.stock_level, si.unit, si.status as inventory_status,
                fp.price_per_liter as price
         FROM products p
         INNER JOIN product_types pt ON p.type_id = pt.id
