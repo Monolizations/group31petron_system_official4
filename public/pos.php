@@ -67,6 +67,13 @@ try {
         FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
     )");
     
+    // Add missing columns if they don't exist
+    try {
+        $pdo->exec("ALTER TABLE sales ADD COLUMN customer VARCHAR(255) NULL");
+    } catch (PDOException $e) {
+        // Column already exists, ignore error
+    }
+    
     // Add gcash_ref_number column if it doesn't exist
     try {
         $pdo->exec("ALTER TABLE sales ADD COLUMN gcash_ref_number VARCHAR(50) NULL");
@@ -173,47 +180,94 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     // STAFF ACTION: Create Transaction
     else {
-    $customer_name = $_POST['customer_name'] ?? 'Walk-in';
-    $item_name = $_POST['item_name'] ?? '';
-    $quantity = (int)($_POST['quantity'] ?? 1);
-    $price = (float)($_POST['price'] ?? 0);
-    $payment_type = $_POST['payment_type'] ?? 'Cash';
-    $gcash_ref_number = trim($_POST['gcash_ref_number'] ?? '');
-    $discount = (float)($_POST['discount'] ?? 0);
-    
-    $subtotal = $quantity * $price;
-    $total = $subtotal - $discount;
-
-    // Validation: GCash requires reference number
-    if ($payment_type === 'GCash' && empty($gcash_ref_number)) {
-        $msg = "❌ Error: GCash reference number is required for GCash payments.";
-    } elseif ($item_name && $quantity > 0 && $price >= 0) {
-        try {
-            $pdo->beginTransaction();
-
-            // Insert Sale - Status is 'Pending' for Staff, 'Completed' for Admin (if they encode directly)
-            // Per requirement: Admin validates staff entries. Staff entries are Pending.
-            $initial_status = $isAdmin ? 'Completed' : 'Pending';
-            $sale_id = uniqid('SALE-');
-            $is_locked = $isAdmin ? 1 : 0;
-
-            $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, customer, payment_method, total, sale_date, created_at, status, is_locked, gcash_ref_number) VALUES (?, ?, ?, ?, ?, ?, CURDATE(), NOW(), ?, ?, ?)");
-            $stmt->execute([$sale_id, $station_id, $me['id'], $customer_name, $payment_type, $total, $initial_status, $is_locked, ($payment_type === 'GCash' ? $gcash_ref_number : null)]);
-            $last_sale_id = $sale_id;
-
-            // Insert Item
-            $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, name, qty, price, amount) VALUES (?, ?, ?, ?, ?)");
-            $stmtItem->execute([$sale_id, $item_name, $quantity, $price, $subtotal]);
-
-            $pdo->commit();
-            $msg = $isAdmin ? "✅ Transaction completed successfully." : "✅ Transaction submitted for approval.";
-        } catch (Exception $e) {
-            $pdo->rollBack();
-            $msg = "❌ Error: " . $e->getMessage();
+        $customer_name = $_POST['customer_name'] ?? 'Walk-in';
+        $product_id = (int)($_POST['product_id'] ?? 0);
+        $quantity = (int)($_POST['quantity'] ?? 1);
+        $price = (float)($_POST['price'] ?? 0);
+        $product_name = '';
+        $product_unit = '';
+        $payment_type = $_POST['payment_type'] ?? 'Cash';
+        $gcash_ref_number = trim($_POST['gcash_ref_number'] ?? '');
+        $discount = (float)($_POST['discount'] ?? 0);
+        
+        // Validation
+        if ($product_id <= 0) {
+            $msg = "❌ Error: Please select a valid product.";
+        } elseif ($quantity <= 0) {
+            $msg = "❌ Error: Quantity must be greater than 0.";
+        } elseif ($price < 0) {
+            $msg = "❌ Error: Invalid price.";
+        } else {
+            // Get product details
+            try {
+                $stmt = $pdo->prepare("SELECT p.name, pt.name as type_name, p.unit FROM products p INNER JOIN product_types pt ON p.type_id = pt.id WHERE p.id = ?");
+                $stmt->execute([$product_id]);
+                $product = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if (!$product) {
+                    $msg = "❌ Error: Product not found.";
+                } else {
+                    $product_name = $product['name'];
+                    $product_unit = $product['unit'] ?? '';
+                    
+                    // Check stock availability
+                    $stmt = $pdo->prepare("SELECT stock_level FROM inventory WHERE product_id = ? AND station_id = ?");
+                    $stmt->execute([$product_id, $station_id]);
+                    $stock = $stmt->fetchColumn();
+                    
+                    if ($stock === null || $stock === false) {
+                        $msg = "❌ Error: Product not in inventory.";
+                    } elseif ($stock < $quantity) {
+                        $msg = "❌ Error: Insufficient stock. Available: {$stock} {$product_unit}. Requested: {$quantity} {$product_unit}.";
+                    } else {
+                        // Proceed with transaction
+                        $subtotal = $quantity * $price;
+                        $total = $subtotal - $discount;
+                        
+                        // Validation: GCash requires reference number
+                        if ($payment_type === 'GCash' && empty($gcash_ref_number)) {
+                            $msg = "❌ Error: GCash reference number is required for GCash payments.";
+                        } else {
+                            try {
+                                $pdo->beginTransaction();
+                                
+                                // Insert Sale - Status is 'Pending' for Staff, 'Completed' for Admin
+                                $initial_status = $isAdmin ? 'Completed' : 'Pending';
+                                $sale_id = uniqid('SALE-');
+                                $is_locked = $isAdmin ? 1 : 0;
+                                
+                                $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, sale_date, sale_time, payment_method, total, status, created_at) VALUES (?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, NOW())");
+                                $stmt->execute([$sale_id, $station_id, $me['id'], $payment_type, $total, $initial_status]);
+                                $last_sale_id = $sale_id;
+                                
+                                // Add name column if it doesn't exist
+                                try {
+                                    $pdo->exec("ALTER TABLE sale_items ADD COLUMN name VARCHAR(255) NULL AFTER product_id");
+                                } catch (PDOException $e) {
+                                    // Column already exists, ignore
+                                }
+                                
+                                // Insert Item with actual product_id and name
+                                $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, name, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?)");
+                                $stmtItem->execute([$sale_id, $product_id, $product_name, $quantity, $price, $subtotal]);
+                                
+                                // Deduct inventory stock immediately (as per requirement)
+                                $stmtStock = $pdo->prepare("UPDATE inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
+                                $stmtStock->execute([$quantity, $product_id, $station_id]);
+                                
+                                $pdo->commit();
+                                $msg = "✅ Transaction completed successfully. Stock deducted immediately.";
+                            } catch (Exception $e) {
+                                $pdo->rollBack();
+                                $msg = "❌ Error: " . $e->getMessage();
+                            }
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                $msg = "❌ Error: " . $e->getMessage();
+            }
         }
-    } else {
-        $msg = "❌ Error: Invalid item details.";
-    }
     }
 }
 
@@ -222,6 +276,64 @@ $customers = [];
 try {
     $customers = $pdo->query("SELECT name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
 } catch(Exception $e){}
+
+// Load inventory and fuel pricing for POS dropdown
+$inventory = [];
+$fuelPricing = [];
+try {
+    // Load merchandise products from inventory
+    $stmt = $pdo->prepare("
+        SELECT p.*, si.stock_level, si.unit, si.status as inventory_status
+        FROM products p
+        INNER JOIN product_types pt ON p.type_id = pt.id
+        INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? AND si.status = 'active'
+        WHERE pt.name = 'merch'
+        ORDER BY p.name
+    ");
+    $stmt->execute([$station_id]);
+    $merchProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Load fuel products with current pricing
+    $stmt = $pdo->prepare("
+        SELECT p.*, si.stock_level, si.unit, si.status as inventory_status,
+               fp.price_per_liter as price
+        FROM products p
+        INNER JOIN product_types pt ON p.type_id = pt.id
+        INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? AND si.status = 'active'
+        LEFT JOIN fuel_pricing fp ON fp.fuel_type_id = p.type_id AND fp.station_id = ? AND fp.is_active = 1
+        WHERE pt.name = 'fuel'
+        ORDER BY p.name
+    ");
+    $stmt->execute([$station_id, $station_id]);
+    $fuelProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Fallback to products.price if fuel_pricing not available
+    foreach ($fuelProducts as &$fp) {
+        if (!$fp['price'] && $fp['price'] > 0) {
+            $fp['price'] = $fp['price'] ?? $fp['price'];
+        }
+    }
+    
+    $inventory = [
+        'fuel' => $fuelProducts,
+        'merch' => $merchProducts
+    ];
+    
+    // Load all fuel pricing for display
+    $stmt = $pdo->prepare("
+        SELECT fp.*, ft.name as fuel_name
+        FROM fuel_pricing fp
+        INNER JOIN fuel_types ft ON fp.fuel_type_id = ft.id
+        WHERE fp.station_id = ? AND fp.is_active = 1
+        ORDER BY ft.name
+    ");
+    $stmt->execute([$station_id]);
+    $fuelPricing = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+} catch (Exception $e) {
+    $inventory = ['fuel' => [], 'merch' => []];
+    $fuelPricing = [];
+}
 
 // Fetch Pending Transactions for Admin
 $pending_transactions = [];
@@ -270,10 +382,10 @@ include __DIR__ . '/../partials/header.php';
 </div>
 
 <?php if($msg): ?>
-<div id="toast" class="toast show" style="background: <?php echo strpos($msg, 'Error')!==false ? '#dc3545' : '#28a745'; ?>;">
+<div id="toast" class="toast show" style="background: <?php echo strpos($msg, 'Error')!==false ? '#dc3545' : '#28a745'; ?>; position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); padding: 16px 20px; border-radius: 8px; color: white; font-weight: 500; z-index: 1000; max-width: 500px;">
     <?php echo $msg; ?>
 </div>
-<script>setTimeout(() => document.getElementById('toast').remove(), 3000);</script>
+<script>setTimeout(() => { const el = document.getElementById('toast'); if(el) el.remove(); }, <?php echo strpos($msg, 'Error')!==false ? '8000' : '3000'; ?>);</script>
 <?php endif; ?>
 
 <?php if ($isAdmin && !isset($_SESSION['pos_verified'])): ?>
@@ -505,21 +617,38 @@ function closeModal(id) {
                 </div>
                 
                 <div class="form-group mb-3">
-                    <label class="lbl">Item / Service</label>
-                    <input type="text" name="item_name" class="inp full" placeholder="e.g. Diesel, Oil Change" required>
+                    <label class="lbl">Product Type</label>
+                    <select name="product_type" id="product_type" class="inp full" required onchange="loadProducts()">
+                        <option value="">Select Type</option>
+                        <option value="fuel">Fuel</option>
+                        <option value="merch">Merchandise</option>
+                    </select>
                 </div>
                 
                 <div class="form-group mb-3">
-                    <label class="lbl">Quantity</label>
-                    <input type="number" name="quantity" class="inp full" value="1" min="1" required oninput="calcTotal()">
+                    <label class="lbl">Product</label>
+                    <select name="product_id" id="product_id" class="inp full" required onchange="updatePrice()">
+                        <option value="">Select Product</option>
+                    </select>
+                    <small class="muted" id="stock_info">Select a product type first</small>
+                </div>
+                
+                <div class="form-group mb-3">
+                    <label class="lbl">Quantity/Liters</label>
+                    <input type="number" name="quantity" id="quantity" class="inp full" value="1" min="1" required oninput="calcTotal()">
                 </div>
             </div>
             
             <!-- Right Column -->
             <div>
                 <div class="form-group mb-3">
-                    <label class="lbl">Price</label>
-                    <input type="number" name="price" class="inp full" step="0.01" placeholder="0.00" required oninput="calcTotal()">
+                    <label class="lbl">Price (₱)</label>
+                    <input type="number" name="price" id="price" class="inp full" step="0.01" placeholder="0.00" readonly required style="background: #f0f0f0;">
+                </div>
+                
+                <div class="form-group mb-3">
+                    <label class="lbl">Unit</label>
+                    <input type="text" id="unit_display" class="inp full" readonly style="background: #f0f0f0;">
                 </div>
                 
                 <div class="form-group mb-3">
@@ -579,9 +708,63 @@ function closeModal(id) {
 <?php endif; ?>
 
 <script>
+// Product data loaded from PHP
+const inventoryData = <?php echo json_encode($inventory); ?>;
+
+function loadProducts() {
+    const type = document.getElementById('product_type').value;
+    const productSelect = document.getElementById('product_id');
+    const stockInfo = document.getElementById('stock_info');
+    
+    productSelect.innerHTML = '<option value="">Select Product</option>';
+    
+    if (type && inventoryData[type]) {
+        inventoryData[type].forEach(product => {
+            const option = document.createElement('option');
+            option.value = product.id;
+            
+            const stockLevel = parseFloat(product.stock_level) || 0;
+            const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
+            const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.unit || 'pc'})`;
+            
+            option.textContent = `${product.name}${stockText}`;
+            option.dataset.price = product.price || 0;
+            option.dataset.stock = stockLevel;
+            option.dataset.unit = product.unit || '';
+            option.style = stockClass;
+            
+            productSelect.appendChild(option);
+        });
+        stockInfo.textContent = `Found ${inventoryData[type].length} products`;
+    } else {
+        stockInfo.textContent = 'Select a product type first';
+    }
+    
+    updatePrice();
+}
+
+function updatePrice() {
+    const productSelect = document.getElementById('product_id');
+    const priceInput = document.getElementById('price');
+    const unitInput = document.getElementById('unit_display');
+    const qtyInput = document.getElementById('quantity');
+    
+    const selectedOption = productSelect.options[productSelect.selectedIndex];
+    
+    if (selectedOption && selectedOption.value) {
+        priceInput.value = selectedOption.dataset.price || 0;
+        unitInput.value = selectedOption.dataset.unit || '';
+        calcTotal();
+    } else {
+        priceInput.value = '';
+        unitInput.value = '';
+        document.getElementById('displayTotal').innerText = '₱0.00';
+    }
+}
+
 function calcTotal() {
-    const qty = parseFloat(document.querySelector('[name=quantity]').value) || 0;
-    const price = parseFloat(document.querySelector('[name=price]').value) || 0;
+    const qty = parseFloat(document.getElementById('quantity').value) || 0;
+    const price = parseFloat(document.getElementById('price').value) || 0;
     const discount = parseFloat(document.querySelector('[name=discount]').value) || 0;
     const total = (qty * price) - discount;
     document.getElementById('displayTotal').innerText = '₱' + total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
@@ -623,61 +806,102 @@ function toggleGcashRef() {
     }
 }
 
+function showErrorDialog(message) {
+    const modal = document.createElement('div');
+    modal.className = 'modal show';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3 class="modal-title">⚠️ Validation Error</h3>
+                <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: #666; margin: 0;">${message}</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn primary" onclick="this.closest('.modal').remove()">OK</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
 function validatePayment() {
     // Get form elements
     const customerName = document.querySelector('input[name="customer_name"]').value.trim();
-    const itemName = document.querySelector('input[name="item_name"]').value.trim();
-    const quantity = document.querySelector('input[name="quantity"]').value;
-    const price = document.querySelector('input[name="price"]').value;
+    const productType = document.getElementById('product_type').value;
+    const productId = document.getElementById('product_id').value;
+    const quantity = document.getElementById('quantity').value;
+    const price = document.getElementById('price').value;
     const paymentType = document.getElementById('payment_method_pos').value;
     const gcashRefInput = document.getElementById('gcash_ref_number');
     
     // Validate customer name
     if (!customerName) {
-        alert('⚠️ Customer name is required. Please enter a customer name or "Walk-in".');
+        showErrorDialog('Customer name is required. Please enter a customer name or "Walk-in".');
         return false;
     }
     
-    // Validate item name
-    if (!itemName) {
-        alert('⚠️ Item name is required. Please enter the product/service name.');
+    // Validate product type
+    if (!productType) {
+        showErrorDialog('Product type is required. Please select Fuel or Merchandise.');
         return false;
+    }
+    
+    // Validate product
+    if (!productId) {
+        showErrorDialog('Product is required. Please select a product from the dropdown.');
+        return false;
+    }
+    
+    // Validate stock availability
+    const productSelect = document.getElementById('product_id');
+    const selectedOption = productSelect.options[productSelect.selectedIndex];
+    if (selectedOption) {
+        const availableStock = parseFloat(selectedOption.dataset.stock) || 0;
+        const requestedQty = parseFloat(quantity) || 0;
+        
+        // All products in dropdown are guaranteed to have stock > 0 (INNER JOIN from station_inventory)
+        if (requestedQty > availableStock) {
+            showErrorDialog(`Insufficient stock! Available: ${availableStock} ${selectedOption.dataset.unit}. Requested: ${requestedQty} ${selectedOption.dataset.unit}.`);
+            return false;
+        }
     }
     
     // Validate quantity
     if (!quantity || parseFloat(quantity) <= 0) {
-        alert('⚠️ Quantity must be greater than 0.');
+        showErrorDialog('Quantity must be greater than 0.');
         return false;
     }
     
     // Validate price
     if (!price || parseFloat(price) < 0) {
-        alert('⚠️ Price must be a valid amount (0 or greater).');
+        showErrorDialog('Price must be a valid amount (0 or greater).');
         return false;
     }
     
     // Validate payment type
     if (!paymentType) {
-        alert('⚠️ Payment method is required. Please select Cash or GCash.');
+        showErrorDialog('Payment method is required. Please select Cash or GCash.');
         return false;
     }
     
     // Validate GCash reference if GCash is selected
     if (paymentType === 'GCash') {
         if (!gcashRefInput.value.trim()) {
-            alert('⚠️ GCash reference number is required for GCash payments.');
+            showErrorDialog('GCash reference number is required for GCash payments.');
             return false;
         }
         
         // Validate GCash reference format (at least 5 characters, alphanumeric)
         const gcashRef = gcashRefInput.value.trim();
         if (gcashRef.length < 5) {
-            alert('⚠️ GCash reference number must be at least 5 characters long.');
+            showErrorDialog('GCash reference number must be at least 5 characters long.');
             return false;
         }
         
         if (!/^[a-zA-Z0-9]+$/.test(gcashRef)) {
-            alert('⚠️ GCash reference number must contain only letters and numbers.');
+            showErrorDialog('GCash reference number must contain only letters and numbers.');
             return false;
         }
     }
