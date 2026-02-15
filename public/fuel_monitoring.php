@@ -28,12 +28,28 @@ try {
     if ($station) $station_name = $station['name'];
 } catch(Exception $e) {}
 
-// Fetch fuel stations (pumps) for this station
-$fuel_stations = [];
+// Fetch fuel inventory for this station
+$fuel_inventory = [];
 try {
-    $stmt = $pdo->prepare("SELECT id, fuel_type, pump_number, status FROM fuel_stations WHERE station_id = ? ORDER BY pump_number");
+    $stmt = $pdo->prepare("
+        SELECT 
+            fi.id, fi.product_id, fi.stock_level, fi.capacity, fi.reorder_level,
+            p.name as fuel_name, p.sku
+        FROM fuel_inventory fi
+        JOIN products p ON fi.product_id = p.id
+        WHERE fi.station_id = ? AND p.status = 'active'
+        ORDER BY p.name
+    ");
     $stmt->execute([$station_id]);
-    $fuel_stations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $fuel_inventory = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch(Exception $e) {}
+
+// Fetch fuel pumps for this station
+$fuel_pumps = [];
+try {
+    $stmt = $pdo->prepare("SELECT id, pump_number, status FROM fuel_pumps WHERE station_id = ? ORDER BY pump_number");
+    $stmt->execute([$station_id]);
+    $fuel_pumps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch(Exception $e) {}
 
 // Fetch daily readings
@@ -113,7 +129,7 @@ include __DIR__ . '/../partials/header.php';
     <span class="badge" style="background: #3b82f6; color: white; padding: 6px 12px; border-radius: 4px;">
       <i class="fas fa-building"></i> <?php echo htmlspecialchars($station_name); ?>
     </span>
-    <span class="muted" style="font-size: 12px;"><?php echo count($fuel_stations); ?> Pumps</span>
+    <span class="muted" style="font-size: 12px;"><?php echo count($fuel_pumps); ?> Pumps | <?php echo count($fuel_inventory); ?> Fuel Types</span>
   </div>
 </div>
 
@@ -135,7 +151,78 @@ include __DIR__ . '/../partials/header.php';
   </div>
 </div>
 
-<!-- Report Content -->
+<!-- Fuel Inventory Overview -->
+<?php if(!empty($fuel_inventory)): ?>
+<div class="card" style="margin-bottom: 20px;">
+  <div class="card-head">
+    <div class="card-title"><i class="fas fa-cubes"></i> Current Fuel Inventory</div>
+    <div class="muted">Stock levels by fuel type at this station</div>
+  </div>
+  <div style="padding: 20px;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px;">
+      <?php foreach($fuel_inventory as $fuel): 
+        $stock = floatval($fuel['stock_level']);
+        $capacity = floatval($fuel['capacity']);
+        $reorder = floatval($fuel['reorder_level']);
+        $percent = $capacity > 0 ? ($stock / $capacity * 100) : 0;
+        
+        // Determine status color
+        if ($stock <= $reorder) {
+          $status_color = '#dc2626'; // red - low stock
+          $status_label = 'Low Stock';
+        } elseif ($percent >= 80) {
+          $status_color = '#10b981'; // green - good
+          $status_label = 'Adequate';
+        } else {
+          $status_color = '#f59e0b'; // amber - moderate
+          $status_label = 'Moderate';
+        }
+      ?>
+      <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; background: #f8fafc;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div>
+            <div style="font-weight: 600; color: #1f2937;"><?php echo htmlspecialchars($fuel['fuel_name']); ?></div>
+            <div style="font-size: 12px; color: #6b7280;">SKU: <?php echo htmlspecialchars($fuel['sku']); ?></div>
+          </div>
+          <span style="background: <?php echo $status_color; ?>; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+            <?php echo htmlspecialchars($status_label); ?>
+          </span>
+        </div>
+        
+        <!-- Progress bar -->
+        <div style="background: #e5e7eb; border-radius: 4px; height: 8px; margin-bottom: 12px; overflow: hidden;">
+          <div style="background: <?php echo $status_color; ?>; height: 100%; width: <?php echo min($percent, 100); ?>%;" />
+        </div>
+        
+        <!-- Stock info -->
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-size: 14px; font-weight: 600; color: #1f2937;">
+              <?php echo number_format($stock, 1); ?> L
+            </div>
+            <div style="font-size: 12px; color: #6b7280;">
+              of <?php echo number_format($capacity, 1); ?> L
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 12px; color: #6b7280;">Reorder at</div>
+            <div style="font-size: 13px; font-weight: 600; color: #1f2937;">
+              <?php echo number_format($reorder, 1); ?> L
+            </div>
+          </div>
+        </div>
+        
+        <!-- Percentage -->
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 12px;">
+          <?php echo number_format($percent, 1); ?>% Capacity
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
 <?php if($view === 'daily'): ?>
   <div class="card">
     <div class="card-head">

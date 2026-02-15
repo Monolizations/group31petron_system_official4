@@ -162,6 +162,22 @@ try {
     $metrics['jobs_delayed'] = $res['delayed'] ?? 0;
 } catch(Exception $e){}
 
+// Fetch Fuel Inventory Status
+$fuel_inventory_status = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT 
+            fi.id, fi.product_id, fi.stock_level, fi.capacity, fi.reorder_level,
+            p.name as fuel_name, p.sku
+        FROM fuel_inventory fi
+        JOIN products p ON fi.product_id = p.id
+        WHERE fi.station_id = ? AND p.status = 'active'
+        ORDER BY p.name
+    ");
+    $stmt->execute($station_param);
+    $fuel_inventory_status = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch(Exception $e) {}
+
 // Fetch Activity Logs
 $logs = [];
 $filter_user = $_GET['filter_user'] ?? '';
@@ -530,32 +546,44 @@ if ($role === 'manager') {
           <canvas id="salesTrendChart"></canvas>
         </div>
       </div>
-      <!-- Fuel Levels -->
-      <div class="dash-card">
-        <div class="dash-head">
-          <div class="dash-title">Fuel Levels</div>
-        </div>
-        <div style="display:flex; flex-direction:column; justify-content:center; height:160px;">
-          <?php
-          $fuels = [
-            ['name'=>'Diesel', 'pct'=>75, 'color'=>'#22c55e'],
-            ['name'=>'Premium', 'pct'=>45, 'color'=>'#3b82f6'],
-            ['name'=>'Regular', 'pct'=>20, 'color'=>'#f59e0b']
-          ];
-          foreach($fuels as $f):
-          ?>
-          <div class="fuel-bar-row">
-            <div class="fuel-bar-label">
-              <span><?php echo $f['name']; ?></span>
-              <span><?php echo $f['pct']; ?>%</span>
-            </div>
-            <div class="fuel-progress">
-              <div class="fuel-fill" style="width:<?php echo $f['pct']; ?>%; background:<?php echo $f['color']; ?>;"></div>
-            </div>
-          </div>
-          <?php endforeach; ?>
-        </div>
-      </div>
+       <!-- Fuel Levels -->
+       <div class="dash-card">
+         <div class="dash-head">
+           <div class="dash-title">Fuel Inventory Status</div>
+         </div>
+         <div style="display:flex; flex-direction:column; justify-content:center; height:160px;">
+           <?php
+           if(!empty($fuel_inventory_status)):
+             foreach($fuel_inventory_status as $fuel):
+               $stock = floatval($fuel['stock_level']);
+               $capacity = floatval($fuel['capacity']);
+               $pct = $capacity > 0 ? ($stock / $capacity * 100) : 0;
+               
+               if ($stock <= floatval($fuel['reorder_level'])) {
+                 $color = '#dc2626';
+               } elseif ($pct >= 80) {
+                 $color = '#22c55e';
+               } else {
+                 $color = '#f59e0b';
+               }
+           ?>
+           <div class="fuel-bar-row">
+             <div class="fuel-bar-label">
+               <span><?php echo htmlspecialchars($fuel['fuel_name']); ?></span>
+               <span><?php echo number_format($pct, 0); ?>%</span>
+             </div>
+             <div class="fuel-progress">
+               <div class="fuel-fill" style="width:<?php echo min($pct, 100); ?>%; background:<?php echo $color; ?>;"></div>
+             </div>
+           </div>
+           <?php 
+             endforeach;
+           else:
+           ?>
+           <p style="color:#888; font-size:12px; text-align:center; margin:0;">No fuel inventory data available</p>
+           <?php endif; ?>
+         </div>
+       </div>
     </div>
 
     <!-- ROW 3: ALERTS & JOB ORDERS -->

@@ -563,6 +563,98 @@ include __DIR__ . '/../partials/header.php';
         </div>
     </div>
 
+    <!-- Fuel Inventory Overview Section -->
+    <?php
+    // Fetch fuel inventory for all stations
+    $fuel_inventory_overview = [];
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 
+                s.id as station_id, s.name as station_name,
+                fi.product_id, fi.stock_level, fi.capacity, fi.reorder_level,
+                p.name as fuel_name, p.sku
+            FROM fuel_inventory fi
+            JOIN products p ON fi.product_id = p.id
+            JOIN stations s ON fi.station_id = s.id
+            WHERE p.status = 'active'
+            ORDER BY s.name, p.name
+        ");
+        $stmt->execute();
+        $fuel_inventory_overview = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(Exception $e) {}
+    
+    if (!empty($fuel_inventory_overview)) {
+        // Group by station
+        $by_station = [];
+        foreach ($fuel_inventory_overview as $item) {
+            $station = $item['station_name'];
+            if (!isset($by_station[$station])) {
+                $by_station[$station] = [];
+            }
+            $by_station[$station][] = $item;
+        }
+    ?>
+    <div class="report-section" style="margin-bottom: 30px;">
+        <div class="section-header">
+            <h2 class="section-title"><i class="fas fa-cubes" style="margin-right: 10px;"></i>Fuel Inventory Status</h2>
+            <div class="muted" style="font-size: 12px;">Current fuel stock levels across all stations</div>
+        </div>
+        
+        <div style="display: grid; gap: 20px;">
+            <?php foreach ($by_station as $station_name => $fuels): ?>
+            <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; background: #f9fafb;">
+                <h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #1f2937;">
+                    <i class="fas fa-building" style="margin-right: 8px; color: #3b82f6;"></i><?php echo htmlspecialchars($station_name); ?>
+                </h3>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                    <?php foreach ($fuels as $fuel):
+                        $stock = floatval($fuel['stock_level']);
+                        $capacity = floatval($fuel['capacity']);
+                        $reorder = floatval($fuel['reorder_level']);
+                        $percent = $capacity > 0 ? ($stock / $capacity * 100) : 0;
+                        
+                        if ($stock <= $reorder) {
+                            $status_color = '#dc2626';
+                            $status_bg = '#fee2e2';
+                            $status_label = 'Low Stock';
+                        } elseif ($percent >= 80) {
+                            $status_color = '#10b981';
+                            $status_bg = '#ecfdf5';
+                            $status_label = 'Adequate';
+                        } else {
+                            $status_color = '#f59e0b';
+                            $status_bg = '#fffbeb';
+                            $status_label = 'Moderate';
+                        }
+                    ?>
+                    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+                            <div style="font-weight: 600; color: #1f2937; font-size: 13px;">
+                                <?php echo htmlspecialchars($fuel['fuel_name']); ?>
+                            </div>
+                            <span style="background: <?php echo $status_bg; ?>; color: <?php echo $status_color; ?>; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;">
+                                <?php echo htmlspecialchars($status_label); ?>
+                            </span>
+                        </div>
+                        
+                        <div style="background: #f3f4f6; border-radius: 3px; height: 6px; margin-bottom: 8px; overflow: hidden;">
+                            <div style="background: <?php echo $status_color; ?>; height: 100%; width: <?php echo min($percent, 100); ?>%;" />
+                        </div>
+                        
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #6b7280;">
+                            <span><?php echo number_format($stock, 1); ?> / <?php echo number_format($capacity, 1); ?> L</span>
+                            <span><?php echo number_format($percent, 0); ?>%</span>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php } ?>
+
     <!-- Report Section -->
     <div class="report-section">
         <div class="section-header">
