@@ -23,12 +23,14 @@ CREATE TABLE IF NOT EXISTS price_change_logs (
   old_price DECIMAL(10,2),
   new_cost DECIMAL(10,2),
   new_price DECIMAL(10,2),
-  action VARCHAR(50), -- proposed, approved, rejected
+  action VARCHAR(50), -- proposed, approved, rejected, batch_pricing
   user_id INT,
+  batch_id INT NULL COMMENT 'Related receiving batch if pricing is from batch workflow',
   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   notes VARCHAR(255),
   FOREIGN KEY (product_id) REFERENCES products(id),
-  FOREIGN KEY (user_id) REFERENCES users(id)
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (batch_id) REFERENCES receiving_batches(id)
 );
 
 -- Create price approval queue table

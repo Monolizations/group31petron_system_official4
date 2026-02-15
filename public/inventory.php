@@ -38,8 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST')
                 // Input validation
                 if (empty($fuel_type)) {
                     $msg = "❌ Error: Fuel type is required.";
-                } elseif (!in_array($fuel_type, ["Diesel Max", "XCS Plus", "XCS Advance", "Turbo Diesel", "Kerosene"])) {
-                    $msg = "❌ Error: Invalid fuel type.";
                 } elseif ($liters <= 0 || $liters > 100000) { // Reasonable max to prevent abuse
                     $msg = "❌ Error: Liters must be a positive number and less than 100,000.";
                 } elseif ($role === 'superadmin' && empty($station)) {
@@ -607,16 +605,17 @@ include __DIR__ . '/../partials/header.php';
 
     <div class="table-wrap">
       <table class="table">
-        <thead>
-          <tr>
-            <?php if ($role === 'superadmin'): ?><th>Station</th><?php endif; ?>
-            <th>Date Received</th>
-            <th>Item</th>
-            <th>Quantity</th>
-            <th>Received By</th>
-            <th class="right">Actions</th>
-          </tr>
-        </thead>
+         <thead>
+           <tr>
+             <?php if ($role === 'superadmin'): ?><th>Station</th><?php endif; ?>
+             <th>Date Received</th>
+             <th>Item</th>
+             <th>Quantity</th>
+             <th>Received By</th>
+             <th>Supplier</th>
+             <th class="right">Actions</th>
+           </tr>
+         </thead>
         <tbody>
           <?php
           // Fetch received items from database
@@ -649,18 +648,19 @@ include __DIR__ . '/../partials/header.php';
             $received_items = [];
           }
           ?>
-          <?php foreach ($received_items as $item): ?>
-            <tr>
-              <?php if ($role === 'superadmin'): ?><td>Main Station</td><?php endif; ?>
-              <td><?php echo date('M d, Y', strtotime($item['received_date'] ?? '')); ?></td>
-              <td><?php echo htmlspecialchars($item['item_name'] ?? ''); ?></td>
-              <td><?php echo number_format($item['quantity'] ?? 0, 0); ?></td>
-              <td><?php echo htmlspecialchars($item['received_by_name'] ?? ''); ?></td>
-              <td class="right">
-                <button class="btn ghost small" onclick="viewReceivedItem(<?php echo $item['id']; ?>)">View</button>
-              </td>
-            </tr>
-          <?php endforeach; ?>
+           <?php foreach ($received_items as $item): ?>
+             <tr>
+               <?php if ($role === 'superadmin'): ?><td>Main Station</td><?php endif; ?>
+               <td><?php echo date('M d, Y', strtotime($item['received_date'] ?? '')); ?></td>
+               <td><?php echo htmlspecialchars($item['item_name'] ?? ''); ?></td>
+               <td><?php echo number_format($item['quantity'] ?? 0, 0); ?></td>
+               <td><?php echo htmlspecialchars($item['received_by_name'] ?? ''); ?></td>
+               <td><?php echo htmlspecialchars($item['supplier'] ?? '-'); ?></td>
+               <td class="right">
+                 <button class="btn ghost small" onclick="viewReceivedItem(<?php echo $item['id']; ?>)">View</button>
+               </td>
+             </tr>
+           <?php endforeach; ?>
         </tbody>
       </table>
     </div>
@@ -937,11 +937,6 @@ include __DIR__ . '/../partials/header.php';
           <label class="pay-label">Fuel Type</label>
           <select class="select" name="fuel_type" id="fuelSelect" required>
             <option value="">-- Select Fuel Type --</option>
-            <option value="Diesel Max">Diesel Max</option>
-            <option value="XCS Plus">XCS Plus</option>
-            <option value="XCS Advance">XCS Advance</option>
-            <option value="Turbo Diesel">Turbo Diesel</option>
-            <option value="Kerosene">Kerosene</option>
           </select>
         </div>
         <div class="pay-section">
@@ -1093,6 +1088,19 @@ function deleteMerch(id, name) {
         form.submit();
     }
 }
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateFuelTypes('fuelSelect', '-- Select Fuel Type --')
+        .then(() => console.log('Fuel types loaded'))
+        .catch(error => {
+            console.error('Failed to load fuel types:', error);
+            alert('Failed to load fuel types. Please refresh.');
+        });
+});
 </script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

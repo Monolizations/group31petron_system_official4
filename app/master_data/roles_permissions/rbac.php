@@ -23,6 +23,7 @@ define('VIEW_TRANSACTION_LOGS', 'VIEW_TRANSACTION_LOGS');
 define('VIEW_INVENTORY_LOGS', 'VIEW_INVENTORY_LOGS');
 define('MANAGE_SERVICE_RATES', 'MANAGE_SERVICE_RATES');
 define('MANAGE_CALIBRATION_VALUES', 'MANAGE_CALIBRATION_VALUES');
+define('UNLOCK_RECORDS', 'UNLOCK_RECORDS');
 
 // Manager-specific permissions
 define('VIEW_MANAGER_DASHBOARD', 'VIEW_MANAGER_DASHBOARD');
@@ -30,6 +31,10 @@ define('REVIEW_PENDING_JOB_ORDERS', 'REVIEW_PENDING_JOB_ORDERS');
 define('VIEW_JOB_ORDER_HISTORY', 'VIEW_JOB_ORDER_HISTORY');
 define('VERIFY_FUEL_RECONCILIATION', 'VERIFY_FUEL_RECONCILIATION');
 define('VERIFY_SHIFT_REPORTS', 'VERIFY_SHIFT_REPORTS');
+define('FINALIZE_FUEL_RECONCILIATION', 'FINALIZE_FUEL_RECONCILIATION');
+define('FINALIZE_SHIFT_REPORTS', 'FINALIZE_SHIFT_REPORTS');
+define('APPROVE_INVENTORY_ADJUSTMENTS', 'APPROVE_INVENTORY_ADJUSTMENTS');
+define('APPROVE_DELIVERIES', 'APPROVE_DELIVERIES');
 define('VIEW_LOGS', 'VIEW_LOGS');
 define('APPROVE_REPORTS', 'APPROVE_REPORTS');
 
@@ -68,10 +73,8 @@ $role_permissions = [
     ],
     
     'admin' => [
-        // Station-specific permissions
+        // Admin (Owner) - Read-only operations, can unlock finalized records
         VIEW_STATION_PROFILE,
-        RESET_PASSWORD,
-        DEACTIVATE_USER,
         VIEW_ALL_USERS, // Limited to their station
         GENERATE_NATIONWIDE_SALES_REPORT, // Limited to their station
         GENERATE_FUEL_REPORT, // Limited to their station
@@ -79,29 +82,35 @@ $role_permissions = [
         VIEW_USER_LOGS, // Limited to their station
         VIEW_TRANSACTION_LOGS, // Limited to their station
         VIEW_INVENTORY_LOGS, // Limited to their station
+        UNLOCK_RECORDS, // Can unlock finalized records with password + reason
     ],
     
     'manager' => [
         // Manager Dashboard permissions
         VIEW_MANAGER_DASHBOARD,
-        
+
         // Job Order Review permissions
         REVIEW_PENDING_JOB_ORDERS,
         VIEW_JOB_ORDER_HISTORY,
-        
+
         // Reconciliation Verification permissions
         VERIFY_FUEL_RECONCILIATION,
         VERIFY_SHIFT_REPORTS,
-        
+
+        // Reconciliation Finalization (Manager can finalize)
+        FINALIZE_FUEL_RECONCILIATION,
+        FINALIZE_SHIFT_REPORTS,
+
+        // Inventory Approvals (Manager can approve)
+        APPROVE_INVENTORY_ADJUSTMENTS,
+        APPROVE_DELIVERIES,
+
         // Audit View permissions
         VIEW_LOGS,
-        
-        // Approvals permissions
-        APPROVE_REPORTS,
-        
+
         // Station-specific permissions
         VIEW_STATION_PROFILE,
-        RESET_PASSWORD, // Limited to their station staff
+        RESET_PASSWORD, // Limited to their station
         VIEW_ALL_USERS, // Limited to their station
         GENERATE_NATIONWIDE_SALES_REPORT, // Limited to their station
         GENERATE_FUEL_REPORT, // Limited to their station

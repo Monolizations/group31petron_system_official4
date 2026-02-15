@@ -59,7 +59,7 @@ try {
     $stmt = $pdo->prepare("INSERT INTO users (username, password, name, email, role, station_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
     $stmt->execute([
         $username,
-        $password, // Store as plain text first
+        password_hash($password, PASSWORD_DEFAULT),
         'Petron Admin',
         'admin@petron.com',
         'admin',

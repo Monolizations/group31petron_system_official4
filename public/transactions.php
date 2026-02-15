@@ -118,12 +118,8 @@ include __DIR__ . '/../partials/header.php';
         </div>
         <div>
             <label class="lbl">Payment</label>
-            <select name="payment" class="inp">
+            <select name="payment" id="payment_method_transactions" class="inp">
                 <option value="">All</option>
-                <option value="Cash" <?php echo $payment=='Cash'?'selected':''; ?>>Cash</option>
-                <option value="Card" <?php echo $payment=='Card'?'selected':''; ?>>Card</option>
-                <option value="Credit" <?php echo $payment=='Credit'?'selected':''; ?>>Credit</option>
-                <option value="GCash" <?php echo $payment=='GCash'?'selected':''; ?>>GCash</option>
             </select>
         </div>
         <div>
@@ -233,6 +229,14 @@ function viewTransaction(id) {
 function closeModal(id) {
     document.getElementById(id).classList.remove('show');
 }
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populatePaymentMethods('payment_method_transactions', 'All');
+});
 </script>
 
 <style>

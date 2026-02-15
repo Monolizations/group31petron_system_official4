@@ -1,0 +1,221 @@
+=== USER ACCOUNTS LIST ===
+Project: Petron Station & Service Center Management System
+Generated: 2026-02-14
+Database: petron_pos_db_secure
+Environment: DEVELOPMENT
+
+------------------------------------------------------------------
+[1] SUPERADMIN ACCOUNT
+------------------------------------------------------------------
+ID:           1
+Username:     superadmin
+Password:     (Hash stored in database)
+Password Hash: $2y$10$vIH4dgr29FVfXbKyaa7U1OrCMx4ZuetW1ZwRDwuQbsYLLwdqA/36i
+Name:         Super Admin
+Email:        superadmin@petron.com
+Role:         superadmin
+Station ID:   NULL
+Status:       active
+Note:         Default password unknown (bcrypt hash only)
+
+------------------------------------------------------------------
+[2] ADMIN ACCOUNT
+------------------------------------------------------------------
+ID:           2
+Username:     admin
+Password:     amie
+Password Hash: $2y$10$zmp4gudKmzwW8HbYKv2Q7eTQF/Iq/TowjsNcgOwtBvPWKLuIlnT9S
+Name:         Admin
+Email:        admin@petron.com
+Role:         admin
+Station ID:   NULL
+Status:       active
+Verified:     ✓ Password verified (2026-02-14)
+
+------------------------------------------------------------------
+[3] MANAGER ACCOUNT
+------------------------------------------------------------------
+ID:           3
+Username:     manager
+Password:     manager123
+Password Hash: $2y$10$HuWyX12kJJDAubd2yWrBQuTbxvemn/YvdEO.qWv00BWbprY00I7b6
+Name:         Station Manager
+Email:        manager@petron.com
+Role:         manager
+Station ID:   1
+Status:       active
+Verified:     ✓ Password verified (2026-02-14)
+
+------------------------------------------------------------------
+[4] OPERATIONS STAFF ACCOUNT
+------------------------------------------------------------------
+ID:           4
+Username:     operations
+Password:     operations123
+Password Hash: $2y$10$noiaaIMqkpHujnNoKE92ceolYVjG5P7wSpTs0y/ouC2wjHwoxYrDa
+Name:         Operations Staff
+Email:        operations@petron.com
+Role:         operations_staff
+Station ID:   1
+Status:       active
+Verified:     ✓ Password verified (2026-02-14)
+
+------------------------------------------------------------------
+[5] STAFF ACCOUNT - Juan Carlo
+------------------------------------------------------------------
+ID:           5
+Username:     juan.carlo
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$FPAZIKierCzy9Tr/PqVa.u.sicyWM9r8SAy7JO5994UyoVXQx3BZS
+Name:         Juan Carlo
+Email:        (Not set)
+Role:         staff
+Station ID:   NULL
+Status:       active
+Note:         Likely default password: Staff123! (not verified)
+
+------------------------------------------------------------------
+[6] STAFF ACCOUNT - Carla
+------------------------------------------------------------------
+ID:           6
+Username:     carla
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$vJkcoK1ekWO3iNtL7P5BI.uY4piTKR4nMGL5PCFRP.Y1rk7robiNG
+Name:         Carla
+Email:        (Not set)
+Role:         staff
+Station ID:   NULL
+Status:       active
+Note:         Likely default password: Staff123! (not verified)
+
+------------------------------------------------------------------
+[7] STAFF ACCOUNT - Miguel
+------------------------------------------------------------------
+ID:           7
+Username:     miguel
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$E75FtVdHlD3vW1x.sM6Ec..MdvemI7f6O7QrYjptofXftaKHe9/x2
+Name:         Miguel
+Email:        (Not set)
+Role:         staff
+Station ID:   NULL
+Status:       active
+Note:         Likely default password: Staff123! (not verified)
+
+------------------------------------------------------------------
+[8] STAFF ACCOUNT - Andrea
+------------------------------------------------------------------
+ID:           8
+Username:     andrea
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$fpazu0ufqlPUCUM416C4m.17bc9dPNWvoVQ1c8.0HsSk.OEjO.Aem
+Name:         Andrea
+Email:        (Not set)
+Role:         staff
+Station ID:   NULL
+Status:       active
+Note:         Likely default password: Staff123! (not verified)
+
+------------------------------------------------------------------
+[9] STAFF ACCOUNT - Mark
+------------------------------------------------------------------
+ID:           9
+Username:     mark
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$R67TPE3vadfh1pmYJ33ruOKeroOWs42AbCXAxyD4wUvkvSJlBmpMK
+Name:         Mark
+Email:        (Not set)
+Role:         staff
+Station ID:   NULL
+Status:       active
+Note:         Likely default password: Staff123! (not verified)
+
+------------------------------------------------------------------
+[14] ADMIN ACCOUNT - Station 226
+------------------------------------------------------------------
+ID:           14
+Username:     amie
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$J6iLJbFR3vr2OUKgoyYgmen2A3BXDgBDW4qAs2IDPM8ijzT.kNaNa
+Name:         amie cabahug
+Email:        amie@gmail.com
+Role:         admin
+Station ID:   226
+Status:       active
+Note:         Likely default password: Admin123! or amie (not verified)
+
+------------------------------------------------------------------
+[15] STAFF ACCOUNT - ALTEA PAGALING (Station 226)
+------------------------------------------------------------------
+ID:           15
+Username:     altea
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$1Enh9TVIihLWCzAmBb9YHeZiGnj6u.FSY7VgeG5zCy4TM5vLt0/hO
+Name:         ALTEA PAGALING
+Email:        altea@gmail.com
+Role:         staff
+Station ID:   226
+Status:       active
+Note:         Likely default password: Staff123! (not verified)
+
+------------------------------------------------------------------
+[16] MANAGER ACCOUNT - pagaling,sandara jane m. (Station 226)
+------------------------------------------------------------------
+ID:           16
+Username:     sandara
+Password:     (Unknown - bcrypt hash only)
+Password Hash: $2y$10$4.LhjZIYKEOb051MFO172uoQYdR8L2fVCkbceof15EAKA2LyKL0O.
+Name:         pagaling,sandara jane m.
+Email:        sandara@gmail.com
+Role:         manager
+Station ID:   226
+Status:       active
+Note:         Likely default password: Manager123! (not verified)
+
+==================================================================
+SUMMARY
+==================================================================
+
+Total Accounts:     12
+Active Accounts:    12
+Inactive Accounts:  0
+
+By Role:
+  - Superadmin:  1
+  - Admin:       2
+  - Manager:     2
+  - Staff:       6
+  - Operations:  1
+
+By Station:
+  - Station 1:   3 (manager, operations)
+  - Station 226: 3 (amie/admin, altea/staff, sandara/manager)
+  - No Station:  6 (superadmin, admin, 5 staff)
+
+VERIFIED PASSWORDS:
+  ✓ admin:amie
+  ✓ manager:manager123
+  ✓ operations:operations123
+
+UNVERIFIED PASSWORDS (hashes only):
+  - superadmin (bcrypt hash stored)
+  - juan.carlo, carla, miguel, andrea, mark (likely: Staff123!)
+  - amie (station 226 admin, likely: Admin123! or amie)
+  - altea (likely: Staff123!)
+  - sandara (likely: Manager123!)
+
+SECURITY NOTES:
+  - All passwords are stored as bcrypt hashes ($2y$10$...)
+  - Hashes cannot be reversed to plaintext
+  - To reset passwords, use the password reset functionality
+  - Verified passwords were confirmed on 2026-02-14
+
+==================================================================
+END OF LIST
+==================================================================
+
+
+staff:
+
+michael
+gusion123

@@ -239,7 +239,9 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Role</label>
                     <select name="role" class="inp full" required>
                         <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
+                        <?php if($my_role === 'superadmin'): ?>
+                            <option value="manager">Manager</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -295,7 +297,11 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Role</label>
                     <select name="role" id="edit_role" class="inp full" required>
                         <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
+                        <?php if($my_role === 'superadmin'): ?>
+                            <option value="manager">Manager</option>
+                        <?php else: ?>
+                            <option value="manager" <?php echo ($edit_role ?? 'staff') === 'manager' ? 'selected' : ''; ?>>Manager</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">

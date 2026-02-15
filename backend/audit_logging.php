@@ -5,6 +5,36 @@
  */
 
 /**
+ * Log Admin Unlock Action to Activity Logs
+ * @param int $admin_id - Admin user ID
+ * @param string $table - Table of unlocked record
+ * @param int $record_id - ID of unlocked record
+ * @param string $reason - Reason for unlock
+ * @return bool - Success status
+ */
+function log_unlock_to_activity_log($admin_id, $table, $record_id, $reason) {
+    global $pdo;
+
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO activity_logs
+            (user_id, action, details, ip_address)
+            VALUES (?, 'Admin Unlock', ?, ?)
+        ");
+        $stmt->execute([
+            $admin_id,
+            sprintf('UNLOCKED %s #%d by Admin - Reason: %s', $table, $record_id, substr($reason, 0, 200)),
+            $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'
+        ]);
+
+        return true;
+    } catch (Exception $e) {
+        error_log("Failed to log unlock to activity logs: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
  * Log an action to the audit_logs table
  * @param int $user_id - The user performing the action (null for system)
  * @param string $log_type - Type of log: 'user', 'transaction', 'inventory', 'system'
@@ -253,6 +283,35 @@ function get_audit_logs_count($filters = []) {
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     
     return $result['count'] ?? 0;
+}
+
+/**
+ * Log Admin Unlock Operation
+ * @param int $admin_id - Admin user ID
+ * @param string $table - Table containing unlocked record
+ * @param int $record_id - ID of unlocked record
+ * @param string $reason - Reason for unlock
+ * @return bool - Success status
+ */
+function log_admin_unlock($admin_id, $table, $record_id, $reason) {
+    global $pdo;
+
+    try {
+        $sql = "INSERT INTO admin_unlocks (table_name, record_id, unlocked_by, unlock_reason, ip_address) VALUES (?, ?, ?, ?, ?)";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            $table,
+            $record_id,
+            $admin_id,
+            substr($reason, 0, 500),
+            $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'
+        ]);
+
+        return true;
+    } catch (Exception $e) {
+        error_log("Failed to log admin unlock: " . $e->getMessage());
+        return false;
+    }
 }
 
 /**

@@ -538,10 +538,6 @@ include __DIR__ . '/../partials/header.php';
         <div class="filters-section">
             <select class="filter-select" id="roleFilter">
                 <option value="">All Roles</option>
-                <option value="superadmin">Super Admin</option>
-                <option value="admin">Admin</option>
-                <option value="manager">Manager</option>
-                <option value="staff">Staff</option>
             </select>
             
             <select class="filter-select" id="stationFilter">
@@ -865,6 +861,14 @@ window.addEventListener('click', function(event) {
 <?php if ($notice && strpos($notice, 'successfully') !== false): ?>
 showToast('<?php echo htmlspecialchars($notice); ?>', 'success');
 <?php endif; ?>
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateRoles('roleFilter', 'All Roles');
+});
 </script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

@@ -341,11 +341,8 @@ require_once __DIR__ . '/../partials/header.php';
                 </div>
                 <div class="form-group">
                     <label>Role</label>
-                    <select name="role" required>
-                        <option value="admin">Admin</option>
-                        <option value="manager">Manager</option>
-                        <option value="staff">Staff</option>
-                        <option value="operations">Operations</option>
+                    <select name="role" id="dev_role_add" required>
+                        <option value="">Select role</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -545,17 +542,13 @@ function showAddUserModal() {
 function loadStationsForUser() {
     const stationSelect = document.querySelector('#addUserForm select[name="station_id"]');
     stationSelect.innerHTML = '<option value="">Select Station</option>';
-    
-    // In real implementation, fetch stations from database
-    const stations = [
-        {id: 1, name: 'PETRON CDO -Kauswagan'},
-        {id: 2, name: 'PETRON CDO -Uptown'},
-        {id: 3, name: 'PETRON CDO -Lapasan'}
-    ];
-    
-    stations.forEach(station => {
-        stationSelect.innerHTML += `<option value="${station.id}">${station.name}</option>`;
-    });
+
+    DataHelper.populateStations('assigned_station', 'Select Station')
+        .then(() => console.log('Stations loaded'))
+        .catch(error => {
+            console.error('Failed to load stations:', error);
+            alert('Failed to load stations. Please refresh.');
+        });
 }
 
 function addUser() {
@@ -772,13 +765,21 @@ function showToast(message, type = 'info') {
     toast.style.right = '20px';
     toast.style.zIndex = '10000';
     toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-    
+
     document.body.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.remove();
     }, 3000);
 }
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateRoles('dev_role_add', 'Select role');
+});
 </script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

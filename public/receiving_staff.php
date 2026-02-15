@@ -1,226 +1,405 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) session_start();
-$page_id = 'receiving_staff';
+$page_id = 'receiving_batches';
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
 require_login();
+
 $me = current_user();
 $station_id = user_station_id();
 $role = function_exists('role_key') ? role_key($me['role'] ?? '') : strtolower(trim($me['role'] ?? ''));
-if (!in_array($role, ['staff'])) { header("Location: dashboard.php"); exit; }
 
-include __DIR__ . '/../partials/header.php';
-?>
-<div class="page-head">
-  <div>
-    <h1 class="h1">Receiving (Staff)</h1>
-    <div class="sub">This page is part of the Receiving (Staff) module.</div>
-  </div>
-</div>
-<style>
-  .receive-layout { display: grid; grid-template-columns: 1.4fr 0.6fr; gap: 16px; }
-  .receive-card { background: #fff; border: 1px solid #eef1f5; border-radius: 14px; box-shadow: 0 10px 24px rgba(16,24,40,0.06); }
-  .receive-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #eef1f5; }
-  .receive-title { display: flex; align-items: center; gap: 10px; font-weight: 700; color: #0f172a; }
-  .receive-sub { color: #64748b; font-size: 13px; }
-  .receive-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-  .receive-tabs .btn { border-radius: 999px; }
-  .receive-body { padding: 18px 20px; }
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .form-field label { font-size: 12px; font-weight: 600; color: #475569; display: block; margin-bottom: 6px; }
-  .form-field input, .form-field textarea, .form-field select { width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; outline: none; }
-  .form-field input:focus, .form-field textarea:focus, .form-field select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
-  .form-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
-  .receive-body button.btn { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-  .receive-body .btn-primary { background: #2563eb; color: #fff; border: 0; }
-  .receive-body .btn-primary:hover { background: #1d4ed8; }
-  .tips { padding: 14px 16px; background: #f8fafc; border: 1px dashed #e2e8f0; border-radius: 12px; }
-  .tips h4 { margin: 0 0 8px; font-size: 14px; color: #0f172a; }
-  .tips ul { margin: 0; padding-left: 18px; color: #64748b; font-size: 13px; }
-  .receive-badge { background: #e0f2fe; color: #075985; font-size: 11px; padding: 4px 8px; border-radius: 999px; }
-  .table-wrap { border: 1px solid #eef1f5; border-radius: 12px; overflow: hidden; }
-  @media (max-width: 1000px) { .receive-layout { grid-template-columns: 1fr; } }
-  @media (max-width: 720px) { .form-grid { grid-template-columns: 1fr; } }
-</style>
-<?php
-$view = $_GET['view'] ?? 'encode';
+// Staff only
+if (!in_array($role, ['staff'])) {
+    header("Location: dashboard.php");
+    exit;
+}
 
-// Handle form submission for encoding received items
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'encode') {
-    $item_name = $_POST['item_name'] ?? '';
-    $quantity = (float)($_POST['quantity'] ?? 0);
-    $supplier = $_POST['supplier'] ?? '';
-    $delivery_date = $_POST['delivery_date'] ?? date('Y-m-d');
-    $notes = $_POST['notes'] ?? '';
-    
-    if ($item_name && $quantity > 0) {
-        try {
-            $pdo->beginTransaction();
-            
-            // Insert into received_items table
-            $stmt = $pdo->prepare("INSERT INTO received_items (station_id, product_id, item_name, quantity, supplier, delivery_date, received_by, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
-            
-            // First, get or create the product
-            $stmt_product = $pdo->prepare("SELECT id FROM products WHERE name = ? LIMIT 1");
-            $stmt_product->execute([$item_name]);
-            $product_id = $stmt_product->fetchColumn();
-            
-            if (!$product_id) {
-                // Create new product if it doesn't exist
-                $stmt_create = $pdo->prepare("INSERT INTO products (name, type_id, category_id) VALUES (?, (SELECT id FROM product_types WHERE name = 'merch'), (SELECT id FROM product_categories WHERE name = 'Convenience'))");
-                $stmt_create->execute([$item_name]);
-                $product_id = $pdo->lastInsertId();
-            }
-            
-            $stmt->execute([$station_id, $product_id, $item_name, $quantity, $supplier, $delivery_date, $me['id'], $notes]);
-            
-            // Update inventory
-            $stmt = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level + ? WHERE station_id = ? AND product_id = ?");
-            $result = $stmt->execute([$quantity, $station_id, $product_id]);
-            
-            if ($stmt->rowCount() === 0) {
-                // If inventory record doesn't exist, create it
-                $stmt_insert = $pdo->prepare("INSERT INTO station_inventory (station_id, product_id, stock_level, unit) VALUES (?, ?, ?, 'pieces')");
-                $stmt_insert->execute([$station_id, $product_id, $quantity]);
-            }
-            
-            // Log the inventory change
-            $stmt_log = $pdo->prepare("INSERT INTO inventory_logs (station_id, product_id, user_id, action, quantity_before, quantity_after, quantity_change, reference_type, notes, created_at) VALUES (?, ?, ?, 'stock_in', COALESCE((SELECT stock_level FROM station_inventory WHERE station_id = ? AND product_id = ?), 0), COALESCE((SELECT stock_level FROM station_inventory WHERE station_id = ? AND product_id = ?), 0) + ?, ?, 'receiving', ?, NOW())");
-            $stmt_log->execute([$station_id, $product_id, $me['id'], $station_id, $product_id, $station_id, $product_id, $quantity, $quantity, $notes]);
-            
-            $pdo->commit();
-            $msg = "✅ Items received and inventory updated successfully!";
-        } catch (Exception $e) {
-            $pdo->rollBack();
-            $msg = "❌ Error: " . $e->getMessage();
+$edit_batch_id = $_GET['edit'] ?? null;
+$edit_items = [];
+
+// Fetch default supplier
+$default_supplier = '';
+$default_supplier_id = null;
+try {
+    $stmt = $pdo->query("SELECT CAST(setting_value AS UNSIGNED) FROM system_settings WHERE setting_key='default_supplier_id'");
+    $default_supplier_id = $stmt->fetchColumn();
+    if ($default_supplier_id) {
+        $stmt = $pdo->prepare("SELECT name FROM suppliers WHERE id = ?");
+        $stmt->execute([$default_supplier_id]);
+        $default_supplier = $stmt->fetchColumn();
+    }
+} catch (Exception $e) {
+    // Tables might not exist yet
+}
+
+// Fetch suppliers for dropdown
+$suppliers = [];
+try {
+    $suppliers = $pdo->query("SELECT * FROM suppliers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $suppliers = [];
+}
+
+// Fetch products for autocomplete
+$products = [];
+try {
+    $products = $pdo->query("SELECT id, name FROM products WHERE type_id = 2 ORDER BY name LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $products = [];
+}
+
+// Load edit data
+if ($edit_batch_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT rb.*, u.name as received_by_name
+            FROM receiving_batches rb
+            LEFT JOIN users u ON rb.received_by = u.id
+            WHERE rb.id = ? AND rb.status = 'pending' AND rb.station_id = ?
+        ");
+        $stmt->execute([$edit_batch_id, $station_id]);
+        $edit_batch = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($edit_batch) {
+            // Fetch items for this batch
+            $stmt_items = $pdo->prepare("SELECT * FROM received_items WHERE batch_id = ?");
+            $stmt_items->execute([$edit_batch_id]);
+            $edit_items = $stmt_items->fetchAll(PDO::FETCH_ASSOC);
         }
-    } else {
-        $msg = "❌ Please fill in all required fields.";
+    } catch (Exception $e) {
+        $edit_batch = null;
     }
 }
 
-// Fetch delivery history for current staff
-$delivery_history = [];
-if ($view === 'my_history') {
-    try {
-        $stmt = $pdo->prepare("SELECT ri.*, u.name as staff_name FROM received_items ri LEFT JOIN users u ON ri.received_by = u.id WHERE ri.station_id = ? AND ri.received_by = ? ORDER BY ri.delivery_date DESC, ri.created_at DESC LIMIT 50");
-        $stmt->execute([$station_id, $me['id']]);
-        $delivery_history = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Exception $e) {}
+// Handle form submission
+$msg = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+    
+    if ($action === 'submit_batch') {
+        $batch_id = $_POST['batch_id'] ?? '';
+        $supplier = $_POST['supplier'] ?? '';
+        $delivery_date = $_POST['delivery_date'] ?? date('Y-m-d');
+        $notes = $_POST['notes'] ?? '';
+        $items = $_POST['items'] ?? [];
+        
+        if (empty($supplier)) {
+            $msg = '❌ Supplier is required.';
+        } elseif (empty($items) || empty(array_filter($items, function($item) { return !empty($item['name']) && !empty($item['quantity']); }))) {
+            $msg = '❌ At least one item is required.';
+        } else {
+            try {
+                $pdo->beginTransaction();
+                
+                // Generate batch number: REC-{station_id}-{date}-{sequence}
+                $date_str = str_replace('-', '', $delivery_date);
+                $stmt_seq = $pdo->prepare("SELECT COUNT(*) + 1 as seq FROM receiving_batches WHERE station_id = ? AND DATE(created_at) = CURDATE()");
+                $stmt_seq->execute([$station_id]);
+                $sequence = str_pad($stmt_seq->fetchColumn(), 3, '0', STR_PAD_LEFT);
+                $batch_number = "REC-{$station_id}-{$date_str}-{$sequence}";
+                
+                if ($batch_id) {
+                    // Update existing batch
+                    $stmt_update_batch = $pdo->prepare("
+                        UPDATE receiving_batches 
+                        SET supplier = ?, delivery_date = ?, notes = ?, updated_at = NOW()
+                        WHERE id = ? AND status = 'pending'
+                    ");
+                    $stmt_update_batch->execute([$supplier, $delivery_date, $notes, $batch_id]);
+                } else {
+                    // Create new batch
+                    $stmt_batch = $pdo->prepare("
+                        INSERT INTO receiving_batches (batch_number, station_id, supplier, delivery_date, notes, received_by, status)
+                        VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                    ");
+                    $stmt_batch->execute([$batch_number, $station_id, $supplier, $delivery_date, $notes, $me['id']]);
+                    $batch_id = $pdo->lastInsertId();
+                }
+                
+                // Delete existing items for this batch (if editing)
+                if ($batch_id) {
+                    $stmt_delete = $pdo->prepare("DELETE FROM received_items WHERE batch_id = ?");
+                    $stmt_delete->execute([$batch_id]);
+                }
+                
+                // Insert items
+                $stmt_item = $pdo->prepare("
+                    INSERT INTO received_items (batch_id, station_id, product_id, item_name, quantity, supplier, delivery_date, received_by, notes, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                ");
+                
+                foreach ($items as $item) {
+                    $item_name = trim($item['name'] ?? '');
+                    $quantity = (float)($item['quantity'] ?? 0);
+                    
+                    if ($item_name && $quantity > 0) {
+                        // Get or create product
+                        $stmt_product = $pdo->prepare("SELECT id FROM products WHERE name = ? LIMIT 1");
+                        $stmt_product->execute([$item_name]);
+                        $product = $stmt_product->fetch(PDO::FETCH_ASSOC);
+                        
+                        $product_id = $product['id'] ?? null;
+                        $unit = 'pieces';
+                        
+                        if (!$product_id) {
+                            // Create new product
+                            $stmt_create = $pdo->prepare("INSERT INTO products (name, type_id, category_id) VALUES (?, 2, 4)");
+                            $stmt_create->execute([$item_name]);
+                            $product_id = $pdo->lastInsertId();
+                        }
+                        
+                        $stmt_item->execute([
+                            $batch_id,
+                            $station_id,
+                            $product_id,
+                            $item_name,
+                            $quantity,
+                            $supplier,
+                            $delivery_date,
+                            $me['id'],
+                            $notes
+                        ]);
+                    }
+                }
+                
+                $pdo->commit();
+                
+                if ($edit_batch_id) {
+                    $msg = "✅ Batch $batch_number updated successfully!";
+                    $edit_batch_id = null;
+                    $edit_items = [];
+                } else {
+                    $msg = "✅ Batch $batch_number created and submitted for review!";
+                }
+                
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $msg = "❌ Error: " . $e->getMessage();
+            }
+        }
+    }
 }
+
+include __DIR__ . '/../partials/header.php';
 ?>
-<section class="receive-layout">
-  <div class="receive-card">
-    <div class="receive-head">
-      <div>
-        <div class="receive-title"><i class="fas fa-box"></i> Merchandise Receiving <span class="receive-badge">Staff</span></div>
-        <div class="receive-sub">Encode received items to update Available Parts and stock levels.</div>
-      </div>
-      <div class="receive-tabs">
-        <a class="btn <?php echo $view === 'encode' ? 'btn-primary' : 'ghost'; ?>" href="receiving_staff.php">Encode Received Items</a>
-        <a class="btn <?php echo $view === 'my_history' ? 'btn-primary' : 'ghost'; ?>" href="receiving_staff.php?view=my_history">My Delivery History</a>
-        <a class="btn ghost" href="inventory.php"><i class="fas fa-arrow-right"></i> Open Inventory</a>
-        <?php if($view === 'encode'): ?>
-          <button class="btn btn-primary" form="receive-form" type="submit"><i class="fas fa-save"></i> Submit</button>
-        <?php endif; ?>
-      </div>
-    </div>
 
-    <div class="receive-body">
-      <?php if(isset($msg)): ?>
-        <div class="alert <?php echo strpos($msg, '✅') !== false ? 'alert-success' : 'alert-error'; ?>" style="margin-bottom:16px;">
-          <?php echo htmlspecialchars($msg); ?>
+<div style="max-width: 1400px; margin: 0 auto; padding: 24px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+        <div>
+            <h1 style="font-size: 32px; font-weight: 700; color: var(--petron-blue); margin: 0;">
+                <i class="fas fa-boxes"></i> Multi-Item Receiving
+            </h1>
+            <p style="color: var(--muted); margin-top: 4px; font-size: 14px;">Encode multiple items in one batch for review and confirmation</p>
         </div>
-      <?php endif; ?>
-
-      <?php if($view === 'encode'): ?>
-        <form method="post" id="receive-form">
-          <div class="form-grid" style="margin-bottom:14px;">
-            <div class="form-field">
-              <label>Item Name *</label>
-              <input type="text" name="item_name" placeholder="e.g., Engine Oil 5W-30" required>
-            </div>
-            <div class="form-field">
-              <label>Quantity *</label>
-              <input type="number" name="quantity" step="0.01" placeholder="e.g., 24" required>
-            </div>
-          </div>
-          <div class="form-grid" style="margin-bottom:14px;">
-            <div class="form-field">
-              <label>Supplier</label>
-              <input type="text" name="supplier" placeholder="Supplier name">
-            </div>
-            <div class="form-field">
-              <label>Delivery Date</label>
-              <input type="date" name="delivery_date" value="<?php echo date('Y-m-d'); ?>">
-            </div>
-          </div>
-          <div class="form-field" style="margin-bottom:10px;">
-            <label>Notes</label>
-            <textarea name="notes" rows="3" placeholder="Any extra details"></textarea>
-          </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Record Received Items</button>
-            <span class="muted">Items will reflect in Available Parts immediately.</span>
-          </div>
-        </form>
-      <?php elseif($view === 'my_history'): ?>
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Item</th>
-                <th>Quantity</th>
-                <th>Supplier</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php if(empty($delivery_history)): ?>
-                <tr>
-                  <td colspan="5" style="text-align:center; padding:20px; color:#888;">No delivery history found.</td>
-                </tr>
-              <?php else: ?>
-                <?php foreach($delivery_history as $item): ?>
-                  <tr>
-                    <td><?php echo htmlspecialchars(date('M d, Y', strtotime($item['delivery_date']))); ?></td>
-                    <td><?php echo htmlspecialchars($item['item_name']); ?></td>
-                    <td><?php echo number_format($item['quantity'], 2); ?></td>
-                    <td><?php echo htmlspecialchars($item['supplier'] ?? '-'); ?></td>
-                    <td><?php echo htmlspecialchars($item['notes'] ?? '-'); ?></td>
-                  </tr>
+    </div>
+    
+    <?php if ($msg): ?>
+        <div style="padding: 16px 20px; border-radius: 12px; margin-bottom: 24px; background: #e6f4ea; color: #065f46; border: 1px solid #a7f3d0; display: flex; align-items: center; gap: 10px;">
+            <i class="fas <?php echo strpos($msg, '✅') !== false ? 'fa-check-circle' : 'fa-exclamation-circle'; ?>"></i>
+            <?php echo htmlspecialchars($msg); ?>
+        </div>
+    <?php endif; ?>
+    
+    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+        <!-- Main Form -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+            <form method="post" id="receivingBatchForm">
+                <input type="hidden" name="action" value="submit_batch">
+                <input type="hidden" name="batch_id" id="batch_id" value="<?php echo $edit_batch_id ?? ''; ?>">
+                
+                <!-- Batch Info -->
+                <div style="margin-bottom: 24px; padding-bottom: 24px; border-bottom: 2px solid #f1f5f9;">
+                    <h3 style="font-size: 18px; font-weight: 600; color: #0f172a; margin: 0 0 16px;">Batch Information</h3>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                        <div>
+                            <label style="font-size: 12px; font-weight: 600; color: #475569; display: block; margin-bottom: 6px;">Supplier *</label>
+                            <select name="supplier" id="supplier" style="width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                                <option value="">-- Select Supplier --</option>
+                                <?php if (!empty($default_supplier)): ?>
+                                    <option value="<?php echo htmlspecialchars($default_supplier); ?>" selected>
+                                        <?php echo htmlspecialchars($default_supplier); ?> (Default)
+                                    </option>
+                                <?php endif; ?>
+                                <?php foreach ($suppliers as $supp): ?>
+                                    <?php if ($supp['name'] !== $default_supplier): ?>
+                                        <option value="<?php echo htmlspecialchars($supp['name']); ?>">
+                                            <?php echo htmlspecialchars($supp['name']); ?>
+                                        </option>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size: 12px; font-weight: 600; color: #475569; display: block; margin-bottom: 6px;">Delivery Date *</label>
+                            <input type="date" name="delivery_date" id="delivery_date" value="<?php echo $edit_batch['delivery_date'] ?? date('Y-m-d'); ?>" style="width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label style="font-size: 12px; font-weight: 600; color: #475569; display: block; margin-bottom: 6px;">Delivery Notes</label>
+                        <textarea name="notes" id="notes" rows="3" placeholder="Any additional notes about this delivery..." style="width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; resize: none;"><?php echo htmlspecialchars($edit_batch['notes'] ?? ''); ?></textarea>
+                    </div>
+                </div>
+                
+                <!-- Items Section -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 style="font-size: 18px; font-weight: 600; color: #0f172a; margin: 0;">Items</h3>
+                        <button type="button" onclick="addItemRow()" style="background: var(--petron-blue); color: white; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-plus"></i> Add Item
+                        </button>
+                    </div>
+                    
+                    <div id="itemsContainer" style="display: flex; flex-direction: column; gap: 12px;">
+                        <?php if (!empty($edit_items)): ?>
+                            <?php foreach ($edit_items as $index => $item): ?>
+                                <div class="item-row" data-index="<?php echo $index; ?>" style="display: grid; grid-template-columns: 3fr 1fr 100px 40px; gap: 12px; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                    <div>
+                                        <label style="font-size: 11px; font-weight: 600; color: #475569; display: block; margin-bottom: 4px;">Item Name *</label>
+                                        <input type="text" name="items[<?php echo $index; ?>][name]" value="<?php echo htmlspecialchars($item['item_name']); ?>" list="productList" placeholder="Search or enter item name" style="width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 11px; font-weight: 600; color: #475569; display: block; margin-bottom: 4px;">Quantity *</label>
+                                        <input type="number" name="items[<?php echo $index; ?>][quantity]" value="<?php echo number_format($item['quantity'], 0); ?>" min="0.01" step="0.01" style="width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px;">
+                                    </div>
+                                    <div style="display: flex; align-items: center; padding-top: 20px;">
+                                        <input type="hidden" name="items[<?php echo $index; ?>][unit]" value="pieces">
+                                        <span style="font-size: 12px; color: #64748b; font-weight: 500;">pcs</span>
+                                    </div>
+                                    <div style="display: flex; align-items: flex-end; padding-bottom: 4px;">
+                                        <button type="button" onclick="removeItemRow(<?php echo $index; ?>)" style="background: #fee2e2; color: #dc2626; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <!-- Empty item row template -->
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <!-- Actions -->
+                <div style="margin-top: 24px; padding-top: 24px; border-top: 2px solid #f1f5f9; display: flex; gap: 12px;">
+                    <button type="submit" style="flex: 1; background: var(--petron-blue); color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <i class="fas fa-paper-plane"></i> Submit Batch for Review
+                    </button>
+                    <?php if ($edit_batch_id): ?>
+                        <button type="button" onclick="cancelEdit()" style="background: #f3f4f6; color: #64748b; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px;">
+                            Cancel Edit
+                        </button>
+                    <?php endif; ?>
+                </div>
+            </form>
+            
+            <datalist id="productList">
+                <?php foreach ($products as $product): ?>
+                    <option value="<?php echo htmlspecialchars($product['name']); ?>">
+                        <?php echo htmlspecialchars($product['name']); ?>
+                    </option>
                 <?php endforeach; ?>
-              <?php endif; ?>
-            </tbody>
-          </table>
+            </datalist>
         </div>
-      <?php endif; ?>
+        
+        <!-- Tips -->
+        <div style="background: #f8fafc; border-radius: 12px; padding: 24px; border: 1px dashed #cbd5e1; height: fit-content;">
+            <h4 style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 16px;">Quick Tips</h4>
+            
+            <div style="margin-bottom: 16px;">
+                <div style="font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 6px;">Before You Submit:</div>
+                <ul style="margin: 0; padding-left: 20px; color: #64748b; font-size: 13px; line-height: 1.8;">
+                    <li>Use the product search to find existing items</li>
+                    <li>Double-check quantities and item names</li>
+                    <li>Select correct supplier from dropdown</li>
+                    <li>Add notes for any special delivery conditions</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <div style="font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 6px;">After Submission:</div>
+                <ul style="margin: 0; padding-left: 20px; color: #64748b; font-size: 13px; line-height: 1.8;">
+                    <li>Batch goes to Manager/Admin for review</li>
+                    <li>You can edit pending batches if needed</li>
+                    <li>Manager must receive before stock is added</li>
+                    <li>Check "My Pending Batches" for status</li>
+                </ul>
+            </div>
+            
+            <div>
+                <div style="font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 6px;">Workflow:</div>
+                <div style="font-size: 12px; color: #64748b; line-height: 1.6;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 4px;">
+                        <span style="background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-weight: 600;">1. Encode</span>
+                        <span>Staff creates batch</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 4px;">
+                        <span style="background: #bfdbfe; color: #1e3a8a; padding: 4px 8px; border-radius: 4px; font-weight: 600;">2. Receive</span>
+                        <span>Manager approves batch</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <span style="background: #d1fae5; color: #065f46; padding: 4px 8px; border-radius: 4px; font-weight: 600;">3. Confirm</span>
+                        <span>Manager adds to inventory</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-  </div>
+</div>
 
-  <div class="receive-card" style="height:max-content;">
-    <div class="receive-head">
-      <div class="receive-title"><i class="fas fa-info-circle"></i> Quick Tips</div>
-    </div>
-    <div class="receive-body">
-      <div class="tips">
-        <h4>Before you submit</h4>
-        <ul>
-          <li>Use the exact item name on the delivery receipt.</li>
-          <li>Double-check the quantity and delivery date.</li>
-          <li>Notes are optional but helpful for audits.</li>
-        </ul>
-      </div>
-      <div style="margin-top:12px;" class="tips">
-        <h4>After submission</h4>
-        <ul>
-          <li>Stock updates automatically in Available Parts.</li>
-          <li>Your entry appears under My Delivery History.</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
+<script>
+let itemCount = <?php echo count($edit_items); ?>;
+
+function addItemRow() {
+    const container = document.getElementById('itemsContainer');
+    const index = itemCount;
+    
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.dataset.index = index;
+    row.style.cssText = 'display: grid; grid-template-columns: 3fr 1fr 100px 40px; gap: 12px; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;';
+    row.innerHTML = `
+        <div>
+            <label style="font-size: 11px; font-weight: 600; color: #475569; display: block; margin-bottom: 4px;">Item Name *</label>
+            <input type="text" name="items[${index}][name]" list="productList" placeholder="Search or enter item name" style="width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px;" required>
+        </div>
+        <div>
+            <label style="font-size: 11px; font-weight: 600; color: #475569; display: block; margin-bottom: 4px;">Quantity *</label>
+            <input type="number" name="items[${index}][quantity]" min="0.01" step="0.01" placeholder="0.00" style="width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px;" required>
+        </div>
+        <div style="display: flex; align-items: center; padding-top: 20px;">
+            <input type="hidden" name="items[${index}][unit]" value="pieces">
+            <span style="font-size: 12px; color: #64748b; font-weight: 500;">pcs</span>
+        </div>
+        <div style="display: flex; align-items: flex-end; padding-bottom: 4px;">
+            <button type="button" onclick="removeItemRow(${index})" style="background: #fee2e2; color: #dc2626; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    `;
+    
+    container.appendChild(row);
+    itemCount++;
+}
+
+function removeItemRow(index) {
+    const row = document.querySelector(`.item-row[data-index="${index}"]`);
+    if (row) {
+        row.remove();
+    }
+}
+
+function cancelEdit() {
+    window.location.href = window.location.pathname;
+}
+
+<?php if (empty($edit_items)): ?>
+// Add first empty row if not editing
+document.addEventListener('DOMContentLoaded', function() {
+    addItemRow();
+});
+<?php endif; ?>
+</script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

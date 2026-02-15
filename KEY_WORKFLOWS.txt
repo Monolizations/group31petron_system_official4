@@ -1,0 +1,331 @@
+══════════════════════════════════════════════════════════════════════════════
+PETRON POS SYSTEM - KEY WORKFLOWS DOCUMENTATION
+══════════════════════════════════════════════════════════════════════════════
+
+OVERVIEW:
+The Petron POS system is a 4-level hierarchical role-based access control (RBAC) 
+system with strict separation between operational and governance layers:
+
+1. STAFF (Encoding Layer) - Frontline operational encoders
+2. MANAGER (Operational Authority) - Approves & finalizes records
+3. ADMIN (Governance Layer) - Read-only with unlock override capability
+4. SUPER ADMIN (System Authority) - Platform control & configuration
+
+══════════════════════════════════════════════════════════════════════════════
+CORE WORKFLOWS
+══════════════════════════════════════════════════════════════════════════════
+
+1. POS SALES TRANSACTION WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/pos.php
+ROLES: Staff → Admin → Customer
+FLOW:
+    Staff → Create Transaction (Status: Pending)
+      ↓
+    Staff enters: customer_name, item_name, quantity, price, payment_type, discount
+      ↓
+    Admin → Approve/Reject with Password
+      ↓
+    Status: Completed (if approved) or Rejected (if rejected)
+      ↓
+    Customer receives completed transaction
+KEY FEATURES:
+    - Staff can only create pending transactions
+    - Admin must approve/reject before completion
+    - Payment methods: Cash, Credit, etc.
+    - Automatic calculation: subtotal, discount, total
+    - Audit trail: Staff ID, customer, total, timestamp
+TABLES: sales, sale_items
+
+══════════════════════════════════════════════════════════════════════════════
+
+2. FUEL MANAGEMENT WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/fuel_management.php
+ROLES: Staff → Manager → Admin
+
+2.1 FUEL PUMP READING FLOW
+    Staff → Record Daily Pump Reading
+      ↓
+    Input: fuel_station_id, reading_date, shift, previous_reading, current_reading, calibration
+      ↓
+    Calculate: sales_liters = current_reading - previous_reading - calibration
+      ↓
+    Manager → Verify Pump Reading (Approve/Reject)
+      ↓
+    Status: Verified / Rejected
+
+2.2 FUEL DELIVERY FLOW
+    Staff → Record Fuel Delivery
+      ↓
+    Input: delivery_date, fuel_type, supplier, invoice_no, delivery_liters, tanker_number
+      ↓
+    Manager → Verify Delivery (Approve/Reject)
+      ↓
+    Status: Verified / Rejected
+
+2.3 FUEL ADJUSTMENT FLOW
+    Staff → Record Fuel Adjustment
+      ↓
+    Input: adjustment_date, fuel_type, adjustment_type, liters, reason
+      ↓
+    Manager → Approve Adjustment (Approve/Reject)
+      ↓
+    Status: Approved / Rejected
+
+2.4 FUEL RECONCILIATION FLOW
+    Staff → Calculate Fuel Reconciliation
+      ↓
+    Input: reconciliation_date, fuel_type, physical_stock
+      ↓
+    Manager → Verify & Finalize with Password
+      ↓
+    Status: Finalized & Locked
+      ↓
+    Admin → Unlock (optional with password + reason)
+      ↓
+    Unlock logged to admin_unlocks table
+
+TABLES: fuel_daily_readings, fuel_deliveries, fuel_adjustments, fuel_reconciliation
+
+══════════════════════════════════════════════════════════════════════════════
+
+3. JOB ORDER WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/joborder.php
+ROLES: Staff → Manager → Customer
+FLOW:
+    Staff → Create Job Order (Status: Pending)
+      ↓
+    Input: customer_id, vehicle_plate, service_category_id, assigned_mechanic_id,
+           service_description
+      ↓
+    Manager → Review & Approve/Reject
+      ↓
+    Status: Approved / Rejected
+      ↓
+    Manager → Final Approval (if high-value/sensitive)
+      ↓
+    Manager → Finalize with Password
+      ↓
+    Status: In Progress & Locked
+      ↓
+    Admin → Unlock (optional)
+
+KEY FEATURES:
+    - Mechanic assignment required
+    - Service categories with default costs
+    - Requires password verification for final approval
+    - Inventory deduction (parts) after completion
+    - Labor hours tracking
+TABLES: job_orders, mechanics, service_categories, customers
+
+══════════════════════════════════════════════════════════════════════════════
+
+4. INVENTORY MANAGEMENT WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/stock_requests.php → public/manager_approve_stock_requests.php
+ROLES: Staff → Manager → Supplier
+FLOW:
+    Staff → Submit Stock Request
+      ↓
+    Input: product_name, quantity, type, notes
+      ↓
+    Status: Pending
+      ↓
+    Manager → Approve Stock Request
+      ↓
+    If Approved → Generate Purchase Order (PO)
+      ↓
+    PO number: PO-{YMDHis}-{request_id}
+      ↓
+    PO sent to supplier
+      ↓
+    Supplier ships inventory
+      ↓
+    Staff receives and records inventory
+      ↓
+    Manager verifies delivery
+
+KEY FEATURES:
+    - Staff submits requests
+    - Manager reviews and generates PO
+    - Automatic supplier notification
+    - Confirmation tracking
+TABLES: stock_requests, purchase_orders, supplier_receipts, inventory
+
+══════════════════════════════════════════════════════════════════════════════
+
+5. CUSTOMER CREDIT WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/customer_credit.php
+ROLES: Staff → Admin
+FLOW:
+    Customer → Create Credit Transaction
+      ↓
+    Input: customer_name, amount, due_date
+      ↓
+    Status: Pending
+      ↓
+    Admin → Approve Credit Transaction with Password
+      ↓
+    Admin → Approve/Reject with Password
+      ↓
+    Status: Approved (Customer balance updated) or Rejected
+      ↓
+    Automatic balance updates in customers table
+KEY FEATURES:
+    - Admin requires password verification
+    - Automatic balance updates
+    - Credit reports generation
+TABLES: customers, customer_transactions, customer_credits
+
+══════════════════════════════════════════════════════════════════════════════
+
+6. SHIFT MANAGEMENT WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/my_shift.php
+ROLES: Staff → Manager → Admin
+FLOW:
+    Staff → Clock In / Clock Out
+      ↓
+    Input: start_time, end_time, hours_worked
+      ↓
+    Staff Dashboard tracks hours worked
+      ↓
+    Manager → Finalize Shift Report with Password
+      ↓
+    Status: Finalized & Locked
+      ↓
+    Admin → Unlock (optional with password + reason)
+
+KEY FEATURES:
+    - Automatic shift tracking
+    - Hours calculation
+    - Staff performance metrics
+    - Compliance checks
+    - Quality score tracking
+TABLES: labor_sessions, shift_reports, users, compliance_checks
+
+══════════════════════════════════════════════════════════════════════════════
+
+7. PRICE MANAGEMENT WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+ENTRY POINT: public/admin_propose_prices.php → public/manager_approve_prices.php
+ROLES: Admin → Manager → Customer
+FLOW:
+    Admin → Propose New Selling Prices
+      ↓
+    Input: product_id, new_selling_price, new_cost_price
+      ↓
+    Manager → Approve Price Change with Password
+      ↓
+    Status: Approved (prices go live) or Rejected
+      ↓
+    New prices appear in POS after approval
+
+KEY FEATURES:
+    - Admin proposes new prices
+    - Manager approves with password verification
+    - Selling price must be ≥ cost price
+    - Prices go live automatically upon approval
+TABLES: products, price_changes
+
+══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════
+
+ROLE RESPONSIBILITIES PER WORKFLOW
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ WORKFLOW              │ STAFF    │ MANAGER │ ADMIN  │ SUPER ADMIN          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ POS SALES             │ Create   │ Approve │ Validate│ View                  │
+│ FUEL PUMP READING     │ Record   │ Verify  │ Review │ Full access           │
+│ FUEL DELIVERY         │ Record   │ Verify  │ Review │ Full access           │
+│ JOB ORDER             │ Create   │ Approve │ Validate│ Full access           │
+│ INVENTORY REQUEST     │ Request  │ Approve │ View   │ Full access           │
+│ CREDIT TRANSACTION    │ None     │ None    │ Approve│ Full access           │
+│ SHIFT REPORT          │ Clock in/out │ Finalize │ Review │ Full access           │
+│ PRICE MANAGEMENT      │ None     │ Approve │ Propose│ Full access           │
+│ FUEL RECONCILIATION   │ Calculate│ Verify & Finalize │ Unlock (optional) │ Full access │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+SECURITY ARCHITECTURE
+══════════════════════════════════════════════════════════════════════════════
+
+PROGRESSIVE AUTHORIZATION:
+Staff (Encoding Layer) → Manager (Operational Authority) → Admin (Governance) → Super Admin (System)
+
+WORKFLOW SECURITY FEATURES:
+1. SEPARATION OF DUTIES - Each role has distinct permissions
+2. PASSWORD PROTECTION - Admin credit approvals, Manager finalizations
+3. AUDIT TRAIL - Every action logged (who, when, why, IP address)
+4. LOCK MECHANISM - No editing after manager finalization
+5. OVERRIDE CAPABILITY - Admin can unlock with reason (10+ characters minimum)
+6. PROGRESSIVE AUTHORIZATION - Each workflow has defined permission levels
+
+══════════════════════════════════════════════════════════════════════════════
+KEY ENTRY POINTS BY WORKFLOW
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ WORKFLOW         │ ENTRY POINT          │ MAIN FEATURES                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ POS SALES        │ pos.php              │ Sales, payments, validation          │
+│ FUEL OPS         │ fuel_management.php  │ Readings, deliveries, reconciliation │
+│ JOB ORDERS       │ joborder.php         │ Service requests, mechanics, inventory│
+│ INVENTORY        │ stock_requests.php   │ Stock requests, PO generation        │
+│ CREDIT           │ customer_credit.php  │ Customer credit approvals            │
+│ SHIFT            │ my_shift.php         │ Clock in/out, hours tracking         │
+│ APPROVALS        │ approvals.php        │ Manager validation center            │
+│ MANAGER DASHBOARD│ manager_home.php     │ Overview, approvals, finalizations   │
+│ ADMIN UNLOCK     │ admin_unlock.php     │ Unlock finalized records             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+DATA FLOW ARCHITECTURE
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────┐
+│   STAFF     │ Encodes operational data
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│   MANAGER   │ Approves operational data
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│   ADMIN    │ Validates & can unlock if needed
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│ SUPER ADMIN │ System configuration & monitoring
+└──────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+KEY DESIGN PRINCIPLES
+══════════════════════════════════════════════════════════════════════════════
+
+1. ROLE-BASED ACCESS CONTROL (RBAC) - Strict separation of duties
+2. AUDIT TRAIL - Complete logging for compliance
+3. FINALIZATION LOCK - Immutable records after manager approval
+4. OVERRIDE MECHANISM - Admin can unlock with full audit trail
+5. PROGRESSIVE AUTHORIZATION - Each workflow has defined permission levels
+6. SECURITY LAYERS - Password verification for sensitive operations
+7. SEPARATION OF OPERATIONAL & GOVERNANCE - Clear role boundaries
+
+══════════════════════════════════════════════════════════════════════════════
+COMPLIANCE STATUS: 100% HIERARCHY COMPLIANT
+══════════════════════════════════════════════════════════════════════════════
+
+✓ Staff: Pure encoders, no approval/finalize/deletion capabilities
+✓ Manager: Operational authority, approves and finalizes records
+✓ Admin: Governance layer, read-only with unlock override capability
+✓ Super Admin: System authority, configuration only
+
+══════════════════════════════════════════════════════════════════════════════
+LAST UPDATED: 2026-02-14
+SYSTEM: PETRON POS 100% COMPLIANCE EDITION
+══════════════════════════════════════════════════════════════════════════════

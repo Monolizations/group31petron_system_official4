@@ -422,12 +422,8 @@ include __DIR__ . '/../partials/header.php';
         <?php endif; ?>
 
         <div class="filters-section">
-            <select class="filter-select" id="roleFilter">
+            <select class="filter-select" id="roleFilter_reset">
                 <option value="">All Roles</option>
-                <option value="superadmin">Super Admin</option>
-                <option value="admin">Admin</option>
-                <option value="manager">Manager</option>
-                <option value="staff">Staff</option>
             </select>
             
             <select class="filter-select" id="stationFilter">
@@ -719,6 +715,14 @@ resetButtons.forEach((button, index) => {
 <?php if ($notice && strpos($notice, 'successfully') !== false): ?>
 showToast('<?php echo htmlspecialchars($notice); ?>', 'success');
 <?php endif; ?>
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateRoles('roleFilter_reset', 'All Roles');
+});
 </script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

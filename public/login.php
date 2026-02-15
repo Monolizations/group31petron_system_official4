@@ -55,24 +55,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$username]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            // Verify password (Self-healing: supports both Hash and Plain Text)
-            $valid_login = false;
-            if ($user) {
-                // Check account status
-                if (($user['status'] ?? 'active') !== 'active') {
-                    $error = "Your account is inactive. Please contact the administrator.";
+                // Verify password using secure hash verification
+                $valid_login = false;
+                if ($user) {
+                    // Check account status
+                    if (($user['status'] ?? 'active') !== 'active') {
+                        $error = "Your account is inactive. Please contact the administrator.";
+                    }
+                    // Verify password hash
+                    elseif (password_verify($password, $user['password'])) {
+                        $valid_login = true;
+                    }
                 }
-                // Verify password
-                elseif (password_verify($password, $user['password'])) {
-                    $valid_login = true;
-                } elseif ($password === $user['password']) {
-                    // Fix: If password is stored as plain text, update it to hash automatically
-                    $new_hash = password_hash($password, PASSWORD_DEFAULT);
-                    $upd = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
-                    $upd->execute([$new_hash, $user['id']]);
-                    $valid_login = true;
-                }
-            }
 
             if ($valid_login) {
 

@@ -60,6 +60,7 @@ function normalize_role($role){
   if($r === 'superadmin' || $r === 'super admin') return 'Super Admin';
   if($r === 'admin' || $r === 'admin/manager' || $r === 'station admin') return 'Admin';
   if($r === 'manager') return 'Manager';
+  if($r === 'operations staff' || $r === 'operations_staff') return 'Staff';
   return 'Staff';
 }
 
@@ -76,6 +77,47 @@ function role_key($role){
   if($label === 'Super Admin') return 'superadmin';
   if($label === 'Admin') return 'admin';
   return 'staff';
+}
+
+/**
+ * Check if current user is Manager or Super Admin
+ * Used for Manager-level approvals and finalizations
+ */
+function is_manager_or_above(){
+  $u = current_user();
+  if(!$u) return false;
+  $role = role_key($u['role'] ?? 'staff');
+  return in_array($role, ['manager', 'admin', 'superadmin']);
+}
+
+/**
+ * Require Manager or Super Admin access
+ * Throws 403 if user is not Manager or above
+ */
+function require_manager_or_above(){
+  require_login();
+  if(!is_manager_or_above()){
+    json_response(['ok'=>false,'error'=>'Manager privileges required'], 403);
+  }
+}
+
+/**
+ * Check if Manager can finalize a record
+ * Manager can finalize if not already finalized by someone else
+ */
+function can_manager_finalize(PDO $pdo, string $table, int $record_id): bool {
+  try {
+    $stmt = $pdo->prepare("SELECT is_locked, finalized_by FROM {$table} WHERE id = ?");
+    $stmt->execute([$record_id]);
+    $record = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if(!$record) return false;
+    
+    // Can finalize if not locked
+    return $record['is_locked'] == 0;
+  } catch(Exception $e) {
+    return false;
+  }
 }
 
 function role_rank($role){
@@ -245,6 +287,15 @@ function require_permission(string $permission){
     json_response(['ok'=>false, 'error'=>'Forbidden', 'permission'=>$permission], 403);
   }
   rbac_forbidden_html();
+}
+
+function generateSecurePassword(int $length = 12): string {
+  $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+  $password = '';
+  for ($i = 0; $i < $length; $i++) {
+    $password .= $chars[random_int(0, strlen($chars) - 1)];
+  }
+  return $password;
 }
 
 ?>

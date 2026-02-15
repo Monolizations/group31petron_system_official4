@@ -205,14 +205,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                   $_POST['job_id'],
                   $parts_used,
                   $notes
-              );
-              
-              json_response($result);
-          }
+               );
 
-      } catch (Exception $e) {
-          json_response(['success'=>false,'message'=>$e->getMessage()]);
-     }
+               json_response($result);
+           }
+
+       /* =======================
+              GET JOB DETAILS
+         ======================= */
+        if ($action === 'get_job_details') {
+            $job_id = $_POST['job_id'] ?? null;
+
+            if (!$job_id) {
+                json_response(['success'=>false,'message'=>'Job ID is required']);
+            }
+
+            $result = $jobOrderOps->getJobDetailsWithParts($job_id);
+
+            if (!$result) {
+                json_response(['success'=>false,'message'=>'Job order not found']);
+            }
+
+            json_response(['success'=>true,'data'=>$result]);
+        }
+
+       } catch (Exception $e) {
+           json_response(['success'=>false,'message'=>$e->getMessage()]);
+      }
 }
 
 /* =========================================================
@@ -313,11 +332,12 @@ $ongoing_jobs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Completed Jobs (History)
 $completed_jobs = [];
 $stmt = $pdo->prepare("
-    SELECT jo.*, 
+    SELECT jo.*,
            c.name as customer_name,
            m.full_name as mechanic_name,
            sc.name as service_name,
-           u.name as created_by_name
+           u.name as created_by_name,
+           (SELECT COUNT(*) FROM job_order_parts jop WHERE jop.job_order_id = jo.id) as parts_count
     FROM job_orders jo
     LEFT JOIN customers c ON c.id = jo.customer_id
     LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
@@ -720,22 +740,102 @@ include __DIR__ . '/../partials/header.php';
 
 .toast {
     position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    padding: 8px 16px;
-    border-radius: 6px;
+    top: 20px;
+    right: 20px;
+    padding: 15px 25px;
+    background: var(--blue);
     color: white;
-    font-weight: 600;
-    font-size: 12px;
-    z-index: 2000;
-    display: none;
-    animation: slideIn 0.3s ease;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    min-width: 200px;
-    text-align: center;
+    border-radius: 5px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    z-index: 10001;
 }
 
+/* Custom Confirm Modal */
+#confirmModal {
+    z-index: 10000;
+}
+
+#confirmModal .modal-content {
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    animation: modalFadeIn 0.3s ease-out;
+}
+
+@keyframes modalFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#confirmModal .modal-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+#confirmModal .modal-title {
+    margin: 0;
+    color: white;
+}
+
+#confirmModal .modal-body {
+    padding: 30px;
+}
+
+#confirmModal .modal-footer {
+    padding: 20px 30px;
+    border-top: 1px solid #eee;
+}
+
+#confirmModal button {
+    min-width: 100px;
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* Job Details Modal Tables */
+#detailsModal table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+}
+
+#detailsModal th {
+    background: #f5f5f5;
+    color: #333;
+    font-weight: 600;
+    text-align: left;
+    padding: 12px;
+    border-bottom: 2px solid #ddd;
+}
+
+#detailsModal td {
+    padding: 12px;
+    border-bottom: 1px solid #e0e0e0;
+    vertical-align: top;
+}
+
+#detailsModal tfoot td {
+    font-weight: 600;
+    background: #e8f4fd;
+}
+
+#detailsModal tbody tr:hover {
+    background: #f9f9f9;
+}
+
+#detailsModal .fa-spinner {
+    animation: fa-spin 2s infinite linear;
+}
+
+@keyframes fa-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
 @keyframes slideIn {
     from {
         opacity: 0;
@@ -789,13 +889,13 @@ include __DIR__ . '/../partials/header.php';
     <div class="tabs-container">
         <div class="tab-buttons">
             <?php if ($isStaff): ?>
-                <button class="tab-btn active" onclick="switchTab('create')">Create Job Order</button>
+                <button type="button" class="tab-btn active" onclick="switchTab('create')">Create Job Order</button>
             <?php endif; ?>
             <?php if ($canReview): ?>
-                <button class="tab-btn <?php echo $isStaff ? '' : 'active'; ?>" onclick="switchTab('pending')">Pending Jobs</button>
+                <button type="button" class="tab-btn <?php echo $isStaff ? '' : 'active'; ?>" onclick="switchTab('pending')">Pending Jobs</button>
             <?php endif; ?>
-            <button class="tab-btn" onclick="switchTab('ongoing')">Ongoing Jobs</button>
-            <button class="tab-btn" onclick="switchTab('history')">Job History</button>
+            <button type="button" class="tab-btn" onclick="switchTab('ongoing')">Ongoing Jobs</button>
+            <button type="button" class="tab-btn" onclick="switchTab('history')">Job History</button>
         </div>
         <!-- Create Job Order Tab -->
         <div id="create-tab" class="tab-content">
@@ -934,7 +1034,7 @@ include __DIR__ . '/../partials/header.php';
                                         <?php echo date('M d, Y H:i A', strtotime($job['created_at'])); ?>
                                     </div>
                                 </div>
-                                <span class="status-badge status-pending">Pending Review</span>
+                                <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $job['status'])); ?>"><?php echo htmlspecialchars($job['status']); ?></span>
                             </div>
 
                             <div class="job-details">
@@ -985,16 +1085,16 @@ include __DIR__ . '/../partials/header.php';
 
                             <div class="job-actions">
                                 <?php if ($isManager): ?>
-                                    <button class="btn btn-success" onclick="adminReviewApprove(<?php echo $job['id']; ?>)">
+                                    <button type="button" class="btn btn-success" onclick="event.stopPropagation(); event.preventDefault(); console.log('Approve button clicked'); confirmApproveJobOrder(<?php echo $job['id']; ?>)">
                                         <i class="fas fa-check"></i> Approve
                                     </button>
-                                    <button class="btn btn-danger" onclick="adminReviewReject(<?php echo $job['id']; ?>)">
+                                    <button type="button" class="btn btn-danger" onclick="event.stopPropagation(); event.preventDefault(); console.log('Reject button clicked'); confirmRejectJobOrder(<?php echo $job['id']; ?>)">
                                         <i class="fas fa-times"></i> Reject
                                     </button>
                                 <?php else: ?>
                                     <span style="color: var(--muted); font-size: 12px;">Manager approval required</span>
                                 <?php endif; ?>
-                                <button class="btn btn-secondary" onclick="viewJobDetails(<?php echo $job['id']; ?>)">
+                                <button type="button" class="btn btn-secondary" onclick="event.stopPropagation(); event.preventDefault(); console.log('Details button clicked'); showJobDetails(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-info-circle"></i> Details
                                 </button>
                             </div>
@@ -1027,13 +1127,13 @@ include __DIR__ . '/../partials/header.php';
 
             <?php if (!empty($ongoing_jobs)): ?>
                 <?php foreach ($ongoing_jobs as $job): ?>
-                    <div class="job-card clickable" onclick="viewJobDetails(<?php echo $job['id']; ?>)" style="cursor: pointer;">
+                    <div class="job-card clickable" onclick="showJobDetails(<?php echo $job['id']; ?>)" style="cursor: pointer;">
                         <div class="job-header">
                             <div>
-                                <div class="job-title">Job #<?php echo $job['id']; ?> - Service ID: <?php echo htmlspecialchars($job['service_category_id']); ?></div>
-                                <div class="job-meta">Started: <?php echo date('M d, Y H:i', strtotime($job['created_at'])); ?></div>
+                                <div class="job-title">Job #<?php echo $job['id']; ?> - <?php echo htmlspecialchars($job['service_name'] ?? 'N/A'); ?></div>
+                                <div class="job-meta">Started: <?php echo date('M d, Y H:i', strtotime($job['started_at'] ?? $job['created_at'])); ?></div>
                             </div>
-                            <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $job['status'])); ?>"><?php echo $job['status']; ?></span>
+                            <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $job['status'])); ?>"><?php echo htmlspecialchars($job['status']); ?></span>
                         </div>
 
                         <div class="job-details">
@@ -1047,7 +1147,7 @@ include __DIR__ . '/../partials/header.php';
                             </div>
                             <div class="job-detail-item">
                                 <div class="job-detail-label">Service Type</div>
-                                <div class="job-detail-value"><?php echo htmlspecialchars($job['service_type']); ?></div>
+                                <div class="job-detail-value"><?php echo htmlspecialchars($job['service_name'] ?? 'N/A'); ?></div>
                             </div>
                             <div class="job-detail-item">
                                 <div class="job-detail-label">Assigned Staff</div>
@@ -1072,16 +1172,16 @@ include __DIR__ . '/../partials/header.php';
 
                         <div class="job-actions">
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button class="btn btn-info" onclick="confirmStatusChange(<?php echo $job['id']; ?>, 'In Progress', '⏳ Keep In Progress?', 'Job will remain in progress for continued work.')">
+                                <button type="button" class="btn btn-info" onclick="event.stopPropagation(); event.preventDefault(); console.log('In Progress button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'In Progress', '⏳ Keep In Progress?', 'Job will remain in progress for continued work.')">
                                     <i class="fas fa-spinner"></i> In Progress
                                 </button>
-                                <button class="btn btn-success" onclick="confirmStatusChange(<?php echo $job['id']; ?>, 'Completed', '✅ Mark as Completed?', 'This will finalize the job and move it to history.')">
+                                <button type="button" class="btn btn-success" onclick="event.stopPropagation(); event.preventDefault(); console.log('Complete button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'Completed', '✅ Mark as Completed?', 'This will finalize the job and move it to history.')">
                                     <i class="fas fa-check-circle"></i> Complete
                                 </button>
-                                <button class="btn btn-danger" onclick="confirmStatusChange(<?php echo $job['id']; ?>, 'Cancelled', '❌ Cancel This Job?', 'This action cannot be easily undone. Are you sure?')">
+                                <button type="button" class="btn btn-danger" onclick="event.stopPropagation(); event.preventDefault(); console.log('Cancel button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'Cancelled', '❌ Cancel This Job?', 'This action cannot be easily undone. Are you sure?')">
                                     <i class="fas fa-times-circle"></i> Cancel
                                 </button>
-                                <button class="btn btn-primary" onclick="confirmPartsUsed(<?php echo $job['id']; ?>)">
+                                <button type="button" class="btn btn-primary" onclick="event.stopPropagation(); event.preventDefault(); console.log('Parts Used button clicked'); confirmPartsUsed(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-cogs"></i> 📦 Parts Used
                                 </button>
                             </div>
@@ -1140,10 +1240,10 @@ include __DIR__ . '/../partials/header.php';
             <div id="completedJobsContainer">
                 <?php if (!empty($completed_jobs)): ?>
                     <?php foreach ($completed_jobs as $job): ?>
-                        <div class="job-card completed-job clickable" onclick="viewJobDetails(<?php echo $job['id']; ?>)" style="cursor: pointer;" data-job-id="<?php echo $job['id']; ?>" data-customer="<?php echo htmlspecialchars($job['customer_name'] ?? 'Walk-in'); ?>" data-staff="<?php echo $job['assigned_mechanic_id']; ?>" data-service="<?php echo htmlspecialchars($job['service_category_id']); ?>">
+                        <div class="job-card completed-job clickable" onclick="showJobDetails(<?php echo $job['id']; ?>)" style="cursor: pointer;" data-job-id="<?php echo $job['id']; ?>" data-customer="<?php echo htmlspecialchars($job['customer_name'] ?? 'Walk-in'); ?>" data-staff="<?php echo $job['assigned_mechanic_id']; ?>" data-service="<?php echo htmlspecialchars($job['service_category_id']); ?>">
                             <div class="job-header">
                                 <div>
-                                    <div class="job-title">Job #<?php echo $job['id']; ?> - Service ID: <?php echo htmlspecialchars($job['service_category_id']); ?></div>
+                                    <div class="job-title">Job #<?php echo $job['id']; ?> - <?php echo htmlspecialchars($job['service_name'] ?? 'N/A'); ?></div>
                                     <div class="job-meta">Completed: <?php echo date('M d, Y H:i', strtotime($job['completed_at'] ?? $job['updated_at'])); ?></div>
                                 </div>
                                 <span class="status-badge status-completed">Completed</span>
@@ -1160,11 +1260,11 @@ include __DIR__ . '/../partials/header.php';
                                 </div>
                                 <div class="job-detail-item">
                                     <div class="job-detail-label">Service Performed</div>
-                                    <div class="job-detail-value"><?php echo htmlspecialchars($job['service_type']); ?></div>
+                                    <div class="job-detail-value"><?php echo htmlspecialchars($job['service_name'] ?? 'N/A'); ?></div>
                                 </div>
                                 <div class="job-detail-item">
                                     <div class="job-detail-label">Parts Used</div>
-                                    <div class="job-detail-value"><?php echo htmlspecialchars($job['vehicle_type'] ?? 'N/A'); ?></div>
+                                    <div class="job-detail-value"><?php echo $job['parts_count'] > 0 ? $job['parts_count'] . ' item(s)' : 'None'; ?></div>
                                 </div>
                                 <div class="job-detail-item">
                                     <div class="job-detail-label">Job Order #</div>
@@ -1188,10 +1288,10 @@ include __DIR__ . '/../partials/header.php';
                             <?php endif; ?>
 
                             <div class="job-actions">
-                                <button class="btn btn-primary" onclick="viewJobDetails(<?php echo $job['id']; ?>)">
+                                <button type="button" class="btn btn-primary" onclick="event.stopPropagation(); event.preventDefault(); console.log('View Details button clicked'); showJobDetails(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-eye"></i> 👁️ View Details
                                 </button>
-                                <button class="btn btn-secondary" onclick="viewAuditTrail(<?php echo $job['id']; ?>)">
+                                <button type="button" class="btn btn-secondary" onclick="event.stopPropagation(); event.preventDefault(); console.log('Audit Trail button clicked'); viewAuditTrail(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-history"></i> 🔍 Audit Trail
                                 </button>
                             </div>
@@ -1277,23 +1377,36 @@ include __DIR__ . '/../partials/header.php';
 </div>
 
 <!-- Job Details Modal -->
-<div id="detailsModal" class="modal">
-    <div class="modal-content">
+<div id="detailsModal" class="modal" style="z-index:10001;">
+    <div class="modal-content" style="max-width: 850px;">
         <div class="modal-header">
-            <h3 class="modal-title">Job Order Details</h3>
+            <h3 class="modal-title"><i class="fas fa-clipboard-list"></i> Job Order Details</h3>
             <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
         </div>
-        <div class="modal-body" id="jobDetailsContent">
+        <div class="modal-body" id="jobDetailsContent" style="padding: 20px;">
             <!-- Job details will be loaded here -->
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeDetailsModal()">Close</button>
         </div>
     </div>
 </div>
 
 <!-- Toast Notification -->
 <div id="toast" class="toast" style="display: none;"></div>
+
+<!-- Custom Confirmation Modal -->
+<div id="confirmModal" class="modal" style="display: none; z-index: 10000;">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3 class="modal-title" id="confirmModalTitle">Confirm Action</h3>
+        </div>
+        <div class="modal-body">
+            <p id="confirmModalMessage" style="font-size: 14px; line-height: 1.6;"></p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirmModalCancel" style="margin-right: 10px;">Cancel</button>
+            <button type="button" class="btn btn-success" id="confirmModalConfirm">Confirm</button>
+        </div>
+    </div>
+</div>
 
 <script>
 // ===============================================
@@ -1429,18 +1542,18 @@ async function adminReviewApprove(jobId) {
 }
 
 async function adminReviewReject(jobId) {
-     const remarks = prompt('Enter rejection reason:');
-     if (!remarks) {
-         showToast('Rejection reason is required', 'error');
-         return;
-     }
-     
-     if (!confirm('Are you sure you want to reject this job order? It will be returned to staff.')) return;
-     
-     const formData = new FormData();
-     formData.append('action', 'manager_review_reject');
-     formData.append('job_id', jobId);
-     formData.append('remarks', remarks);
+      const remarks = prompt('Enter rejection reason:');
+      if (!remarks) {
+          showToast('Rejection reason is required', 'error');
+          return;
+      }
+
+      if (!confirm('Are you sure you want to reject this job order? It will be returned to staff.')) return;
+
+      const formData = new FormData();
+      formData.append('action', 'manager_review_reject');
+      formData.append('job_id', jobId);
+      formData.append('remarks', remarks);
 
     try {
         const response = await fetch('joborder.php', {
@@ -1461,6 +1574,101 @@ async function adminReviewReject(jobId) {
         showToast('Error rejecting job order', 'error');
     }
 }
+
+async function confirmApproveJobOrder(jobId) {
+    console.log('confirmApproveJobOrder called with jobId:', jobId);
+
+    try {
+        const confirmed = confirm('Are you sure you want to approve this job order?\n\nThis will move the job to "In Progress" status and the mechanic can begin working on it.');
+        console.log('Confirm dialog returned:', confirmed);
+
+        if (!confirmed) {
+            console.log('User cancelled approval');
+            return;
+        }
+
+        const remarks = prompt('Enter approval remarks (optional):');
+        console.log('Remarks entered:', remarks);
+        if (remarks === null) {
+            console.log('User cancelled remarks prompt');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'manager_review_approve');
+        formData.append('job_id', jobId);
+        if (remarks) formData.append('remarks', remarks);
+
+        console.log('Submitting approve request...');
+
+        const response = await fetch('joborder.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+        console.log('Approve response:', result);
+
+        if (result.success) {
+            showToast('Job order approved and started!', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(result.message || 'Failed to approve job order', 'error');
+        }
+    } catch (error) {
+        console.error('Error in confirmApproveJobOrder:', error);
+        showToast('Error approving job order', 'error');
+    }
+}
+
+async function confirmRejectJobOrder(jobId) {
+    console.log('confirmRejectJobOrder called with jobId:', jobId);
+
+    try {
+        const remarks = prompt('Enter rejection reason:');
+        console.log('Remarks entered:', remarks);
+
+        if (!remarks) {
+            showToast('Rejection reason is required', 'error');
+            return;
+        }
+
+        const confirmed = confirm('Are you sure you want to reject this job order?\n\nThis will return to job to staff with your rejection reason.');
+        console.log('Confirm dialog returned:', confirmed);
+
+        if (!confirmed) {
+            console.log('User cancelled rejection');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'manager_review_reject');
+        formData.append('job_id', jobId);
+        formData.append('remarks', remarks);
+
+        console.log('Submitting reject request...');
+
+        const response = await fetch('joborder.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+        console.log('Reject response:', result);
+
+        if (result.success) {
+            showToast('Job order rejected', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(result.message || 'Failed to reject job order', 'error');
+        }
+    } catch (error) {
+        console.error('Error in confirmRejectJobOrder:', error);
+        showToast('Error rejecting job order', 'error');
+    }
+}
+
+
 
 
 // ===============================================
@@ -1629,17 +1837,33 @@ let currentStatus = null;
  * @param {string} message - Dialog message with details
  */
 function confirmStatusChange(jobId, newStatus, title, message) {
-    // Show detailed confirmation message
-    const fullMessage = title + '\n\n' + message;
-    
-    console.log('Confirming status change:', { jobId, newStatus, title, message });
-    
-    if (confirm(fullMessage)) {
-        console.log('User confirmed, updating status to:', newStatus);
+    console.log('confirmStatusChange called with:', { jobId, newStatus, title, message });
+
+    const confirmModal = document.getElementById('confirmModal');
+    const confirmTitle = document.getElementById('confirmModalTitle');
+    const confirmMessage = document.getElementById('confirmModalMessage');
+    const confirmBtn = document.getElementById('confirmModalConfirm');
+    const cancelBtn = document.getElementById('confirmModalCancel');
+
+    // Set modal content
+    confirmTitle.textContent = title;
+    confirmMessage.textContent = message;
+
+    // Show modal
+    console.log('Showing custom confirm modal...');
+    confirmModal.style.display = 'block';
+
+    // Store callback for confirm button
+    confirmBtn.onclick = function() {
+        console.log('User confirmed via modal, updating status to:', newStatus);
+        confirmModal.style.display = 'none';
         updateJobStatus(jobId, newStatus);
-    } else {
-        console.log('User cancelled status change');
-    }
+    };
+
+    cancelBtn.onclick = function() {
+        console.log('User cancelled via modal');
+        confirmModal.style.display = 'none';
+    };
 }
 
 
@@ -1837,10 +2061,280 @@ async function confirmPartsConfirmation() {
      }
 }
 
-function viewJobDetails(jobId) {
-    console.log('Job clicked:', jobId);
-    alert('Job Details for Job #' + jobId + '\n\nThis will show detailed job information in a modal.\n\nFor now, this confirms the click is working!');
-    // You can expand this later to show a proper modal with job details
+async function showJobDetails(jobId) {
+    console.log('showJobDetails called for jobId:', jobId);
+
+    try {
+        // Show loading state
+        const modal = document.getElementById('detailsModal');
+        const content = document.getElementById('jobDetailsContent');
+        content.innerHTML = '<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin" style="font-size:32px;"></i><br><br>Loading job details...</div>';
+        modal.style.display = 'block';
+
+        // Fetch job details from backend
+        const formData = new FormData();
+        formData.append('action', 'get_job_details');
+        formData.append('job_id', jobId);
+
+        console.log('Sending request to backend...');
+
+        const response = await fetch('joborder.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        console.log('Response status:', response.status, 'OK:', response.ok);
+
+        const text = await response.text();
+        console.log('Raw response text:', text);
+
+        // Try to parse JSON
+        let result;
+        try {
+            result = JSON.parse(text);
+            console.log('Parsed JSON:', result);
+        } catch (parseError) {
+            console.error('JSON parse error:', parseError);
+            console.error('Response that failed to parse:', text);
+            content.innerHTML = '<div style="text-align:center; padding:40px; color:var(--error);">Error: Invalid response from server. Please check console for details.</div>';
+            return;
+        }
+
+        if (!result.success) {
+            console.error('Request failed:', result);
+            const errorMsg = result.message || 'Error loading job details';
+            content.innerHTML = '<div style="text-align:center; padding:40px; color:var(--error);">' + errorMsg + '</div>';
+            return;
+        }
+
+        if (!result.data) {
+            console.error('No job data returned');
+            content.innerHTML = '<div style="text-align:center; padding:40px; color:var(--muted);">Job order not found or has no details.</div>';
+            return;
+        }
+
+        const job = result.data;
+        renderJobDetails(job);
+
+    } catch (error) {
+        console.error('Error fetching job details:', error);
+        const content = document.getElementById('jobDetailsContent');
+        content.innerHTML = '<div style="text-align:center; padding:40px; color:var(--error);">Error: ' + error.message + '</div>';
+    }
+}
+
+function renderJobDetails(job) {
+    const content = document.getElementById('jobDetailsContent');
+    const parts = job.parts_used || [];
+    const actualLaborHours = parseFloat(job.actual_duration || job.estimated_duration || 0);
+    const estimatedHours = parseFloat(job.estimated_duration || 0);
+    const laborCost = parseFloat(job.actual_labor_cost || 0);
+    const partsCost = parseFloat(job.total_parts_cost || 0);
+    const totalCost = parseFloat(job.total_cost || 0);
+
+    console.log('Rendering job details:', job);
+    console.log('Parts:', parts, 'Count:', parts.length);
+    console.log('Labor Hours:', actualLaborHours, 'Estimated:', estimatedHours);
+    console.log('Costs - Labor:', laborCost, 'Parts:', partsCost, 'Total:', totalCost);
+
+    // Build parts table HTML
+    let partsTableHtml = '';
+    if (parts.length > 0) {
+        partsTableHtml = parts.map(part => `
+            <tr>
+                <td>
+                    <div style="font-weight:600;">${escapeHtml(part.product_name || 'N/A')}</div>
+                </td>
+                <td style="text-align:center;">${part.quantity_used}</td>
+                <td style="text-align:right;">${formatCurrency(part.unit_cost)}</td>
+                <td style="text-align:right; font-weight:600;">${formatCurrency(part.total_cost)}</td>
+            </tr>
+        `).join('');
+
+        partsTableHtml = `
+            <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
+                <thead>
+                    <tr style="background:#f5f5f5; border-bottom:2px solid #ddd;">
+                        <th style="padding:12px; text-align:left;">Product</th>
+                        <th style="padding:12px; text-align:center;">Qty</th>
+                        <th style="padding:12px; text-align:right;">Unit Cost</th>
+                        <th style="padding:12px; text-align:right;">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${partsTableHtml}
+                </tbody>
+                <tfoot>
+                    <tr style="background:#e8f4fd; font-weight:600; border-top:2px solid #ddd;">
+                        <td colspan="3" style="padding:12px; text-align:right;">Total Parts Cost:</td>
+                        <td style="padding:12px; text-align:right;">${formatCurrency(partsCost)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        `;
+    } else {
+        partsTableHtml = '<div style="background:#fff3cd; padding:15px; border-radius:5px; text-align:center; margin-bottom:20px;"><i class="fas fa-box-open"></i> No parts were used for this job.</div>';
+    }
+
+    // Build the complete details HTML
+    content.innerHTML = `
+        <div style="max-height:600px; overflow-y:auto; padding-right:10px;">
+            <!-- Section 1: Job Order Information -->
+            <div style="margin-bottom:25px;">
+                <h4 style="margin:0 0 15px 0; color:var(--blue); display:flex; align-items:center; gap:10px;">
+                    <i class="fas fa-clipboard-list"></i> Job Order Information
+                </h4>
+                <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:15px; background:#f9f9f9; padding:20px; border-radius:8px;">
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Job Order ID</div>
+                        <div style="font-weight:600; font-size:18px;">#${job.id}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Job Order Number</div>
+                        <div style="font-weight:600; font-size:18px;">${escapeHtml(job.job_order_number || 'N/A')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Customer</div>
+                        <div style="font-weight:600; font-size:16px;">${escapeHtml(job.customer_name || 'Walk-in')}</div>
+                        ${job.customer_phone ? `<div style="font-size:13px; color:var(--muted);"><i class="fas fa-phone"></i> ${escapeHtml(job.customer_phone)}</div>` : ''}
+                        ${job.customer_email ? `<div style="font-size:13px; color:var(--muted);"><i class="fas fa-envelope"></i> ${escapeHtml(job.customer_email)}</div>` : ''}
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Service Type</div>
+                        <div style="font-weight:600; font-size:16px;">${escapeHtml(job.service_name || 'N/A')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Assigned Mechanic</div>
+                        <div style="font-weight:600; font-size:16px;">${escapeHtml(job.mechanic_name || 'Unassigned')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Status</div>
+                        <span class="status-badge status-${getStatusClass(job.status)}" style="display:inline-block; font-size:14px;">${escapeHtml(job.status)}</span>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Created</div>
+                        <div style="font-weight:600;">${formatDate(job.created_at)}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Started</div>
+                        <div style="font-weight:600;">${formatDate(job.started_at)}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Completed</div>
+                        <div style="font-weight:600; color:#28a745;">${formatDate(job.completed_at)}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Duration</div>
+                        <div style="font-weight:600;">
+                            ${actualLaborHours > 0 ? actualLaborHours + ' hrs' : 'N/A'}
+                            ${estimatedHours > 0 ? ` <span style="color:var(--muted); font-weight:400;">(Est: ${estimatedHours} hrs)</span>` : ''}
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Created By</div>
+                        <div style="font-weight:600;">${escapeHtml(job.created_by_name || 'N/A')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Reviewed By</div>
+                        <div style="font-weight:600;">${escapeHtml(job.reviewed_by_name || 'N/A')}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 2: Parts Used -->
+            <div style="margin-bottom:25px;">
+                <h4 style="margin:0 0 15px 0; color:var(--blue); display:flex; align-items:center; gap:10px;">
+                    <i class="fas fa-boxes"></i> Parts Used
+                </h4>
+                ${partsTableHtml}
+            </div>
+
+            <!-- Section 3: Labor & Billing Breakdown -->
+            <div style="margin-bottom:25px;">
+                <h4 style="margin:0 0 15px 0; color:var(--blue); display:flex; align-items:center; gap:10px;">
+                    <i class="fas fa-calculator"></i> Labor & Billing Breakdown
+                </h4>
+                <table style="width:100%; border-collapse:collapse; background:#f9f9f9; border-radius:8px; overflow:hidden;">
+                    <tbody>
+                        <tr style="border-bottom:1px solid #e0e0e0;">
+                            <td colspan="2" style="padding:15px 20px; text-align:center;">
+                                <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Labor Hours</div>
+                                <div style="font-size:18px; font-weight:600;">
+                                    ${actualLaborHours} hrs
+                                    ${estimatedHours > 0 ? `<span style="color:var(--muted); font-weight:400; margin-left:10px;">(Estimated: ${estimatedHours} hrs)</span>` : ''}
+                                </div>
+                            </td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #e0e0e0; background:#fff;">
+                            <td style="padding:15px 20px;">
+                                <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Labor Cost</div>
+                                <div style="font-size:18px; font-weight:600; color:#007bff;">${formatCurrency(laborCost)}</div>
+                            </td>
+                            <td style="padding:15px 20px; text-align:right;">
+                                <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Parts Cost</div>
+                                <div style="font-size:18px; font-weight:600; color:#dc3545;">${formatCurrency(partsCost)}</div>
+                            </td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #e0e0e0;">
+                            <td colspan="2" style="padding:15px 20px; text-align:right;">
+                                <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Total Cost</div>
+                                <div style="font-size:24px; font-weight:700; color:#28a745;">${formatCurrency(totalCost)}</div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Section 4: Notes -->
+            ${job.notes ? `
+            <div style="margin-bottom:25px;">
+                <h4 style="margin:0 0 15px 0; color:var(--blue); display:flex; align-items:center; gap:10px;">
+                    <i class="fas fa-sticky-note"></i> Notes
+                </h4>
+                <div style="background:#fff3cd; padding:15px; border-radius:8px; border-left:4px solid #ffc107; line-height:1.6;">
+                    ${escapeHtml(job.notes).replace(/\n/g, '<br>')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+
+        <!-- Footer with close button only (read-only) -->
+        <div style="text-align:center; padding-top:20px; border-top:1px solid #e0e0e0;">
+            <button type="button" class="btn btn-secondary" onclick="closeDetailsModal()" style="padding:10px 40px;">
+                <i class="fas fa-times"></i> Close
+            </button>
+        </div>
+    `;
+}
+
+// Helper functions for formatting
+function formatCurrency(amount) {
+    return '₱' + (parseFloat(amount) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return 'N/A';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function getStatusClass(status) {
+    const s = (status || '').toLowerCase().replace(/\s+/g, '-');
+    const validStatuses = ['pending', 'in-progress', 'completed', 'cancelled', 'rejected'];
+    return validStatuses.includes(s) ? s : 'pending';
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }
 
 // Test function to verify JavaScript is working
@@ -1923,6 +2417,11 @@ function showToast(message, type = 'info') {
 window.addEventListener('click', function(event) {
     if (event.target.classList.contains('modal')) {
         event.target.style.display = 'none';
+    }
+    // Close confirm modal when clicking outside
+    const confirmModal = document.getElementById('confirmModal');
+    if (confirmModal && event.target === confirmModal) {
+        confirmModal.style.display = 'none';
     }
 });
 

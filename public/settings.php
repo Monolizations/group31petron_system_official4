@@ -98,11 +98,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$me['id'], 'Fuel Calibration Update', "$fuel_type - $calibration_constant", $_SERVER['REMOTE_ADDR']]);
         } catch(Exception $e) {}
     }
+    
+    elseif ($action === 'save_supplier') {
+        $supplier_id = $_POST['supplier_id'] ?? '';
+        $name = trim($_POST['name'] ?? '');
+        $contact_person = trim($_POST['contact_person'] ?? '');
+        $phone = trim($_POST['phone'] ?? '');
+        $email = trim($_POST['email'] ?? '');
+        $address = trim($_POST['address'] ?? '');
+        $is_default = isset($_POST['is_default']) ? 1 : 0;
+        
+        if (empty($name)) {
+            $notice = '❌ Supplier name is required.';
+        } else {
+            if ($supplier_id) {
+                // Update
+                $stmt = $pdo->prepare("UPDATE suppliers SET name=?, contact_person=?, phone=?, email=?, address=? WHERE id=?");
+                $stmt->execute([$name, $contact_person, $phone, $email, $address, $supplier_id]);
+                
+                // Update default if set
+                if ($is_default) {
+                    $pdo->prepare("UPDATE system_settings SET setting_value=?, updated_at=NOW(), updated_by=? WHERE setting_key='default_supplier_id'")->execute([$supplier_id, $me['id']]);
+                }
+                $notice = '✅ Supplier updated successfully';
+            } else {
+                // Create
+                $stmt = $pdo->prepare("INSERT INTO suppliers (name, contact_person, phone, email, address, created_at) VALUES (?, ?, ?, ?, ?, NOW())");
+                $stmt->execute([$name, $contact_person, $phone, $email, $address]);
+                $new_id = $pdo->lastInsertId();
+                
+                // Set as default if marked
+                if ($is_default) {
+                    $pdo->prepare("UPDATE system_settings SET setting_value=?, updated_at=NOW(), updated_by=? WHERE setting_key='default_supplier_id'")->execute([$new_id, $me['id']]);
+                }
+                $notice = '✅ Supplier added successfully';
+            }
+            
+            log_activity($pdo, $me['id'], 'Supplier Management', ($supplier_id ? "Updated supplier: $name" : "Created supplier: $name"), $_SERVER['REMOTE_ADDR']);
+        }
+    }
+    
+    elseif ($action === 'delete_supplier') {
+        $supplier_id = $_POST['supplier_id'] ?? 0;
+        $pdo->prepare("DELETE FROM suppliers WHERE id=?")->execute([$supplier_id]);
+        
+        // Reset default if deleted supplier was default
+        $pdo->prepare("UPDATE system_settings SET setting_value=NULL, updated_at=NOW(), updated_by=? WHERE setting_key='default_supplier_id' AND setting_value=?")->execute([$me['id'], $supplier_id]);
+        
+        $notice = '✅ Supplier deleted successfully';
+        log_activity($pdo, $me['id'], 'Supplier Management', "Deleted supplier ID: $supplier_id", $_SERVER['REMOTE_ADDR']);
+    }
+    
+    elseif ($action === 'set_default_supplier') {
+        $supplier_id = $_POST['supplier_id'] ?? 0;
+        $pdo->prepare("UPDATE system_settings SET setting_value=?, updated_at=NOW(), updated_by=? WHERE setting_key='default_supplier_id'")->execute([$supplier_id, $me['id']]);
+        $notice = '✅ Default supplier updated successfully';
+        log_activity($pdo, $me['id'], 'Supplier Management', "Set default supplier ID: $supplier_id", $_SERVER['REMOTE_ADDR']);
+    }
 }
 
 // Fetch data
 $services = [];
 $calibrations = [];
+$suppliers_list = [];
+$default_supplier_id = null;
 
 try {
     $stmt = $pdo->query("SELECT sr.*, sc.name AS category FROM service_rates sr LEFT JOIN service_categories sc ON sr.service_category_id = sc.id ORDER BY sc.name, sr.rate_name");
@@ -137,6 +196,20 @@ try {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )");
+}
+
+try {
+    $stmt = $pdo->query("SELECT * FROM suppliers ORDER BY name");
+    $suppliers_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch(Exception $e) {
+    $suppliers_list = [];
+}
+
+try {
+    $stmt = $pdo->query("SELECT CAST(setting_value AS UNSIGNED) FROM system_settings WHERE setting_key='default_supplier_id'");
+    $default_supplier_id = $stmt->fetchColumn();
+} catch(Exception $e) {
+    $default_supplier_id = null;
 }
 
 include __DIR__ . '/../partials/header.php';
@@ -577,9 +650,62 @@ include __DIR__ . '/../partials/header.php';
         margin: 0;
         padding: 0;
     }
+    
+    .settings-nav {
+        background: white;
+        border-radius: 12px;
+        padding: 8px;
+        margin-bottom: 32px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        box-shadow: var(--shadow);
+    }
+    
+    .settings-nav-item {
+        padding: 12px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--muted);
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+        border: 1px solid transparent;
+    }
+    
+    .settings-nav-item:hover {
+        background: #f8fafc;
+        color: var(--text);
+    }
+    
+    .settings-nav-item.active {
+        background: var(--petron-blue);
+        color: white;
+        border-color: var(--petron-blue);
+    }
+    
+    .settings-nav-item i {
+        font-size: 16px;
+    }
 </style>
 
 <div class="system-settings-container">
+    <!-- Settings Navigation -->
+    <nav class="settings-nav">
+        <a href="?section=service_rates" class="settings-nav-item <?php echo ($section === 'service_rates' || empty($_GET['section'])) ? 'active' : ''; ?>">
+            <i class="fas fa-tools"></i> Service Rates
+        </a>
+        <a href="?section=calibration" class="settings-nav-item <?php echo $section === 'calibration' ? 'active' : ''; ?>">
+            <i class="fas fa-gas-pump"></i> Fuel Calibration
+        </a>
+        <a href="?section=suppliers" class="settings-nav-item <?php echo $section === 'suppliers' ? 'active' : ''; ?>">
+            <i class="fas fa-truck"></i> Suppliers
+        </a>
+    </nav>
     <?php if ($notice): ?>
         <div class="toast success show" id="noticeToast">
             <div class="toast-icon"><i class="fas fa-check"></i></div>
@@ -713,11 +839,8 @@ include __DIR__ . '/../partials/header.php';
                 <div class="filter-grid">
                     <div class="form-group">
                         <label class="form-label">Fuel Type</label>
-                        <select name="fuel_type" class="form-select">
+                        <select name="fuel_type" id="fuel_type_settings_1" class="form-select">
                             <option value="">All Fuel Types</option>
-                            <option value="Gasoline" <?php echo ($_GET['fuel_type'] ?? '') === 'Gasoline' ? 'selected' : ''; ?>>Gasoline</option>
-                            <option value="Diesel" <?php echo ($_GET['fuel_type'] ?? '') === 'Diesel' ? 'selected' : ''; ?>>Diesel</option>
-                            <option value="LPG" <?php echo ($_GET['fuel_type'] ?? '') === 'LPG' ? 'selected' : ''; ?>>LPG</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -797,6 +920,78 @@ include __DIR__ . '/../partials/header.php';
                 <?php endif; ?>
             </div>
         </div>
+    <?php elseif ($section === 'suppliers'): ?>
+        <!-- Supplier Management Section -->
+        <div class="section-header">
+            <h1 class="section-title"><i class="fas fa-truck"></i> Supplier Management</h1>
+            <p class="section-subtitle">Manage merchandise suppliers and configure default supplier</p>
+        </div>
+        
+        <div class="table-card">
+            <div class="table-header">
+                <h2 class="table-title">Suppliers</h2>
+                <button class="btn btn-primary" onclick="openSupplierModal()">
+                    <i class="fas fa-plus"></i> Add Supplier
+                </button>
+            </div>
+            <div class="table-container">
+                <?php if (empty($suppliers_list)): ?>
+                    <div class="empty-state">
+                        <div class="empty-icon"><i class="fas fa-truck"></i></div>
+                        <div class="empty-title">No suppliers found</div>
+                        <div class="empty-description">Add your first supplier to configure merchandise receiving</div>
+                        <button class="btn btn-primary" onclick="openSupplierModal()">Add Supplier</button>
+                    </div>
+                <?php else: ?>
+                    <table class="settings-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Contact Person</th>
+                                <th>Phone</th>
+                                <th>Email</th>
+                                <th>Default</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($suppliers_list as $supplier): ?>
+                                <tr>
+                                    <td>
+                                        <?php echo htmlspecialchars($supplier['name']); ?>
+                                        <?php if ($supplier['id'] == $default_supplier_id): ?>
+                                            <span class="badge badge-active">Default</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?php echo htmlspecialchars($supplier['contact_person'] ?? '-'); ?></td>
+                                    <td><?php echo htmlspecialchars($supplier['phone'] ?? '-'); ?></td>
+                                    <td><?php echo htmlspecialchars($supplier['email'] ?? '-'); ?></td>
+                                    <td>
+                                        <?php if ($supplier['id'] == $default_supplier_id): ?>
+                                            <i class="fas fa-star" style="color: #f59e0b;"></i>
+                                        <?php else: ?>
+                                            <button class="btn-icon" onclick="setDefaultSupplier(<?php echo $supplier['id']; ?>)" title="Set as Default">
+                                                <i class="far fa-star"></i>
+                                            </button>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <button class="btn-icon edit" onclick="editSupplier(<?php echo $supplier['id']; ?>)">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn-icon delete" onclick="deleteSupplier(<?php echo $supplier['id']; ?>)">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
+        </div>
     <?php endif; ?>
 </div>
 
@@ -864,11 +1059,8 @@ include __DIR__ . '/../partials/header.php';
                 <div class="form-grid">
                     <div class="form-group">
                         <label class="form-label">Fuel Type</label>
-                        <select name="fuel_type" id="fuel_type" class="form-select" required>
+                        <select name="fuel_type" id="fuel_type_settings_2" class="form-select" required>
                             <option value="">Select Fuel Type</option>
-                            <option value="Gasoline">Gasoline</option>
-                            <option value="Diesel">Diesel</option>
-                            <option value="LPG">LPG</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -916,6 +1108,58 @@ include __DIR__ . '/../partials/header.php';
                 <button type="submit" class="btn btn-primary" style="background: #dc2626;">Delete</button>
             </form>
         </div>
+    </div>
+</div>
+
+<!-- Supplier Modal -->
+<div class="modal" id="supplierModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title" id="supplierModalTitle">Add Supplier</h3>
+            <button class="modal-close" onclick="closeSupplierModal()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <form method="post" id="supplierForm">
+            <input type="hidden" name="action" value="save_supplier">
+            <input type="hidden" name="supplier_id" id="supplier_id">
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Supplier Name *</label>
+                        <input type="text" name="name" id="supplier_name" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Contact Person</label>
+                        <input type="text" name="contact_person" id="supplier_contact" class="form-input">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Phone</label>
+                        <input type="text" name="phone" id="supplier_phone" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" name="email" id="supplier_email" class="form-input">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Address</label>
+                    <textarea name="address" id="supplier_address" class="form-input" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" name="is_default" id="supplier_default" value="1">
+                        Set as Default Supplier
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeSupplierModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Supplier</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -1018,6 +1262,71 @@ document.addEventListener('click', function(event) {
     }
 });
 
+// Supplier Modal Functions
+function openSupplierModal() {
+    document.getElementById('supplierModal').classList.add('show');
+    document.getElementById('supplierModalTitle').textContent = 'Add Supplier';
+    document.getElementById('supplierForm').reset();
+    document.getElementById('supplier_id').value = '';
+}
+
+function closeSupplierModal() {
+    document.getElementById('supplierModal').classList.remove('show');
+}
+
+function editSupplier(id) {
+    // For simplicity, just show modal with supplier list data
+    // In production, you might want to fetch supplier data via AJAX
+    const suppliers = <?php echo json_encode($suppliers_list); ?>;
+    const supplier = suppliers.find(s => s.id === id);
+    
+    if (supplier) {
+        document.getElementById('supplierModalTitle').textContent = 'Edit Supplier';
+        document.getElementById('supplier_id').value = supplier.id;
+        document.getElementById('supplier_name').value = supplier.name;
+        document.getElementById('supplier_contact').value = supplier.contact_person || '';
+        document.getElementById('supplier_phone').value = supplier.phone || '';
+        document.getElementById('supplier_email').value = supplier.email || '';
+        document.getElementById('supplier_address').value = supplier.address || '';
+        document.getElementById('supplier_default').checked = (supplier.id === <?php echo $default_supplier_id; ?>);
+        document.getElementById('supplierModal').classList.add('show');
+    }
+}
+
+function deleteSupplier(id) {
+    if (confirm('Are you sure you want to delete this supplier?')) {
+        const formData = new FormData();
+        formData.append('action', 'delete_supplier');
+        formData.append('supplier_id', id);
+        
+        fetch('settings.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.text())
+        .then(() => {
+            window.location.reload();
+        });
+    }
+}
+
+function setDefaultSupplier(id) {
+    if (confirm('Set this supplier as the default for receiving?')) {
+        const formData = new FormData();
+        formData.append('action', 'set_default_supplier');
+        formData.append('supplier_id', id);
+        
+        fetch('settings.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.text())
+        .then(() => {
+            window.location.reload();
+        });
+    }
+}
+
 // Auto-hide notice toast
 <?php if ($notice): ?>
 setTimeout(() => {
@@ -1027,6 +1336,15 @@ setTimeout(() => {
     }
 }, 3000);
 <?php endif; ?>
+</script>
+
+<script src="../assets/js/data_helper.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    DataHelper.populateFuelTypes('fuel_type_settings_1', 'All Fuel Types');
+    DataHelper.populateFuelTypes('fuel_type_settings_2', 'Select Fuel Type');
+});
 </script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

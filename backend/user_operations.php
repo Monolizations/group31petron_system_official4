@@ -123,8 +123,9 @@ try {
             
             // Create Manager
             $manager_username = strtolower("manager_" . substr($clean_name, 0, 8));
-            $manager_password = password_hash('Manager123!', PASSWORD_DEFAULT);
-            
+            $manager_password_plain = generateSecurePassword();
+            $manager_password = password_hash($manager_password_plain, PASSWORD_DEFAULT);
+
             $chk = $pdo->prepare("SELECT id FROM users WHERE username = ?");
             $chk->execute([$manager_username]);
             if ($chk->rowCount() == 0) {
@@ -132,11 +133,12 @@ try {
                 $stmt->execute([$manager_username, $manager_password, "Manager - $station_name", $station_id]);
                 $created_count++;
             }
-            
+
             // Create 5 Staff
             for ($i = 1; $i <= 5; $i++) {
                 $staff_username = strtolower("staff" . $i . "_" . substr($clean_name, 0, 6));
-                $staff_password = password_hash('Staff123!', PASSWORD_DEFAULT);
+                $staff_password_plain = generateSecurePassword();
+                $staff_password = password_hash($staff_password_plain, PASSWORD_DEFAULT);
                 
                 $chk = $pdo->prepare("SELECT id FROM users WHERE username = ?");
                 $chk->execute([$staff_username]);

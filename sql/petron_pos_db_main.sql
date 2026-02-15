@@ -2554,9 +2554,9 @@ CREATE TABLE `users` (
 
 INSERT INTO `users` (`id`, `emp_id`, `username`, `password`, `role`, `hourly_rate`, `email`, `name`, `station_id`, `status`, `is_deleted`, `deleted_at`, `deleted_by`, `created_at`) VALUES
 (1, NULL, 'superadmin', '$2y$10$vIH4dgr29FVfXbKyaa7U1OrCMx4ZuetW1ZwRDwuQbsYLLwdqA/36i', 'superadmin', 150.00, 'superadmin@petron.com', 'Super Admin', NULL, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
-(2, NULL, 'admin', 'amie', 'admin', 150.00, 'admin@petron.com', 'Admin', NULL, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
-(3, NULL, 'manager', 'manager123', 'manager', 150.00, 'manager@petron.com', 'Station Manager', 1, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
-(4, NULL, 'operations', 'operations123', 'operations_staff', 150.00, 'operations@petron.com', 'Operations Staff', 1, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
+(2, NULL, 'admin', '$2y$10$pip5fV3ZDTnWrHuvh019Z.VPE1ufgSmzk8fD1YwteM/4barHlJGIC', 'admin', 150.00, 'admin@petron.com', 'Admin', NULL, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
+(3, NULL, 'manager', '$2y$10$/.HlYc4MkETFJ/jjuBYDBui3LcrPatVKVmULSN1bBb7KqcnGMq0iS', 'manager', 150.00, 'manager@petron.com', 'Station Manager', 1, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
+(4, NULL, 'operations', '$2y$10$YO63CN8KeYXxFn0qIOPibuvPkxAf8Fpwbq.dze.kViC8Imj9cW1/6', 'operations_staff', 150.00, 'operations@petron.com', 'Operations Staff', 1, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
 (5, NULL, 'juan.carlo', '$2y$10$FPAZIKierCzy9Tr/PqVa.u.sicyWM9r8SAy7JO5994UyoVXQx3BZS', 'staff', 150.00, NULL, 'Juan Carlo', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),
 (6, NULL, 'carla', '$2y$10$vJkcoK1ekWO3iNtL7P5BI.uY4piTKR4nMGL5PCFRP.Y1rk7robiNG', 'staff', 150.00, NULL, 'Carla', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),
 (7, NULL, 'miguel', '$2y$10$E75FtVdHlD3vW1x.sM6Ec..MdvemI7f6O7QrYjptofXftaKHe9/x2', 'staff', 150.00, NULL, 'Miguel', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),

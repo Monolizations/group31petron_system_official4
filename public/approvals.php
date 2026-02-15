@@ -19,7 +19,7 @@ require_login();
 $me = current_user();
 $role = role_key($me['role'] ?? 'staff');
 
-if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
+if (!in_array($role, ['manager', 'superadmin'])) {
     header('Location: dashboard.php');
     exit;
 }
@@ -31,25 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['verify_password'])) {
         $password = $_POST['password'] ?? '';
 
-        if ($role === 'admin') {
-            // Admin must verify using a manager password (same station)
-            $stmt = $pdo->prepare("SELECT password FROM users WHERE station_id = ? AND status = 'active' AND role IN ('manager','Manager','supervisor','Supervisor','manager / supervisor','manager/supervisor','supervisor/manager')");
-            $stmt->execute([$me['station_id'] ?? 0]);
-            $hashes = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-            $ok = false;
-            foreach ($hashes as $hash) {
-                if (password_verify($password, $hash)) { $ok = true; break; }
-            }
-
-            if ($ok) {
-                $verified = true;
-                $_SESSION['approvals_verified'] = true;
-                $_SESSION['approvals_verified_time'] = time();
-            } else {
-                $error = 'Manager password required.';
-            }
-        } elseif ($role === 'manager') {
+        if ($role === 'manager') {
             // Manager verifies with own password
             $stmt = $pdo->prepare("SELECT password FROM users WHERE id = ?");
             $stmt->execute([$me['id']]);
@@ -91,8 +73,7 @@ include __DIR__ . '/../partials/header.php';
 <div class="card" style="max-width: 400px; margin: 40px auto; padding: 30px;">
     <h3 class="h3" style="text-align: center; margin-bottom: 20px;"><i class="fas fa-lock"></i> Security Check</h3>
     <p style="text-align: center; color: #666; margin-bottom: 20px;">
-        <?php if ($role === 'admin'): ?>Please enter the manager password to finalize reports.
-        <?php elseif ($role === 'manager'): ?>Please enter your password to verify reports.
+        <?php if ($role === 'manager'): ?>Please enter your password to verify reports.
         <?php else: ?>Please enter your password to access approvals.
         <?php endif; ?>
     </p>

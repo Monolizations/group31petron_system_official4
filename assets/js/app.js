@@ -33,10 +33,6 @@ async function api(url, opts={}){
 }
 
 function toast(msg){
-  // Don't show errors on joborder page
-  const page = document.body.getAttribute('data-page');
-  if(page === 'joborder') return;
-  
   const t = $('#toast');
   if(!t) return alert(msg);
   t.textContent = msg;
@@ -107,7 +103,7 @@ function drawSalesChart(canvas, values){
 async function initDashboard(){
   const [products, sales] = await Promise.all([
     api('../backend/inventory.php', {method:'GET'}),
-    api('backend/sales.php', {method:'GET'}).catch(()=>[])
+    api('../backend/sales.php', {method:'GET'}).catch(()=>[])
   ]);
 
   const today = new Date().toISOString().slice(0,10);
@@ -212,9 +208,10 @@ async function initPOS(){
   const btnArchive = $('#btnArchive'); 
 
 
-  // Exit early if required elements don't exist
-  if (!btnPay || !btnClear) {
-    console.warn('POS buttons not found - skipping POS initialization');
+  // Exit early if required elements don't exist - check for cart-based POS system
+  // If grid or cartItems don't exist, this is the simple form-based POS page, not the advanced system
+  if (!grid || !$('#cartItems')) {
+    console.warn('Advanced POS system not found - skipping initPOS');
     return;
   }
 
@@ -245,7 +242,7 @@ async function initPOS(){
     }
   }
 
-  let products = await api('backend/products.php', {method:'GET'});
+  let products = await api('../backend/products.php', {method:'GET'});
   let active = userRole === 'admin' ? 'pending' : 'fuel';
   let q = '';
   let cart = []; 
@@ -258,7 +255,7 @@ async function initPOS(){
   function renderProducts(){
     if(active === 'pending'){
 
-        api('backend/sales.php?action=pending').then(pendingSales => {
+        api('../backend/sales.php?action=pending').then(pendingSales => {
             if(!pendingSales || pendingSales.length === 0){
                 grid.innerHTML = `<div class="card" style="padding:18px;color:var(--muted);grid-column:1/-1">No pending transactions from staff.</div>`;
                 return;
@@ -363,74 +360,84 @@ async function initPOS(){
     renderCart();
   }
 
-  tabs.forEach(t=>{
-    t.addEventListener('click', ()=>{
-      const tabType = t.dataset.tab;
-      tabs.forEach(x=>x.classList.remove('active'));
-      t.classList.add('active');
-      active = tabType;
+  if (tabs && tabs.length > 0) {
+    tabs.forEach(t=>{
+      t.addEventListener('click', ()=>{
+        const tabType = t.dataset.tab;
+        tabs.forEach(x=>x.classList.remove('active'));
+        t.classList.add('active');
+        active = tabType;
 
-      if(active === 'pending') { }
+        if(active === 'pending') { }
 
+        renderProducts();
+      });
+    });
+  }
+
+  if (search) {
+    search.addEventListener('input', ()=>{
+      q = search.value.trim().toLowerCase();
       renderProducts();
     });
-  });
+  }
 
-  search.addEventListener('input', ()=>{
-    q = search.value.trim().toLowerCase();
-    renderProducts();
-  });
+  if (grid) {
+    grid.addEventListener('click', (e)=>{
+      const c = e.target.closest('.pcard');
+      if(!c) return;
 
-  grid.addEventListener('click', (e)=>{
-    const c = e.target.closest('.pcard');
-    if(!c) return;
-
-    if(active === 'pending' && c.dataset.saleId){
-        const saleId = c.dataset.saleId;
-        api('backend/sales.php?action=pending').then(list => {
-            const sale = list.find(s => s.id === saleId);
-            if(sale){
-                loadPendingSale(sale);
-            }
-        });
-        return;
-    }
-
-    const type = c.dataset.type;
-    if (userRole === 'admin' && (type === 'fuel' || type === 'services')) {
-      toast('Admins cannot add Fuel/Services directly.');
-      return; // Silently ignore click for admin on fuel/services
-    }
-
-    addToCart(c.dataset.id, type);
-  });
-
-  
-  $('#cartItems').addEventListener('click', (e)=>{
-    const row = e.target.closest('.cart-item');
-    if(!row) return;
-    const id = row.dataset.id;
-    const act = e.target.getAttribute('data-act');
-    const it = cart.find(x=>x.id===id);
-    if(!it) return;
-    if(act==='inc'){
-      // enforce merch stock
-      const ref = lookup[id];
-      const stock = Number(ref.p.stock || ref.p.stock_level || 0);
-      if(ref.type==='merchandise' && it.qty+1 > stock){
-        toast('Not enough stock'); return;
+      if(active === 'pending' && c.dataset.saleId){
+          const saleId = c.dataset.saleId;
+          api('../backend/sales.php?action=pending').then(list => {
+              const sale = list.find(s => s.id === saleId);
+              if(sale){
+                  loadPendingSale(sale);
+              }
+          });
+          return;
       }
-      it.qty++;
-    }
-    if(act==='dec'){ it.qty = Math.max(1, it.qty-1); }
-    if(act==='rm'){ cart = cart.filter(x=>x.id!==id); }
-    renderCart();
-  });
 
-  btnClear.addEventListener('click', ()=>{
-    cart = [];
-    renderCart();
-  });
+      const type = c.dataset.type;
+      if (userRole === 'admin' && (type === 'fuel' || type === 'services')) {
+        toast('Admins cannot add Fuel/Services directly.');
+        return; // Silently ignore click for admin on fuel/services
+      }
+
+      addToCart(c.dataset.id, type);
+    });
+  }
+
+  const cartItems = $('#cartItems');
+  if (cartItems) {
+    cartItems.addEventListener('click', (e)=>{
+      const row = e.target.closest('.cart-item');
+      if(!row) return;
+      const id = row.dataset.id;
+      const act = e.target.getAttribute('data-act');
+      const it = cart.find(x=>x.id===id);
+      if(!it) return;
+      if(act==='inc'){
+        // enforce merch stock
+        const ref = lookup[id];
+        const stock = Number(ref.p.stock || ref.p.stock_level || 0);
+        if(ref.type==='merchandise' && it.qty+1 > stock){
+          toast('Not enough stock'); return;
+        }
+        it.qty++;
+      }
+      if(act==='dec'){ it.qty = Math.max(1, it.qty-1); }
+      if(act==='rm'){ cart = cart.filter(x=>x.id!==id); }
+      renderCart();
+    });
+  }
+
+  if (btnClear) {
+    btnClear.addEventListener('click', ()=>{
+      cart = [];
+      renderCart();
+    });
+  }
 
   // Payment modal
   const payMethods = $('#payMethods');
@@ -447,34 +454,41 @@ async function initPOS(){
     $('#amountReceived').value = '';
   }
 
-  btnPay.addEventListener('click', ()=>{
-    if(userRole === 'staff'){
-        // Staff Workflow: Submit for Approval
-        if(confirm('Submit this transaction for encoding?')){
-            submitSale('Pending (Staff)');
-        }
-        return;
-    }
-    
-    // Admin Workflow: Process Payment/Finalize
-    updatePayUI();
-    showModal('payModal');
-  });
+  if (btnPay) {
+    btnPay.addEventListener('click', ()=>{
+      if(userRole === 'staff'){
+          // Staff Workflow: Submit for Approval
+          if(confirm('Submit this transaction for encoding?')){
+              submitSale('Pending (Staff)');
+          }
+          return;
+      }
+      
+      // Admin Workflow: Process Payment/Finalize
+      updatePayUI();
+      showModal('payModal');
+    });
+  }
 
-  payMethods.addEventListener('click', (e)=>{
-    const b = e.target.closest('.seg');
-    if(!b) return;
-    $$('.seg', payMethods).forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-    payMethod = b.dataset.method;
-    updatePayUI();
-  });
+  if (payMethods) {
+    payMethods.addEventListener('click', (e)=>{
+      const b = e.target.closest('.seg');
+      if(!b) return;
+      $$('.seg', payMethods).forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      payMethod = b.dataset.method;
+      updatePayUI();
+    });
+  }
 
-  $('#amountReceived').addEventListener('input', ()=>{
-    const recv = Number($('#amountReceived').value||0);
-    const ch = Math.max(0, recv - cartTotal());
-    $('#payChange').textContent = fmtMoney(ch);
-  });
+  const amountReceived = $('#amountReceived');
+  if (amountReceived) {
+    amountReceived.addEventListener('input', ()=>{
+      const recv = Number(amountReceived.value||0);
+      const ch = Math.max(0, recv - cartTotal());
+      $('#payChange').textContent = fmtMoney(ch);
+    });
+  }
 
   // Admin Archive/Void
   if(btnArchive){
@@ -486,9 +500,12 @@ async function initPOS(){
       });
   }
 
-  $('#btnComplete').addEventListener('click', async ()=>{
-      await submitSale('Completed (Admin)');
-  });
+  const btnComplete = $('#btnComplete');
+  if (btnComplete) {
+    btnComplete.addEventListener('click', async ()=>{
+        await submitSale('Completed (Admin)');
+    });
+  }
 
   async function submitSale(status){
     try{
@@ -501,7 +518,7 @@ async function initPOS(){
         toast('Amount received is less than total'); return;
       }
 
-      const sale = await api('backend/sales.php', {
+      const sale = await api('../backend/sales.php', {
         method:'POST',
         body: JSON.stringify({
           id: currentSaleId, // Send ID if updating/approving
@@ -515,7 +532,7 @@ async function initPOS(){
       });
 
       // refresh products to reflect stock changes (only if completed)
-      products = await api('backend/products.php', {method:'GET'});
+      products = await api('../backend/products.php', {method:'GET'});
       ['fuel','merchandise','services'].forEach(t=>{
         (products[t]||[]).forEach(p=> lookup[p.id] = {type:t, p});
       });
@@ -546,15 +563,18 @@ async function initPOS(){
     }
   }
 
-  $('#btnPrint').addEventListener('click', ()=>{
-    // Open a print-only window using receipt.php
-    const rid = $('#receiptPaper').getAttribute('data-id');
-    if(rid){
-      window.open(`receipt.php?id=${encodeURIComponent(rid)}`, '_blank');
-    }else{
-      window.print();
-    }
-  });
+  const btnPrint = $('#btnPrint');
+  if (btnPrint) {
+    btnPrint.addEventListener('click', ()=>{
+      // Open a print-only window using receipt.php
+      const rid = $('#receiptPaper').getAttribute('data-id');
+      if(rid){
+        window.open(`receipt.php?id=${encodeURIComponent(rid)}`, '_blank');
+      }else{
+        window.print();
+      }
+    });
+  }
 
   function renderReceipt(sale){
     const paper = $('#receiptPaper');
@@ -846,7 +866,7 @@ async function loadLaborSummary(){
       return;
     }
     
-    const res = await api('backend/labor.php?view=summary');
+    const res = await api('../backend/labor.php?view=summary');
     if (!res) return; // Handle null response
     
     laborCache.staff = res.staff||[];
@@ -1002,7 +1022,7 @@ async function initJobOrder(){
         email: $('#staffEmail').value.trim(),
         status: 'active'
       };
-      await api('backend/labor.php', {method:'POST', body: JSON.stringify(payload)});
+      await api('../backend/labor.php', {method:'POST', body: JSON.stringify(payload)});
       hideModal('modalStaff');
       await loadLaborSummary();
       renderStaff(); fillClockInOptions();
@@ -1013,7 +1033,7 @@ async function initJobOrder(){
   $('#btnStartClock')?.addEventListener('click', async ()=>{
     try{
       const staff_id = $('#clockStaffSelect').value;
-      await api('backend/labor.php', {method:'POST', body: JSON.stringify({action:'clock_in', staff_id})});
+      await api('../backend/labor.php', {method:'POST', body: JSON.stringify({action:'clock_in', staff_id})});
       hideModal('modalClockIn');
       await loadLaborSummary();
       renderSessions();
@@ -1021,45 +1041,52 @@ async function initJobOrder(){
     }catch(err){ toast(err.message); }
   });
 
-  document.addEventListener('click', async (e)=>{
-    const outBtn = e.target.closest('[data-out]');
-    const editBtn = e.target.closest('[data-edit-staff]');
-    const delBtn = e.target.closest('[data-del-staff]');
-    if(outBtn){
-      try{
-        const id = outBtn.getAttribute('data-out');
-        await api('backend/labor.php', {method:'POST', body: JSON.stringify({action:'clock_out', session_id:id})});
-        await loadLaborSummary();
-        renderSessions(); renderLogs();
-        toast('Session completed');
-      }catch(err){ toast(err.message); }
-    }
-    if(editBtn){
-      const id = editBtn.getAttribute('data-edit-staff');
-      const s = laborCache.staff.find(x=>x.id===id);
-      if(!s) return;
-      $('#staffId').value = s.id;
-      $('#staffEmpId').value = s.emp_id||'';
-      $('#staffName').value = s.name||'';
-      $('#staffRole').value = (s.role||'Mechanic').charAt(0).toUpperCase()+String(s.role||'').slice(1);
-      $('#staffRate').value = s.rate||0;
-      $('#staffPhone').value = s.phone||'';
-      $('#staffEmail').value = s.email||'';
-      $('#staffModalTitle').textContent='Edit Staff';
-      $('#btnSaveStaff').textContent='Save';
-      showModal('modalStaff');
-    }
-    if(delBtn){
-      const id = delBtn.getAttribute('data-del-staff');
-      if(!confirm('Delete this staff member?')) return;
-      try{
-        await api('backend/labor.php', {method:'POST', body: JSON.stringify({action:'staff_delete', id})});
-        await loadLaborSummary();
-        renderStaff(); renderSessions();
-        toast('Deleted');
-      }catch(err){ toast(err.message); }
-    }
-  });
+  // Only attach document click listener if we're on the joborder page
+  const jobOrderPage = document.getElementById('sessionsTableWrap');
+  if (jobOrderPage) {
+    document.addEventListener('click', async (e)=>{
+      const outBtn = e.target.closest('[data-out]');
+      const editBtn = e.target.closest('[data-edit-staff]');
+      const delBtn = e.target.closest('[data-del-staff]');
+      // Only handle these specific buttons, don't interfere with other clicks
+      if(!outBtn && !editBtn && !delBtn) return;
+
+      if(outBtn){
+        try{
+          const id = outBtn.getAttribute('data-out');
+          await api('../backend/labor.php', {method:'POST', body: JSON.stringify({action:'clock_out', session_id:id})});
+          await loadLaborSummary();
+          renderSessions(); renderLogs();
+          toast('Session completed');
+        }catch(err){ toast(err.message); }
+      }
+      if(editBtn){
+        const id = editBtn.getAttribute('data-edit-staff');
+        const s = laborCache.staff.find(x=>x.id===id);
+        if(!s) return;
+        $('#staffId').value = s.id;
+        $('#staffEmpId').value = s.emp_id||'';
+        $('#staffName').value = s.name||'';
+        $('#staffRole').value = (s.role||'Mechanic').charAt(0).toUpperCase()+String(s.role||'').slice(1);
+        $('#staffRate').value = s.rate||0;
+        $('#staffPhone').value = s.phone||'';
+        $('#staffEmail').value = s.email||'';
+        $('#staffModalTitle').textContent='Edit Staff';
+        $('#btnSaveStaff').textContent='Save';
+        showModal('modalStaff');
+      }
+      if(delBtn){
+        const id = delBtn.getAttribute('data-del-staff');
+        if(!confirm('Delete this staff member?')) return;
+        try{
+          await api('../backend/labor.php', {method:'POST', body: JSON.stringify({action:'staff_delete', id})});
+          await loadLaborSummary();
+          renderStaff(); renderSessions();
+          toast('Deleted');
+        }catch(err){ toast(err.message); }
+      }
+    });
+  }
 
   $('#logSearch')?.addEventListener('input', renderLogs);
   $('#staffSearch')?.addEventListener('input', renderStaff);
@@ -1078,7 +1105,7 @@ async function initJobOrder(){
 let customerCache = [];
 
 async function loadCustomers(){
-  const res = await api('backend/customers.php');
+  const res = await api('../backend/customers.php');
   customerCache = res.customers || [];
   // metrics
   $('#cTotal').textContent = String(customerCache.length);
@@ -1159,7 +1186,7 @@ async function initCustomers(){
         credit_limit: Number($('#custLimit').value||0),
         status: $('#custStatus').value,
       };
-      await api('backend/customers.php', {method:'POST', body: JSON.stringify(payload)});
+      await api('../backend/customers.php', {method:'POST', body: JSON.stringify(payload)});
       hideModal('modalCustomer');
       await loadCustomers();
       renderCustomers();
@@ -1194,7 +1221,7 @@ async function initCustomers(){
       const id = del.getAttribute('data-del-cust');
       if(!confirm('Delete this customer?')) return;
       try{
-        await api('backend/customers.php?id='+encodeURIComponent(id), {method:'DELETE'});
+        await api('../backend/customers.php?id='+encodeURIComponent(id), {method:'DELETE'});
         await loadCustomers();
         renderCustomers();
         toast('Deleted');
