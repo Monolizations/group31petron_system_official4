@@ -240,7 +240,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $stmt->execute([$sale_id, $station_id, $me['id'], $payment_type, $total, $initial_status]);
                                 $last_sale_id = $sale_id;
                                 
-                                // Add name column if it doesn't exist
+                                // Add name column if it doesn't exist (non-transaction operation)
                                 try {
                                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN name VARCHAR(255) NULL AFTER product_id");
                                 } catch (PDOException $e) {
@@ -258,7 +258,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $pdo->commit();
                                 $msg = "✅ Transaction completed successfully. Stock deducted immediately.";
                             } catch (Exception $e) {
-                                $pdo->rollBack();
+                                // Only rollback if transaction is active
+                                if ($pdo->inTransaction()) {
+                                    $pdo->rollBack();
+                                }
                                 $msg = "❌ Error: " . $e->getMessage();
                             }
                         }
