@@ -608,9 +608,11 @@ if (!isset($pdo) || !$pdo) {
 
       ['id'=>'unlock_records','label'=>'Unlock Records','ico'=>'fas fa-lock-open','href'=>'admin_unlock.php'],
 
-      ['id'=>'station_overview','label'=>'Station Overview','ico'=>'fas fa-building','href'=>'station_profiles.php'],
+       ['id'=>'station_overview','label'=>'Station Overview','ico'=>'fas fa-building','href'=>'station_profiles.php'],
 
-      ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
+       ['id'=>'pump_management','label'=>'Pump Management','ico'=>'fas fa-gas-pump','href'=>'admin_pump_management.php'],
+
+       ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
           ['id'=>'audit_logs','label'=>'Audit Logs','href'=>'audit_logs.php'],
           ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
           ['id'=>'override_logs','label'=>'Override Logs','href'=>'audit_logs.php?type=override'],
