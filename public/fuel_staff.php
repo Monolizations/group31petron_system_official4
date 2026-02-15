@@ -36,7 +36,8 @@ try {
         station_id INT NOT NULL,
         pump_number VARCHAR(50) NOT NULL,
         fuel_type_id INT,
-        status VARCHAR(20) DEFAULT 'active'
+        status VARCHAR(20) DEFAULT 'active',
+        calibration_value DECIMAL(10, 6)
     )");
     
     // Create fuel_daily_readings table
@@ -345,84 +346,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     // ===== PUMP MANAGEMENT (Admin/Superadmin only) =====
     
     // ADD PUMP
-    } elseif ($action === 'add_pump') {
-        if (!$isAdmin) {
-            $msg = "❌ Error: Only admins can manage pumps.";
-        } else {
-            $pump_number = trim($_POST['pump_number'] ?? '');
-            $fuel_type_id = $_POST['fuel_type_id'] ?? '';
-            $status = $_POST['status'] ?? 'active';
-            
-            if ($pump_number && $fuel_type_id && $status) {
-                try {
-                    // Check if pump number already exists for this station
-                    $stmt = $pdo->prepare("SELECT id FROM fuel_pumps WHERE station_id = ? AND pump_number = ?");
-                    $stmt->execute([$station_id, $pump_number]);
-                    if ($stmt->rowCount() > 0) {
-                        $msg = "❌ Error: Pump number already exists for this station.";
-                    } else {
-                        // Validate fuel type exists
-                        $stmt = $pdo->prepare("SELECT id FROM fuel_types WHERE id = ?");
-                        $stmt->execute([$fuel_type_id]);
-                        if ($stmt->rowCount() === 0) {
-                            $msg = "❌ Error: Invalid fuel type selected.";
-                        } else {
-                            // Insert new pump
-                            $stmt = $pdo->prepare("INSERT INTO fuel_pumps (station_id, pump_number, fuel_type_id, status) VALUES (?, ?, ?, ?)");
-                            $stmt->execute([$station_id, $pump_number, $fuel_type_id, $status]);
-                            
-                            log_activity($pdo, $me['id'], 'Add Pump', "Created Pump $pump_number at station $station_id", 'fuel_management');
-                            $msg = "✅ Pump $pump_number created successfully.";
-                        }
-                    }
-                } catch (PDOException $e) {
-                    $msg = "❌ Error: " . $e->getMessage();
-                }
-            } else {
-                $msg = "❌ Error: Please fill all required fields.";
-            }
-        }
+     } elseif ($action === 'add_pump') {
+         if (!$isAdmin) {
+             $msg = "❌ Error: Only admins can manage pumps.";
+         } else {
+             $pump_number = trim($_POST['pump_number'] ?? '');
+             $status = $_POST['status'] ?? 'active';
+             
+             if ($pump_number) {
+                 try {
+                     // Check if pump number already exists for this station
+                     $stmt = $pdo->prepare("SELECT id FROM fuel_pumps WHERE station_id = ? AND pump_number = ?");
+                     $stmt->execute([$station_id, $pump_number]);
+                     if ($stmt->rowCount() > 0) {
+                         $msg = "❌ Error: Pump number already exists for this station.";
+                     } else {
+                         // Insert new pump with fuel_type_id = 1 as placeholder
+                         $stmt = $pdo->prepare("INSERT INTO fuel_pumps (station_id, pump_number, fuel_type_id, status) VALUES (?, ?, ?, ?)");
+                         $stmt->execute([$station_id, $pump_number, 1, $status]);
+                         
+                         log_activity($pdo, $me['id'], 'Add Pump', "Created Pump $pump_number at station $station_id", 'fuel_management');
+                         $msg = "✅ Pump $pump_number created successfully. Now add nozzles to this pump.";
+                     }
+                 } catch (PDOException $e) {
+                     $msg = "❌ Error: " . $e->getMessage();
+                 }
+             } else {
+                 $msg = "❌ Error: Please fill all required fields.";
+             }
+         }
     
-    // EDIT PUMP
-    } elseif ($action === 'edit_pump') {
-        if (!$isAdmin) {
-            $msg = "❌ Error: Only admins can manage pumps.";
-        } else {
-            $pump_id = $_POST['pump_id'] ?? '';
-            $fuel_type_id = $_POST['fuel_type_id'] ?? '';
-            $status = $_POST['status'] ?? 'active';
-            
-            if ($pump_id && $fuel_type_id && $status) {
-                try {
-                    // Check if pump exists
-                    $stmt = $pdo->prepare("SELECT pump_number FROM fuel_pumps WHERE id = ? AND station_id = ?");
-                    $stmt->execute([$pump_id, $station_id]);
-                    $pump = $stmt->fetch();
-                    
-                    if (!$pump) {
-                        $msg = "❌ Error: Pump not found.";
-                    } else {
-                        // Validate fuel type exists
-                        $stmt = $pdo->prepare("SELECT id FROM fuel_types WHERE id = ?");
-                        $stmt->execute([$fuel_type_id]);
-                        if ($stmt->rowCount() === 0) {
-                            $msg = "❌ Error: Invalid fuel type selected.";
-                        } else {
-                            // Update pump
-                            $stmt = $pdo->prepare("UPDATE fuel_pumps SET fuel_type_id = ?, status = ? WHERE id = ?");
-                            $stmt->execute([$fuel_type_id, $status, $pump_id]);
-                            
-                            log_activity($pdo, $me['id'], 'Edit Pump', "Updated Pump " . $pump['pump_number'] . " at station $station_id", 'fuel_management');
-                            $msg = "✅ Pump " . $pump['pump_number'] . " updated successfully.";
-                        }
-                    }
-                } catch (PDOException $e) {
-                    $msg = "❌ Error: " . $e->getMessage();
-                }
-            } else {
-                $msg = "❌ Error: Please fill all required fields.";
-            }
-        }
+     // EDIT PUMP
+     } elseif ($action === 'edit_pump') {
+         if (!$isAdmin) {
+             $msg = "❌ Error: Only admins can manage pumps.";
+         } else {
+             $pump_id = $_POST['pump_id'] ?? '';
+             $status = $_POST['status'] ?? 'active';
+             $calibration_value = trim($_POST['calibration_value'] ?? '');
+             
+             if ($pump_id) {
+                 try {
+                     // Check if pump exists
+                     $stmt = $pdo->prepare("SELECT pump_number FROM fuel_pumps WHERE id = ? AND station_id = ?");
+                     $stmt->execute([$pump_id, $station_id]);
+                     $pump = $stmt->fetch();
+                     
+                     if (!$pump) {
+                         $msg = "❌ Error: Pump not found.";
+                     } else {
+                         // Validate calibration_value if provided
+                         $calibration_to_store = null;
+                         if ($calibration_value !== '') {
+                             if (!is_numeric($calibration_value)) {
+                                 $msg = "❌ Error: Calibration value must be a number.";
+                             } else {
+                                 $calibration_to_store = $calibration_value;
+                             }
+                         }
+                         
+                         if (!isset($msg)) {
+                             // Update pump status and optional calibration_value
+                             $stmt = $pdo->prepare("UPDATE fuel_pumps SET status = ?, calibration_value = ? WHERE id = ?");
+                             $stmt->execute([$status, $calibration_to_store, $pump_id]);
+                             
+                             $log_msg = "Updated Pump " . $pump['pump_number'] . " - Status: $status";
+                             if ($calibration_to_store !== null) {
+                                 $log_msg .= ", Calibration: $calibration_to_store";
+                             }
+                             log_activity($pdo, $me['id'], 'Edit Pump', $log_msg, 'fuel_management');
+                             $msg = "✅ Pump " . $pump['pump_number'] . " updated successfully.";
+                         }
+                     }
+                 } catch (PDOException $e) {
+                     $msg = "❌ Error: " . $e->getMessage();
+                 }
+             } else {
+                 $msg = "❌ Error: Please fill all required fields.";
+             }
+         }
     
     // DELETE PUMP (Superadmin only)
     } elseif ($action === 'delete_pump') {
@@ -452,9 +454,131 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $msg = "❌ Error: " . $e->getMessage();
                 }
             } else {
-                $msg = "❌ Error: Pump ID is required.";
+                  $msg = "❌ Error: Pump ID is required.";
+              }
+          }
+      }
+     
+     // ADD NOZZLE
+     elseif ($action === 'add_nozzle') {
+        $pump_id = $_POST['pump_id'] ?? '';
+        $nozzle_number = trim($_POST['nozzle_number'] ?? '');
+        $fuel_type_id = $_POST['fuel_type_id'] ?? '';
+        $status = $_POST['status'] ?? 'active';
+        
+        if (!$pump_id || !$nozzle_number || !$fuel_type_id) {
+            $msg = "❌ Error: Pump, nozzle number, and fuel type are required.";
+        } else {
+            try {
+                // Validate pump exists and belongs to this station
+                $stmt = $pdo->prepare("SELECT pump_number FROM fuel_pumps WHERE id = ? AND station_id = ?");
+                $stmt->execute([$pump_id, $station_id]);
+                $pump = $stmt->fetch();
+                
+                if (!$pump) {
+                    $msg = "❌ Error: Pump not found.";
+                } else {
+                    // Check max 6 nozzles per pump
+                    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM nozzles WHERE pump_id = ?");
+                    $stmt->execute([$pump_id]);
+                    $result = $stmt->fetch();
+                    
+                    if ($result['count'] >= 6) {
+                        $msg = "❌ Error: Maximum 6 nozzles per pump. Cannot add more.";
+                    } else {
+                        // Check for duplicate nozzle number in this pump
+                        $stmt = $pdo->prepare("SELECT id FROM nozzles WHERE pump_id = ? AND nozzle_number = ?");
+                        $stmt->execute([$pump_id, $nozzle_number]);
+                        
+                        if ($stmt->rowCount() > 0) {
+                            $msg = "❌ Error: Nozzle number already exists for this pump.";
+                        } else {
+                            // Validate fuel type exists
+                            $stmt = $pdo->prepare("SELECT id FROM fuel_types WHERE id = ?");
+                            $stmt->execute([$fuel_type_id]);
+                            
+                            if ($stmt->rowCount() === 0) {
+                                $msg = "❌ Error: Invalid fuel type selected.";
+                            } else {
+                                // Insert nozzle (NO calibration_value)
+                                $stmt = $pdo->prepare("INSERT INTO nozzles (pump_id, nozzle_number, fuel_type_id, status) VALUES (?, ?, ?, ?)");
+                                $stmt->execute([$pump_id, $nozzle_number, $fuel_type_id, $status]);
+                                
+                                // Get fuel type name for logging
+                                $stmt = $pdo->prepare("SELECT name FROM fuel_types WHERE id = ?");
+                                $stmt->execute([$fuel_type_id]);
+                                $fuelType = $stmt->fetch();
+                                
+                                log_activity($pdo, $me['id'], 'Add Nozzle', "Added nozzle $nozzle_number to pump " . $pump['pump_number'] . " - Fuel Type: " . $fuelType['name'], 'fuel_management');
+                                $msg = "✅ Nozzle $nozzle_number added successfully.";
+                            }
+                        }
+                    }
+                }
+            } catch (PDOException $e) {
+                $msg = "❌ Error: " . $e->getMessage();
             }
         }
+    
+    // EDIT NOZZLE
+    } elseif ($action === 'edit_nozzle') {
+        $nozzle_id = $_POST['nozzle_id'] ?? '';
+        $nozzle_number = trim($_POST['nozzle_number'] ?? '');
+        $fuel_type_id = $_POST['fuel_type_id'] ?? '';
+        $status = $_POST['status'] ?? 'active';
+        $notes = trim($_POST['notes'] ?? '');
+        
+        if (!$nozzle_id || !$nozzle_number || !$fuel_type_id) {
+            $msg = "❌ Error: Nozzle ID, number, and fuel type are required.";
+        } else {
+            try {
+                // Get nozzle details
+                $stmt = $pdo->prepare("SELECT pump_id FROM nozzles WHERE id = ?");
+                $stmt->execute([$nozzle_id]);
+                $nozzle = $stmt->fetch();
+                
+                if (!$nozzle) {
+                    $msg = "❌ Error: Nozzle not found.";
+                } else {
+                    // Check for duplicate nozzle number in same pump (excluding current nozzle)
+                    $stmt = $pdo->prepare("SELECT id FROM nozzles WHERE pump_id = ? AND nozzle_number = ? AND id != ?");
+                    $stmt->execute([$nozzle['pump_id'], $nozzle_number, $nozzle_id]);
+                    
+                    if ($stmt->rowCount() > 0) {
+                        $msg = "❌ Error: Another nozzle with this number already exists for this pump.";
+                    } else {
+                        // Validate fuel type exists
+                        $stmt = $pdo->prepare("SELECT name FROM fuel_types WHERE id = ?");
+                        $stmt->execute([$fuel_type_id]);
+                        $fuelType = $stmt->fetch();
+                        
+                        if (!$fuelType) {
+                            $msg = "❌ Error: Invalid fuel type selected.";
+                        } else {
+                            // Update nozzle (NO calibration_value, NO last_calibrated_date)
+                            $stmt = $pdo->prepare("UPDATE nozzles SET nozzle_number = ?, fuel_type_id = ?, status = ?, notes = ? WHERE id = ?");
+                            $stmt->execute([$nozzle_number, $fuel_type_id, $status, $notes, $nozzle_id]);
+                            
+                            log_activity($pdo, $me['id'], 'Edit Nozzle', "Updated nozzle $nozzle_number - Fuel Type: " . $fuelType['name'] . ", Status: $status", 'fuel_management');
+                            $msg = "✅ Nozzle $nozzle_number updated successfully.";
+                        }
+                    }
+                }
+            } catch (PDOException $e) {
+                $msg = "❌ Error: " . $e->getMessage();
+            }
+        }
+    }
+}
+
+// Helper function to get nozzles for a pump
+function getNozzlesForPump($pdo, $pump_id) {
+    try {
+        $stmt = $pdo->prepare("SELECT n.id, n.pump_id, n.nozzle_number, n.fuel_type_id, n.status, n.notes, ft.name as fuel_type_name FROM nozzles n LEFT JOIN fuel_types ft ON n.fuel_type_id = ft.id WHERE n.pump_id = ? ORDER BY n.nozzle_number");
+        $stmt->execute([$pump_id]);
+        return $stmt->fetchAll();
+    } catch (PDOException $e) {
+        return [];
     }
 }
 
@@ -477,10 +601,10 @@ if ($station_id) {
         $stmt->execute([$station_id]);
         $fuel_stations = $stmt->fetchAll();
         
-        // Fetch fuel pumps with fuel type info (for Manage Pumps tab)
-        $stmt = $pdo->prepare("SELECT fp.id, fp.station_id, fp.pump_number, fp.fuel_type_id, fp.status, ft.name as fuel_type_name FROM fuel_pumps fp LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE fp.station_id = ? ORDER BY fp.pump_number");
-        $stmt->execute([$station_id]);
-        $fuel_pumps = $stmt->fetchAll();
+         // Fetch fuel pumps with fuel type info (for Manage Pumps tab)
+         $stmt = $pdo->prepare("SELECT fp.id, fp.station_id, fp.pump_number, fp.fuel_type_id, fp.status, fp.calibration_value, ft.name as fuel_type_name FROM fuel_pumps fp LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE fp.station_id = ? ORDER BY fp.pump_number");
+         $stmt->execute([$station_id]);
+         $fuel_pumps = $stmt->fetchAll();
         
         // Fetch daily readings with filters
         $filter_date = $_GET['date'] ?? date('Y-m-d');
@@ -1726,52 +1850,97 @@ require_once __DIR__ . '/../partials/header.php';
         </div>
       </div>
       
-      <div class="table-wrap" style="margin-top:20px;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Pump Number</th>
-              <th>Fuel Type</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php if(!empty($fuel_pumps)): ?>
-              <?php foreach($fuel_pumps as $pump): ?>
-              <tr>
-                <td><strong><?php echo htmlspecialchars($pump['pump_number']); ?></strong></td>
-                <td><?php echo htmlspecialchars($pump['fuel_type_name'] ?? 'Unknown'); ?></td>
-                <td>
-                  <span class="status-badge status-<?php echo strtolower($pump['status']); ?>">
-                    <?php echo ucfirst($pump['status']); ?>
-                  </span>
-                </td>
-                <td>
-                  <button class="btn small" onclick="openEditPumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>', <?php echo $pump['fuel_type_id']; ?>, '<?php echo $pump['status']; ?>')">
-                    <i class="fas fa-edit"></i> Edit
-                  </button>
-                  <?php if($isSuper): ?>
-                  <button class="btn small red" onclick="openDeletePumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
-                    <i class="fas fa-trash"></i> Delete
-                  </button>
-                  <?php endif; ?>
-                </td>
-              </tr>
-              <?php endforeach; ?>
-            <?php else: ?>
-            <tr>
-              <td colspan="4" style="text-align:center; padding:30px;">
-                <div class="empty">
-                  <div class="empty-ico"><i class="fas fa-gas-pump"></i></div>
-                  <div class="muted">No pumps configured for this station</div>
-                </div>
-              </td>
-            </tr>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
+       <div style="margin-top:20px;">
+         <?php if(!empty($fuel_pumps)): ?>
+           <?php foreach($fuel_pumps as $pump): ?>
+           <div class="fuel-card" style="margin-bottom:20px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
+             <!-- Pump Header -->
+             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #f0f0f0;">
+               <div>
+                 <div style="font-size: 14px; color: #666; margin-bottom: 5px;">Pump Number</div>
+                 <div style="font-size: 20px; font-weight: 700; color: #333; margin-bottom: 10px;">
+                   <?php echo htmlspecialchars($pump['pump_number']); ?>
+                 </div>
+                 <?php if ($pump['calibration_value'] !== null): ?>
+                 <div style="font-size: 13px; color: #666;">
+                   <strong>Calibration:</strong> <?php echo htmlspecialchars($pump['calibration_value']); ?>
+                 </div>
+                 <?php endif; ?>
+               </div>
+               <div style="text-align: right;">
+                 <div style="margin-bottom: 10px;">
+                   <span class="status-badge status-<?php echo strtolower($pump['status']); ?>">
+                     <?php echo ucfirst($pump['status']); ?>
+                   </span>
+                 </div>
+                 <div>
+                   <button class="btn small" onclick="openEditPumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>', '<?php echo htmlspecialchars($pump['calibration_value'] ?? ''); ?>', '<?php echo $pump['status']; ?>')">
+                     <i class="fas fa-edit"></i> Edit
+                   </button>
+                   <?php if($isSuper): ?>
+                   <button class="btn small red" onclick="openDeletePumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
+                     <i class="fas fa-trash"></i> Delete
+                   </button>
+                   <?php endif; ?>
+                 </div>
+               </div>
+             </div>
+
+             <!-- Nozzles Section -->
+             <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+               <div style="margin-bottom: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+                 <div><i class="fas fa-wind"></i> Nozzles</div>
+                 <button class="btn small dark" onclick="openAddNozzleModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
+                   <i class="fas fa-plus"></i> Add Nozzle
+                 </button>
+               </div>
+               
+               <?php 
+               $nozzles = getNozzlesForPump($pdo, $pump['id']);
+               if (!empty($nozzles)): 
+               ?>
+                 <div style="display: grid; gap: 10px;">
+                   <?php foreach ($nozzles as $nozzle): ?>
+                   <div style="background: white; padding: 12px; border-radius: 4px; border-left: 3px solid #667eea; display: flex; justify-content: space-between; align-items: center;">
+                     <div>
+                       <div style="font-weight: 600; margin-bottom: 4px;">
+                         Nozzle <?php echo htmlspecialchars($nozzle['nozzle_number']); ?>
+                       </div>
+                       <div style="font-size: 13px; color: #666;">
+                         <?php echo htmlspecialchars($nozzle['fuel_type_name'] ?? 'Unknown'); ?> • 
+                         <span class="status-badge status-<?php echo strtolower($nozzle['status']); ?>" style="font-size: 12px;">
+                           <?php echo ucfirst($nozzle['status']); ?>
+                         </span>
+                       </div>
+                     </div>
+                     <div>
+                       <button class="btn small" onclick="openEditNozzleModal(<?php echo $nozzle['id']; ?>, <?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($nozzle['nozzle_number']); ?>', <?php echo $nozzle['fuel_type_id']; ?>, '<?php echo $nozzle['status']; ?>', '<?php echo htmlspecialchars($nozzle['notes'] ?? ''); ?>')">
+                         <i class="fas fa-edit"></i> Edit
+                       </button>
+                     </div>
+                   </div>
+                   <?php endforeach; ?>
+                 </div>
+               <?php else: ?>
+                 <div style="text-align: center; padding: 20px; color: #999;">
+                   <i class="fas fa-inbox" style="font-size: 20px; margin-bottom: 10px; display: block;"></i>
+                   No nozzles added yet
+                 </div>
+               <?php endif; ?>
+             </div>
+           </div>
+           <?php endforeach; ?>
+         <?php else: ?>
+         <div style="text-align: center; padding: 60px 20px;">
+           <div style="font-size: 40px; color: #ddd; margin-bottom: 15px;">
+             <i class="fas fa-gas-pump"></i>
+           </div>
+           <div style="color: #999; font-size: 16px;">
+             No pumps configured for this station
+           </div>
+         </div>
+         <?php endif; ?>
+       </div>
     </div>
    </section>
    <?php endif; ?>
@@ -1855,12 +2024,6 @@ require_once __DIR__ . '/../partials/header.php';
             <input type="text" name="pump_number" class="form-control" placeholder="e.g., 1, 2, 3" required>
           </div>
           <div class="mb-3">
-            <label class="form-label">Fuel Type *</label>
-            <select name="fuel_type_id" id="addPumpFuelType" class="form-control" required>
-              <option value="">-- Select Fuel Type --</option>
-            </select>
-          </div>
-          <div class="mb-3">
             <label class="form-label">Status *</label>
             <div>
               <label class="form-check">
@@ -1871,6 +2034,9 @@ require_once __DIR__ . '/../partials/header.php';
               </label>
             </div>
           </div>
+          <p style="color: #666; font-size: 12px;">
+            <i class="fas fa-info-circle"></i> After creating the pump, you'll add nozzles to this pump.
+          </p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -1898,12 +2064,6 @@ require_once __DIR__ . '/../partials/header.php';
             <input type="text" id="editPumpNumber" class="form-control" disabled>
           </div>
           <div class="mb-3">
-            <label class="form-label">Fuel Type *</label>
-            <select name="fuel_type_id" id="editPumpFuelType" class="form-control" required>
-              <option value="">-- Select Fuel Type --</option>
-            </select>
-          </div>
-          <div class="mb-3">
             <label class="form-label">Status *</label>
             <div>
               <label class="form-check">
@@ -1913,6 +2073,11 @@ require_once __DIR__ . '/../partials/header.php';
                 <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
               </label>
             </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Calibration Value (Optional)</label>
+            <input type="number" name="calibration_value" id="editCalibrationValue" class="form-control" step="0.000001" placeholder="e.g., 0.05 for variance tracking">
+            <small style="color: #666;">Used for variance tracking in fuel reconciliation. Leave empty if not needed.</small>
           </div>
         </div>
         <div class="modal-footer">
@@ -1942,15 +2107,105 @@ require_once __DIR__ . '/../partials/header.php';
           <p>This action cannot be undone.</p>
         </div>
         <div class="modal-footer">
+           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+           <button type="submit" class="btn btn-danger">Delete Pump</button>
+         </div>
+       </form>
+     </div>
+   </div>
+ </div>
+
+<!-- Modal: Add Nozzle -->
+<div class="modal fade" id="modalAddNozzle" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add Nozzle to Pump <span id="addNozzlePumpNumber"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post">
+        <input type="hidden" name="action" value="add_nozzle">
+        <input type="hidden" name="pump_id" id="addNozzlePumpId">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Nozzle Number *</label>
+            <input type="text" name="nozzle_number" class="form-control" placeholder="e.g., 1, 2, 3, A, B, C" required>
+          </div>
+           <div class="mb-3">
+             <label class="form-label">Fuel Type *</label>
+             <select name="fuel_type_id" id="addNozzleFuelTypeId" class="form-control" required>
+               <option value="">-- Select Fuel Type --</option>
+             </select>
+           </div>
+          <div class="mb-3">
+            <label class="form-label">Status *</label>
+            <div>
+              <label class="form-check">
+                <input type="radio" name="status" value="active" class="form-check-input" checked> Active
+              </label>
+              <label class="form-check">
+                <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-danger">Delete Pump</button>
+          <button type="submit" class="btn btn-primary">Add Nozzle</button>
         </div>
       </form>
     </div>
   </div>
 </div>
 
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<!-- Modal: Edit Nozzle -->
+<div class="modal fade" id="modalEditNozzle" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit Nozzle</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post">
+        <input type="hidden" name="action" value="edit_nozzle">
+        <input type="hidden" name="nozzle_id" id="editNozzleId">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Nozzle Number *</label>
+            <input type="text" name="nozzle_number" id="editNozzleNumber" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Fuel Type *</label>
+            <select name="fuel_type_id" id="editNozzleFuelTypeId" class="form-control" required>
+              <option value="">-- Select Fuel Type --</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Status *</label>
+            <div>
+              <label class="form-check">
+                <input type="radio" name="status" value="active" class="form-check-input"> Active
+              </label>
+              <label class="form-check">
+                <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
+              </label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notes</label>
+            <textarea name="notes" id="editNozzleNotes" class="form-control" placeholder="Optional notes about this nozzle" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Update Nozzle</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <style>
 .variance-positive { color: #28a745; font-weight: bold; }
@@ -1964,16 +2219,18 @@ require_once __DIR__ . '/../partials/header.php';
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing tabs...');
 
-    // Load fuel types dynamically from backend
-    DataHelper.populateFuelTypes('fuel_type_delivery', '-- Select Fuel Type --')
-        .then(() => DataHelper.populateFuelTypes('fuel_type_adjustment', '-- Select Fuel --'))
-        .then(() => DataHelper.populateShifts('shift_delivery', '-- Select Shift --'))
-        .then(() => DataHelper.populateAdjustmentTypes('adjustment_type_fuel', '-- Select Type --'))
-        .then(() => console.log('Fuel types, shifts, and adjustment types loaded'))
-        .catch(error => {
-            console.error('Failed to load fuel types/shifts/adjustment types:', error);
-            DataHelper.showError('Failed to load fuel types/shifts/adjustment types. Please refresh.');
-        });
+     // Load fuel types dynamically from backend
+     DataHelper.populateFuelTypes('fuel_type_delivery', '-- Select Fuel Type --')
+         .then(() => DataHelper.populateFuelTypes('fuel_type_adjustment', '-- Select Fuel --'))
+         .then(() => DataHelper.populateFuelTypes('addNozzleFuelTypeId', '-- Select Fuel Type --'))
+         .then(() => DataHelper.populateFuelTypes('editNozzleFuelTypeId', '-- Select Fuel Type --'))
+         .then(() => DataHelper.populateShifts('shift_delivery', '-- Select Shift --'))
+         .then(() => DataHelper.populateAdjustmentTypes('adjustment_type_fuel', '-- Select Type --'))
+         .then(() => console.log('Fuel types, shifts, and adjustment types loaded'))
+         .catch(error => {
+             console.error('Failed to load fuel types/shifts/adjustment types:', error);
+             DataHelper.showError('Failed to load fuel types/shifts/adjustment types. Please refresh.');
+         });
 
     // Show correct tab based on URL parameter
     const urlParams = new URLSearchParams(window.location.search);
@@ -2112,11 +2369,11 @@ function openAddPumpModal() {
     modal.show();
 }
 
-function openEditPumpModal(pumpId, pumpNumber, fuelTypeId, status) {
+function openEditPumpModal(pumpId, pumpNumber, calibrationValue, status) {
     // Populate form
     document.getElementById('editPumpId').value = pumpId;
     document.getElementById('editPumpNumber').value = pumpNumber;
-    document.getElementById('editPumpFuelType').value = fuelTypeId;
+    document.getElementById('editCalibrationValue').value = calibrationValue || '';
     document.querySelector('input[name="status"][value="' + status + '"]').checked = true;
     // Open modal
     const modal = new bootstrap.Modal(document.getElementById('modalEditPump'));
@@ -2124,19 +2381,76 @@ function openEditPumpModal(pumpId, pumpNumber, fuelTypeId, status) {
 }
 
 function openDeletePumpModal(pumpId, pumpNumber) {
-    // Populate form
-    document.getElementById('deletePumpId').value = pumpId;
-    document.getElementById('deletePumpName').textContent = 'Pump ' + pumpNumber;
-    // Open modal
-    const modal = new bootstrap.Modal(document.getElementById('modalDeletePump'));
-    modal.show();
-}
+     // Populate form
+     document.getElementById('deletePumpId').value = pumpId;
+     document.getElementById('deletePumpName').textContent = 'Pump ' + pumpNumber;
+     // Open modal
+     const modal = new bootstrap.Modal(document.getElementById('modalDeletePump'));
+     modal.show();
+ }
 
-// Load fuel types into pump modals
-document.addEventListener('DOMContentLoaded', function() {
-    // Fetch fuel types for pump modals
-    DataHelper.populateFuelTypes('addPumpFuelType', '-- Select Fuel Type --')
-        .then(() => DataHelper.populateFuelTypes('editPumpFuelType', '-- Select Fuel Type --'))
-        .catch(error => console.error('Failed to load fuel types for pump modals:', error));
-});
+ // Nozzle Management Functions
+ function openAddNozzleModal(pumpId, pumpNumber) {
+     // Clear the form
+     document.querySelector('#modalAddNozzle form').reset();
+     // Set pump_id and update title
+     document.getElementById('addNozzlePumpId').value = pumpId;
+     document.getElementById('addNozzlePumpNumber').textContent = pumpNumber;
+     // Load fuel types for nozzle modal if not already loaded
+     loadFuelTypesForNozzle();
+     // Open modal
+     const modal = new bootstrap.Modal(document.getElementById('modalAddNozzle'));
+     modal.show();
+ }
+
+ function openEditNozzleModal(nozzleId, pumpId, nozzleNumber, fuelTypeId, status, notes) {
+     // Clear the form first
+     document.querySelector('#modalEditNozzle form').reset();
+     // Populate form
+     document.getElementById('editNozzleId').value = nozzleId;
+     document.getElementById('editNozzlePumpId').value = pumpId;
+     document.getElementById('editNozzleNumber').value = nozzleNumber;
+     document.querySelector('input[name="status"][value="' + status + '"]', document.querySelector('#modalEditNozzle')).checked = true;
+     if (document.getElementById('editNozzleNotes')) {
+         document.getElementById('editNozzleNotes').value = notes || '';
+     }
+     // Load fuel types and set selected value
+     loadFuelTypesForNozzle('editNozzleFuelTypeId', fuelTypeId);
+     // Open modal
+     const modal = new bootstrap.Modal(document.getElementById('modalEditNozzle'));
+     modal.show();
+ }
+
+ function loadFuelTypesForNozzle(selectId, selectedId) {
+     const targetSelect = selectId ? document.getElementById(selectId) : document.querySelector('#modalAddNozzle select[name="fuel_type_id"]');
+     if (!targetSelect) return;
+     
+     // If fuel types already loaded, just set selected value and return
+     if (targetSelect.children.length > 1) {
+         if (selectedId) {
+             targetSelect.value = selectedId;
+         }
+         return;
+     }
+     
+     // Load fuel types from DataHelper
+     if (typeof DataHelper !== 'undefined' && DataHelper.populateFuelTypes) {
+         DataHelper.populateFuelTypes(targetSelect.id || targetSelect.name, '-- Select Fuel Type --').then(() => {
+             if (selectedId) {
+                 targetSelect.value = selectedId;
+             }
+         });
+     }
+ }
+ 
+ // Close all modals on escape key
+ document.addEventListener('keydown', function(event) {
+     if (event.key === 'Escape') {
+         const modals = ['modalAddPump', 'modalEditPump', 'modalDeletePump', 'modalAddNozzle', 'modalEditNozzle'];
+         modals.forEach(id => {
+             const modal = bootstrap.Modal.getInstance(document.getElementById(id));
+             if (modal) modal.hide();
+         });
+     }
+ });
 </script>
