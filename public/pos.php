@@ -2,6 +2,7 @@
 $page_id = 'pos';
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
+require_once __DIR__ . '/../backend/fuel_pos_sync.php';
 require_login();
 
 $me = current_user();
@@ -329,13 +330,21 @@ try {
         INNER JOIN fuel_types ft ON fp.fuel_type_id = ft.id
         WHERE fp.station_id = ? AND fp.is_active = 1
         ORDER BY ft.name
-    ");
-    $stmt->execute([$station_id]);
-    $fuelPricing = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+     ");
+     $stmt->execute([$station_id]);
+     $fuelPricing = $stmt->fetchAll(PDO::FETCH_ASSOC);
+     
+     // Load sync status for each fuel type
+     $fuelSyncStatus = [];
+     foreach ($fuelProducts as $fuel) {
+         $syncStatus = getLastSyncStatus($pdo, $station_id, $fuel['type_id']);
+         $fuelSyncStatus[$fuel['id']] = $syncStatus;
+     }
+     
 } catch (Exception $e) {
-    $inventory = ['fuel' => [], 'merch' => []];
-    $fuelPricing = [];
+     $inventory = ['fuel' => [], 'merch' => []];
+     $fuelPricing = [];
+     $fuelSyncStatus = [];
 }
 
 // Fetch Pending Transactions for Admin
@@ -713,37 +722,56 @@ function closeModal(id) {
 <script>
 // Product data loaded from PHP
 const inventoryData = <?php echo json_encode($inventory); ?>;
+const fuelSyncStatus = <?php echo json_encode($fuelSyncStatus); ?>;
 
 function loadProducts() {
-    const type = document.getElementById('product_type').value;
-    const productSelect = document.getElementById('product_id');
-    const stockInfo = document.getElementById('stock_info');
-    
-    productSelect.innerHTML = '<option value="">Select Product</option>';
-    
-    if (type && inventoryData[type]) {
-        inventoryData[type].forEach(product => {
-            const option = document.createElement('option');
-            option.value = product.id;
-            
-            const stockLevel = parseFloat(product.stock_level) || 0;
-            const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
-            const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.unit || 'pc'})`;
-            
-            option.textContent = `${product.name}${stockText}`;
-            option.dataset.price = product.price || 0;
-            option.dataset.stock = stockLevel;
-            option.dataset.unit = product.unit || '';
-            option.style = stockClass;
-            
-            productSelect.appendChild(option);
-        });
-        stockInfo.textContent = `Found ${inventoryData[type].length} products`;
-    } else {
-        stockInfo.textContent = 'Select a product type first';
-    }
-    
-    updatePrice();
+     const type = document.getElementById('product_type').value;
+     const productSelect = document.getElementById('product_id');
+     const stockInfo = document.getElementById('stock_info');
+     
+     productSelect.innerHTML = '<option value="">Select Product</option>';
+     
+     if (type && inventoryData[type]) {
+         inventoryData[type].forEach(product => {
+             const option = document.createElement('option');
+             option.value = product.id;
+             
+             const stockLevel = parseFloat(product.stock_level) || 0;
+             const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
+             const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.unit || 'pc'})`;
+             
+             option.textContent = `${product.name}${stockText}`;
+             option.dataset.price = product.price || 0;
+             option.dataset.stock = stockLevel;
+             option.dataset.unit = product.unit || '';
+             option.style = stockClass;
+             
+             productSelect.appendChild(option);
+         });
+         
+         // Show sync status for fuel products if available
+         let statusText = `Found ${inventoryData[type].length} products`;
+         if (type === 'fuel') {
+             const syncWarnings = [];
+             inventoryData[type].forEach(product => {
+                 if (fuelSyncStatus[product.id]) {
+                     const syncStatus = fuelSyncStatus[product.id];
+                     if (!syncStatus.in_sync || (syncStatus.hours_since_sync > 24)) {
+                         const hoursText = syncStatus.hours_since_sync ? ` (${syncStatus.hours_since_sync}h ago)` : '(never synced)';
+                         syncWarnings.push(`⚠ ${product.name} out of sync${hoursText}`);
+                     }
+                 }
+             });
+             if (syncWarnings.length > 0) {
+                 statusText += ' | ' + syncWarnings.join(' | ');
+             }
+         }
+         stockInfo.textContent = statusText;
+     } else {
+         stockInfo.textContent = 'Select a product type first';
+     }
+     
+     updatePrice();
 }
 
 function updatePrice() {

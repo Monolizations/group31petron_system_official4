@@ -2,6 +2,7 @@
 $page_id = 'fuel_staff';
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
+require_once __DIR__ . '/../backend/fuel_pos_sync.php';
 require_login();
 
 $me = current_user();
@@ -1639,17 +1640,18 @@ require_once __DIR__ . '/../partials/header.php';
         <table class="table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Fuel Type</th>
-              <th>Opening</th>
-              <th>Deliveries</th>
-              <th>Sales</th>
-              <th>Adjustments</th>
-              <th>Expected</th>
-              <th>Physical</th>
-              <th>Variance</th>
-              <th>Status</th>
-            </tr>
+               <th>Date</th>
+               <th>Fuel Type</th>
+               <th>Opening</th>
+               <th>Deliveries</th>
+               <th>Sales</th>
+               <th>Adjustments</th>
+               <th>Expected</th>
+               <th>Physical</th>
+               <th>Variance</th>
+               <th>Status</th>
+               <th>Sync to POS</th>
+             </tr>
           </thead>
           <tbody>
             <?php foreach($reconciliations as $recon): ?>
@@ -1673,11 +1675,24 @@ require_once __DIR__ . '/../partials/header.php';
                   <span class="text-muted">0.00 L</span>
                 <?php endif; ?>
               </td>
-              <td>
-                <span class="status-badge status-<?php echo strtolower($recon['status']); ?>">
-                  <?php echo $recon['status']; ?>
-                </span>
-              </td>
+               <td>
+                 <span class="status-badge status-<?php echo strtolower($recon['status']); ?>">
+                   <?php echo $recon['status']; ?>
+                 </span>
+               </td>
+               <td>
+                 <?php if($recon['status'] === 'Finalized' && !$recon['synced_to_pos']): ?>
+                   <a href="pos_fuel_sync.php" class="btn btn-sm btn-primary">
+                     <i class="fas fa-sync"></i> Sync
+                   </a>
+                 <?php elseif($recon['synced_to_pos']): ?>
+                   <span class="badge bg-success" title="<?php echo htmlspecialchars($recon['synced_at']); ?>">
+                     <i class="fas fa-check"></i> Synced
+                   </span>
+                 <?php else: ?>
+                   <span class="text-muted">—</span>
+                 <?php endif; ?>
+               </td>
             </tr>
             <?php endforeach; ?>
           </tbody>
