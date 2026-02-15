@@ -1068,12 +1068,12 @@ include __DIR__ . '/../partials/header.php';
 
                         <div class="job-actions">
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <select class="form-select" onchange="handleStatusChange(<?php echo $job['id']; ?>, this)" style="flex: 1; min-width: 200px;">
-                                    <option value="">-- Change Status --</option>
-                                    <option value="In Progress" <?php echo $job['status'] === 'In Progress' ? 'selected' : ''; ?>>In Progress</option>
-                                    <option value="Completed" <?php echo $job['status'] === 'Completed' ? 'selected' : ''; ?>>Mark Completed</option>
-                                    <option value="Cancelled" <?php echo $job['status'] === 'Cancelled' ? 'selected' : ''; ?>>Cancel Job</option>
-                                </select>
+                                 <select class="form-select" onchange="handleStatusChange(<?php echo $job['id']; ?>, this)" onclick="this.selectedIndex = 0;" style="flex: 1; min-width: 200px;">
+                                     <option value="">-- Change Status --</option>
+                                     <option value="In Progress">In Progress</option>
+                                     <option value="Completed">Mark Completed</option>
+                                     <option value="Cancelled">Cancel Job</option>
+                                 </select>
                                 <button class="btn btn-primary" onclick="confirmPartsUsed(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-cogs"></i> 📦 Parts Used
                                 </button>
@@ -1617,8 +1617,10 @@ let currentStatus = null;
 function handleStatusChange(jobId, selectElement) {
     const status = selectElement.value;
     
+    // Reset dropdown to default state
+    selectElement.selectedIndex = 0;
+    
     if (!status) {
-        selectElement.value = '';
         return;
     }
     
@@ -1632,8 +1634,6 @@ function handleStatusChange(jobId, selectElement) {
     
     if (confirm(confirmMessage)) {
         updateJobStatus(jobId, status);
-    } else {
-        selectElement.value = '';
     }
 }
 
