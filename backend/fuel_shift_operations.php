@@ -8,6 +8,9 @@
  * 3. Create immutable audit trail
  */
 
+// Include the fuel audit logging module
+require_once __DIR__ . '/fuel_audit_logging.php';
+
 class FuelShiftOperations {
     private $pdo;
     private $user;
@@ -95,53 +98,59 @@ class FuelShiftOperations {
                         }
                         
                         $quantity_before = $reading['stock_level'] ?? 0;
-                        
-                        // UPDATE fuel_inventory - DEDUCT sales liters
-                        $stmt = $this->pdo->prepare("
-                            UPDATE fuel_inventory 
-                            SET stock_level = stock_level - ?
-                            WHERE station_id = ? AND product_id = ?
-                        ");
-                        
-                        $stmt->execute([
-                            $sales_liters,
-                            $station_id,
-                            $reading['product_id']
-                        ]);
-                        
-                        // Get new stock level
-                        $stmt = $this->pdo->prepare("
-                            SELECT stock_level FROM fuel_inventory 
-                            WHERE station_id = ? AND product_id = ?
-                        ");
-                        $stmt->execute([$station_id, $reading['product_id']]);
-                        $updated = $stmt->fetch(PDO::FETCH_ASSOC);
-                        $quantity_after = $updated['stock_level'] ?? 0;
-                        
-                        // Log to fuel_inventory_logs
-                        $this->log_fuel_inventory_action(
-                            $station_id,
-                            $reading['product_id'],
-                            'reading_approved',
-                            'fuel_daily_reading',
-                            $reading['id'],
-                            'finalized',
-                            $manager_id,
-                            "Shift-end: Pump #{$reading['pump_number']} approved",
-                            $quantity_before,
-                            $quantity_after,
-                            -$sales_liters
-                        );
-                        
-                        $total_liters_deducted += $sales_liters;
-                        
-                        $summary[] = [
-                            'pump_number' => $reading['pump_number'],
-                            'fuel_type' => $reading['fuel_name'],
-                            'sales_liters' => $sales_liters,
-                            'stock_before' => $quantity_before,
-                            'stock_after' => $quantity_after
-                        ];
+                         
+                         // UPDATE fuel_inventory - DEDUCT sales liters
+                         $stmt = $this->pdo->prepare("
+                             UPDATE fuel_inventory 
+                             SET stock_level = stock_level - ?
+                             WHERE station_id = ? AND product_id = ?
+                         ");
+                         
+                         $stmt->execute([
+                             $sales_liters,
+                             $station_id,
+                             $reading['product_id']
+                         ]);
+                         
+                         // Get new stock level
+                         $stmt = $this->pdo->prepare("
+                             SELECT stock_level FROM fuel_inventory 
+                             WHERE station_id = ? AND product_id = ?
+                         ");
+                         $stmt->execute([$station_id, $reading['product_id']]);
+                         $updated = $stmt->fetch(PDO::FETCH_ASSOC);
+                         $quantity_after = $updated['stock_level'] ?? 0;
+                         
+                         // Log to fuel_inventory_logs via audit logging module
+                         log_fuel_inventory_action(
+                             $this->pdo,
+                             $manager_id,
+                             'reading_approved',
+                             'fuel_daily_reading',
+                             $reading['id'],
+                             $station_id,
+                             $reading['product_id'],
+                             [
+                                 'pump_number' => $reading['pump_number'],
+                                 'fuel_type' => $reading['fuel_name'],
+                                 'sales_liters' => $sales_liters,
+                                 'shift' => $reading['shift'],
+                                 'quantity_before' => $quantity_before,
+                                 'quantity_after' => $quantity_after,
+                                 'quantity_change' => -$sales_liters,
+                                 'status' => 'Approved'
+                             ]
+                         );
+                         
+                         $total_liters_deducted += $sales_liters;
+                         
+                         $summary[] = [
+                             'pump_number' => $reading['pump_number'],
+                             'fuel_type' => $reading['fuel_name'],
+                             'sales_liters' => $sales_liters,
+                             'stock_before' => $quantity_before,
+                             'stock_after' => $quantity_after
+                         ];
                     }
                     
                     // Mark reading as Approved
@@ -253,55 +262,6 @@ class FuelShiftOperations {
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (Exception $e) {
             return [];
-        }
-    }
-    
-    /**
-     * Helper: Log action to fuel_inventory_logs
-     */
-    private function log_fuel_inventory_action(
-        $station_id, 
-        $product_id, 
-        $action, 
-        $reference_type, 
-        $reference_id, 
-        $status,
-        $user_id,
-        $notes,
-        $quantity_before = 0,
-        $quantity_after = 0,
-        $quantity_change = 0
-    ) {
-        try {
-            $stmt = $this->pdo->prepare("
-                INSERT INTO fuel_inventory_logs (
-                    station_id, product_id, user_id, action, 
-                    reference_type, reference_id, status, notes,
-                    quantity_before, quantity_after, quantity_change
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    status = VALUES(status),
-                    quantity_before = VALUES(quantity_before),
-                    quantity_after = VALUES(quantity_after),
-                    quantity_change = VALUES(quantity_change),
-                    updated_at = NOW()
-            ");
-            
-            $stmt->execute([
-                $station_id,
-                $product_id,
-                $user_id,
-                $action,
-                $reference_type,
-                $reference_id,
-                $status,
-                $notes,
-                $quantity_before,
-                $quantity_after,
-                $quantity_change
-            ]);
-        } catch (Exception $e) {
-            error_log("Error logging fuel inventory action: " . $e->getMessage());
         }
     }
 }

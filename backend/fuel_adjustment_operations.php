@@ -11,6 +11,9 @@
  * Adjustment Types: Variance, Loss, Reconciliation, Measurement Error, Spillage, Contamination, etc.
  */
 
+// Include the fuel audit logging module
+require_once __DIR__ . '/fuel_audit_logging.php';
+
 class FuelAdjustmentOperations {
     private $pdo;
     private $user;
@@ -69,31 +72,37 @@ class FuelAdjustmentOperations {
             $adjustment_id = $this->pdo->lastInsertId();
             
             // Log to activity logs
-            log_activity(
-                $this->pdo,
-                $this->user['id'],
-                'Adjustment Requested',
-                "Requested fuel adjustment: {$adjustment_type} ({$liters}L) - {$reason}",
-                'fuel_management'
-            );
-            
-            // Log to fuel_inventory_logs (pending approval)
-            $this->log_fuel_inventory_action(
-                $station_id,
-                $product_id,
-                'adjustment_requested',
-                'fuel_adjustment',
-                $adjustment_id,
-                'pending',
-                $this->user['id'],
-                $reason
-            );
-            
-            return [
-                'success' => true,
-                'adjustment_id' => $adjustment_id,
-                'message' => "✓ Adjustment request submitted successfully. ID: {$adjustment_id}"
-            ];
+             log_activity(
+                 $this->pdo,
+                 $this->user['id'],
+                 'Adjustment Requested',
+                 "Requested fuel adjustment: {$adjustment_type} ({$liters}L) - {$reason}",
+                 'fuel_management'
+             );
+             
+             // Log to fuel_inventory_logs via audit logging module
+             log_fuel_inventory_action(
+                 $this->pdo,
+                 $this->user['id'],
+                 'adjustment_requested',
+                 'fuel_adjustment',
+                 $adjustment_id,
+                 $station_id,
+                 $product_id,
+                 [
+                     'adjustment_type' => $adjustment_type,
+                     'liters' => $liters,
+                     'reason' => $reason,
+                     'notes' => $notes,
+                     'status' => 'Pending'
+                 ]
+             );
+             
+             return [
+                 'success' => true,
+                 'adjustment_id' => $adjustment_id,
+                 'message' => "✓ Adjustment request submitted successfully. ID: {$adjustment_id}"
+             ];
         } catch (Exception $e) {
             return [
                 'success' => false,
@@ -168,41 +177,46 @@ class FuelAdjustmentOperations {
                         approval_reason = ?
                     WHERE id = ?
                 ");
-                
-                $stmt->execute([$manager_id, $approval_reason, $adjustment_id]);
-                
-                // Log to fuel_inventory_logs (finalized with before/after quantities)
-                $this->log_fuel_inventory_action(
-                    $adjustment['station_id'],
-                    $adjustment['product_id'],
-                    'adjustment_approved',
-                    'fuel_adjustment',
-                    $adjustment_id,
-                    'finalized',
-                    $manager_id,
-                    $approval_reason,
-                    $quantity_before,
-                    $quantity_after,
-                    $adjustment['liters']
-                );
-                
-                // Log to activity logs
-                log_activity(
-                    $this->pdo,
-                    $manager_id,
-                    'Adjustment Approved',
-                    "Approved fuel adjustment ID {$adjustment_id}: {$adjustment['adjustment_type']} ({$adjustment['liters']}L). Stock: {$quantity_before}L → {$quantity_after}L",
-                    'fuel_management'
-                );
-                
-                $this->pdo->commit();
-                
-                return [
-                    'success' => true,
-                    'message' => "✓ Adjustment approved and stock updated: {$quantity_before}L → {$quantity_after}L",
-                    'quantity_before' => $quantity_before,
-                    'quantity_after' => $quantity_after
-                ];
+                 
+                 $stmt->execute([$manager_id, $approval_reason, $adjustment_id]);
+                 
+                 // Log to fuel_inventory_logs via audit logging module with stock details
+                 log_fuel_inventory_action(
+                     $this->pdo,
+                     $manager_id,
+                     'adjustment_approved',
+                     'fuel_adjustment',
+                     $adjustment_id,
+                     $adjustment['station_id'],
+                     $adjustment['product_id'],
+                     [
+                         'adjustment_type' => $adjustment['adjustment_type'],
+                         'liters' => $adjustment['liters'],
+                         'approval_reason' => $approval_reason,
+                         'quantity_before' => $quantity_before,
+                         'quantity_after' => $quantity_after,
+                         'quantity_change' => $adjustment['liters'],
+                         'status' => 'Approved'
+                     ]
+                 );
+                 
+                 // Log to activity logs
+                 log_activity(
+                     $this->pdo,
+                     $manager_id,
+                     'Adjustment Approved',
+                     "Approved fuel adjustment ID {$adjustment_id}: {$adjustment['adjustment_type']} ({$adjustment['liters']}L). Stock: {$quantity_before}L → {$quantity_after}L",
+                     'fuel_management'
+                 );
+                 
+                 $this->pdo->commit();
+                 
+                 return [
+                     'success' => true,
+                     'message' => "✓ Adjustment approved and stock updated: {$quantity_before}L → {$quantity_after}L",
+                     'quantity_before' => $quantity_before,
+                     'quantity_after' => $quantity_after
+                 ];
                 
             } catch (Exception $e) {
                 $this->pdo->rollBack();
@@ -248,34 +262,39 @@ class FuelAdjustmentOperations {
                     approval_reason = ?
                 WHERE id = ?
             ");
-            
-            $stmt->execute([$manager_id, $rejection_reason, $adjustment_id]);
-            
-            // Log to fuel_inventory_logs (no stock change)
-            $this->log_fuel_inventory_action(
-                $adjustment['station_id'],
-                $adjustment['product_id'],
-                'adjustment_rejected',
-                'fuel_adjustment',
-                $adjustment_id,
-                'cancelled',
-                $manager_id,
-                $rejection_reason
-            );
-            
-            // Log to activity logs
-            log_activity(
-                $this->pdo,
-                $manager_id,
-                'Adjustment Rejected',
-                "Rejected fuel adjustment ID {$adjustment_id}: {$rejection_reason}",
-                'fuel_management'
-            );
-            
-            return [
-                'success' => true,
-                'message' => "✓ Adjustment rejected successfully"
-            ];
+             
+             $stmt->execute([$manager_id, $rejection_reason, $adjustment_id]);
+             
+             // Log to fuel_inventory_logs via audit logging module
+             log_fuel_inventory_action(
+                 $this->pdo,
+                 $manager_id,
+                 'adjustment_rejected',
+                 'fuel_adjustment',
+                 $adjustment_id,
+                 $adjustment['station_id'],
+                 $adjustment['product_id'],
+                 [
+                     'adjustment_type' => $adjustment['adjustment_type'],
+                     'liters' => $adjustment['liters'],
+                     'rejection_reason' => $rejection_reason,
+                     'status' => 'Rejected'
+                 ]
+             );
+             
+             // Log to activity logs
+             log_activity(
+                 $this->pdo,
+                 $manager_id,
+                 'Adjustment Rejected',
+                 "Rejected fuel adjustment ID {$adjustment_id}: {$rejection_reason}",
+                 'fuel_management'
+             );
+             
+             return [
+                 'success' => true,
+                 'message' => "✓ Adjustment rejected successfully"
+             ];
         } catch (Exception $e) {
             return [
                 'success' => false,
@@ -332,55 +351,6 @@ class FuelAdjustmentOperations {
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (Exception $e) {
             return [];
-        }
-    }
-    
-    /**
-     * Helper: Log action to fuel_inventory_logs
-     */
-    private function log_fuel_inventory_action(
-        $station_id, 
-        $product_id, 
-        $action, 
-        $reference_type, 
-        $reference_id, 
-        $status,
-        $user_id,
-        $notes,
-        $quantity_before = 0,
-        $quantity_after = 0,
-        $quantity_change = 0
-    ) {
-        try {
-            $stmt = $this->pdo->prepare("
-                INSERT INTO fuel_inventory_logs (
-                    station_id, product_id, user_id, action, 
-                    reference_type, reference_id, status, notes,
-                    quantity_before, quantity_after, quantity_change
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    status = VALUES(status),
-                    quantity_before = VALUES(quantity_before),
-                    quantity_after = VALUES(quantity_after),
-                    quantity_change = VALUES(quantity_change),
-                    updated_at = NOW()
-            ");
-            
-            $stmt->execute([
-                $station_id,
-                $product_id,
-                $user_id,
-                $action,
-                $reference_type,
-                $reference_id,
-                $status,
-                $notes,
-                $quantity_before,
-                $quantity_after,
-                $quantity_change
-            ]);
-        } catch (Exception $e) {
-            error_log("Error logging fuel inventory action: " . $e->getMessage());
         }
     }
 }

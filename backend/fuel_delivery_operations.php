@@ -10,6 +10,9 @@
  * 5. Audit trail logging
  */
 
+// Include the fuel audit logging module
+require_once __DIR__ . '/fuel_audit_logging.php';
+
 class FuelDeliveryOperations {
     private $pdo;
     private $user;
@@ -54,6 +57,25 @@ class FuelDeliveryOperations {
                 'Delivery Recorded',
                 "Recorded fuel delivery: {$delivery_liters}L of {$fuel_type} (Invoice: {$invoice_no})",
                 'fuel_management'
+            );
+            
+            // Log to fuel_inventory_logs via audit logging module
+            log_fuel_inventory_action(
+                $this->pdo,
+                $this->user['id'],
+                'delivery_recorded',
+                'fuel_delivery',
+                $delivery_id,
+                $station_id,
+                null, // product_id unknown at this stage
+                [
+                    'fuel_type' => $fuel_type,
+                    'delivery_liters' => $delivery_liters,
+                    'supplier_id' => $supplier_id,
+                    'invoice_no' => $invoice_no,
+                    'tanker_number' => $tanker_number,
+                    'notes' => $notes
+                ]
             );
             
             return [
@@ -110,16 +132,23 @@ class FuelDeliveryOperations {
                 'fuel_management'
             );
             
-            // Log to fuel_inventory_logs (pending approval)
-            $this->log_fuel_inventory_action(
-                $delivery['station_id'],
-                null, // product_id will be determined during finalization
+            // Log to fuel_inventory_logs via audit logging module
+            log_fuel_inventory_action(
+                $this->pdo,
+                $manager_id,
                 'delivery_verified',
                 'fuel_delivery',
                 $delivery_id,
-                'pending',
-                $manager_id,
-                $verification_notes
+                $delivery['station_id'],
+                null, // product_id still unknown at verification stage
+                [
+                    'fuel_type' => $delivery['fuel_type'],
+                    'delivery_liters' => $delivery['delivery_liters'],
+                    'supplier_id' => $delivery['supplier_id'],
+                    'invoice_no' => $delivery['invoice_no'],
+                    'verification_notes' => $verification_notes,
+                    'status' => 'Verified'
+                ]
             );
             
             return [
@@ -220,19 +249,26 @@ class FuelDeliveryOperations {
                 
                 $stmt->execute([$admin_id, $finalization_remarks, $delivery_id]);
                 
-                // Log to fuel_inventory_logs (finalized with before/after quantities)
-                $this->log_fuel_inventory_action(
-                    $delivery['station_id'],
-                    $product_id,
+                // Log to fuel_inventory_logs via audit logging module with stock details
+                log_fuel_inventory_action(
+                    $this->pdo,
+                    $admin_id,
                     'delivery_finalized',
                     'fuel_delivery',
                     $delivery_id,
-                    'finalized',
-                    $admin_id,
-                    $finalization_remarks,
-                    $quantity_before,
-                    $quantity_after,
-                    $delivery['delivery_liters']
+                    $delivery['station_id'],
+                    $product_id,
+                    [
+                        'fuel_type' => $delivery['fuel_type'],
+                        'delivery_liters' => $delivery['delivery_liters'],
+                        'supplier_id' => $delivery['supplier_id'],
+                        'invoice_no' => $delivery['invoice_no'],
+                        'finalization_remarks' => $finalization_remarks,
+                        'quantity_before' => $quantity_before,
+                        'quantity_after' => $quantity_after,
+                        'quantity_change' => $delivery['delivery_liters'],
+                        'status' => 'Finalized'
+                    ]
                 );
                 
                 // Log to activity logs
@@ -305,6 +341,23 @@ class FuelDeliveryOperations {
                 'fuel_management'
             );
             
+            // Log to fuel_inventory_logs via audit logging module
+            log_fuel_inventory_action(
+                $this->pdo,
+                $user_id,
+                'delivery_rejected',
+                'fuel_delivery',
+                $delivery_id,
+                $delivery['station_id'],
+                null, // product_id not applicable for rejection
+                [
+                    'fuel_type' => $delivery['fuel_type'],
+                    'delivery_liters' => $delivery['delivery_liters'],
+                    'rejection_reason' => $rejection_reason,
+                    'status' => 'Rejected'
+                ]
+            );
+            
             return [
                 'success' => true,
                 'message' => "✓ Delivery rejected successfully"
@@ -342,56 +395,6 @@ class FuelDeliveryOperations {
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (Exception $e) {
             return [];
-        }
-    }
-    
-    /**
-     * Helper: Log action to fuel_inventory_logs
-     */
-    private function log_fuel_inventory_action(
-        $station_id, 
-        $product_id, 
-        $action, 
-        $reference_type, 
-        $reference_id, 
-        $status,
-        $user_id,
-        $notes,
-        $quantity_before = 0,
-        $quantity_after = 0,
-        $quantity_change = 0
-    ) {
-        try {
-            $stmt = $this->pdo->prepare("
-                INSERT INTO fuel_inventory_logs (
-                    station_id, product_id, user_id, action, 
-                    reference_type, reference_id, status, notes,
-                    quantity_before, quantity_after, quantity_change
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    status = VALUES(status),
-                    quantity_before = VALUES(quantity_before),
-                    quantity_after = VALUES(quantity_after),
-                    quantity_change = VALUES(quantity_change),
-                    updated_at = NOW()
-            ");
-            
-            $stmt->execute([
-                $station_id,
-                $product_id,
-                $user_id,
-                $action,
-                $reference_type,
-                $reference_id,
-                $status,
-                $notes,
-                $quantity_before,
-                $quantity_after,
-                $quantity_change
-            ]);
-        } catch (Exception $e) {
-            // Silently log errors for audit trail
-            error_log("Error logging fuel inventory action: " . $e->getMessage());
         }
     }
 }
