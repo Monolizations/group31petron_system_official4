@@ -30,8 +30,9 @@ try {
 
         foreach ($seedStaff as $name) {
             $username = strtolower(preg_replace('/\s+/', '.', trim($name)));
-            $passwordHash = password_hash('staff123', PASSWORD_DEFAULT); // not used unless they try to login
-            $ins->execute([$name, $username, $passwordHash, $station_id]);
+            $tempPassword = generateSecurePassword();
+            $passwordHash = password_hash($tempPassword, PASSWORD_DEFAULT);
+            $ins->execute([$name, $username, $passwordHash, 'active', $station_id]);
         }
     }
 } catch (Exception $e) {
@@ -109,52 +110,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         /* =======================
-           ADMIN REVIEW - APPROVE
+           MANAGER REVIEW - APPROVE
         ======================= */
-        if ($action === 'admin_review_approve') {
-            if (!$isManager) {
+        if ($action === 'manager_review_approve') {
+            if (!$canReview) {
                 json_response(['success'=>false,'message'=>'Manager privileges required']);
             }
-            
-            $result = $jobOrderOps->adminReview(
+
+            $result = $jobOrderOps->managerApproveJobOrder(
                 $_POST['job_id'],
                 'approve',
                 $_POST['remarks'] ?? null
             );
-            
+
             json_response($result);
         }
 
         /* =======================
-           ADMIN REVIEW - REJECT
+           MANAGER REVIEW - REJECT
         ======================= */
-        if ($action === 'admin_review_reject') {
-            if (!$isManager) {
+        if ($action === 'manager_review_reject') {
+            if (!$canReview) {
                 json_response(['success'=>false,'message'=>'Manager privileges required']);
             }
-            
-            $result = $jobOrderOps->adminReview(
+
+            $result = $jobOrderOps->managerApproveJobOrder(
                 $_POST['job_id'],
                 'reject',
                 $_POST['remarks'] ?? null
             );
-            
-            json_response($result);
-        }
 
-        /* =======================
-           ADMIN FINAL APPROVAL (High-Value/Sensitive)
-        ======================= */
-        if ($action === 'admin_final_approval') {
-            if (!$isAdmin) {
-                json_response(['success'=>false,'message'=>'Admin privileges required']);
-            }
-            
-            $result = $jobOrderOps->adminFinalApproval(
-                $_POST['job_id'],
-                $_POST['admin_password'] ?? ''
-            );
-            
             json_response($result);
         }
 
@@ -169,21 +154,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         /* =======================
            COMPLETE JOB ORDER
         ======================= */
-        if ($action === 'complete_job_order') {
-            $parts_used = json_decode($_POST['parts_used'] ?? '[]', true);
-            
-            $result = $jobOrderOps->completeJobOrder(
-                $_POST['job_id'],
-                $parts_used,
-                $_POST['actual_labor_hours'] ?? 0
-            );
-            
-            json_response($result);
-        }
+         if ($action === 'complete_job_order') {
+             $parts_used = json_decode($_POST['parts_used'] ?? '[]', true);
+             
+             $result = $jobOrderOps->completeJobOrder(
+                 $_POST['job_id'],
+                 $parts_used,
+                 $_POST['actual_labor_hours'] ?? 0
+             );
+             
+             json_response($result);
+         }
 
-    } catch (Exception $e) {
-        json_response(['success'=>false,'message'=>$e->getMessage()]);
-    }
+          /* =======================
+             UPDATE JOB STATUS
+          ======================= */
+          if ($action === 'update_job_status') {
+              $status = $_POST['status'] ?? '';
+              $notes = $_POST['notes'] ?? '';
+              
+              if (!$status) {
+                  json_response(['success'=>false,'message'=>'Status is required']);
+              }
+              
+              $result = $jobOrderOps->updateJobStatus(
+                  $_POST['job_id'],
+                  $status,
+                  $notes
+              );
+              
+              json_response($result);
+          }
+
+          /* =======================
+             CONFIRM PARTS USED
+          ======================= */
+          if ($action === 'confirm_parts') {
+              $parts_used = json_decode($_POST['parts_used'] ?? '[]', true);
+              $notes = $_POST['notes'] ?? '';
+              
+              if (empty($parts_used)) {
+                  json_response(['success'=>false,'message'=>'Please add at least one part']);
+              }
+              
+              $result = $jobOrderOps->confirmPartsUsed(
+                  $_POST['job_id'],
+                  $parts_used,
+                  $notes
+              );
+              
+              json_response($result);
+          }
+
+      } catch (Exception $e) {
+          json_response(['success'=>false,'message'=>$e->getMessage()]);
+     }
 }
 
 /* =========================================================
@@ -260,29 +285,6 @@ if ($canReview) {
     $pending_jobs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// ADMIN: Reviewed Jobs (pending final approval)
-$reviewed_jobs = [];
-if ($canReview) {
-    $stmt = $pdo->prepare("
-        SELECT jo.*, 
-               c.name as customer_name,
-               m.full_name as mechanic_name,
-               sc.name as service_name,
-               u.name as created_by_name,
-               reviewer.name as reviewed_by_name,
-               jo.estimated_labor_cost + jo.estimated_parts_cost as estimated_total
-        FROM job_orders jo
-        LEFT JOIN customers c ON c.id = jo.customer_id
-        LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
-        LEFT JOIN service_categories sc ON sc.id = jo.service_category_id
-        LEFT JOIN users u ON u.id = jo.assigned_by
-        LEFT JOIN users reviewer ON reviewer.id = jo.reviewed_by
-        WHERE jo.station_id = ? AND jo.status = 'Reviewed'
-        ORDER BY jo.reviewed_at ASC
-    ");
-    $stmt->execute([$station_id]);
-    $reviewed_jobs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
 
 // Ongoing Jobs (In Progress)
 $ongoing_jobs = [];
@@ -894,18 +896,18 @@ include __DIR__ . '/../partials/header.php';
             </form>
         </div>
 
-        <!-- Pending Job Orders Tab - Admin Supervision -->
-        <div id="pending-tab" class="tab-content" style="display: none;">
-            <h2 class="section-title">⏳ Admin Review - Pending Job Orders</h2>
-            <p style="color: var(--muted); margin-bottom: 20px;">
-                <strong>Admin Supervisory Role:</strong> Review staff-encoded job orders. Validate service type, vehicle information, and mechanic assignment. 
-                Approve to move forward or reject to send back to staff for corrections.
-            </p>
+        <!-- Pending Job Orders Tab - Manager Supervision -->
+         <div id="pending-tab" class="tab-content" style="display: none;">
+             <h2 class="section-title">⏳ Manager Review - Pending Job Orders</h2>
+             <p style="color: var(--muted); margin-bottom: 20px;">
+                 <strong>Manager Supervisory Role:</strong> Review staff-encoded job orders. Validate service type, vehicle information, and mechanic assignment. 
+                 Approve to move forward or reject to send back to staff for corrections.
+             </p>
             
             <?php if ($canReview): ?>
                 <?php if (!empty($pending_jobs)): ?>
                     <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
-                        <strong>⚠️ <?php echo count($pending_jobs); ?> job(s) awaiting admin review</strong>
+                        <strong>⚠️ <?php echo count($pending_jobs); ?> job(s) awaiting manager review</strong>
                         <?php 
                         $high_value_count = count(array_filter($pending_jobs, function($j) { return $j['requires_approval']; }));
                         if ($high_value_count > 0): ?>
@@ -1003,56 +1005,6 @@ include __DIR__ . '/../partials/header.php';
                     </div>
                 <?php endif; ?>
                 
-                <!-- Reviewed Jobs - Awaiting Final Approval -->
-                <?php if (!empty($reviewed_jobs)): ?>
-                    <hr style="margin: 40px 0; border: none; border-top: 2px solid var(--border);">
-                    <h2 class="section-title">🔐 Reviewed Jobs - Final Approval Required</h2>
-                    <p style="color: var(--muted); margin-bottom: 20px;">
-                        <strong>High-Value Jobs:</strong> These jobs have been reviewed and require your final approval with password verification.
-                    </p>
-                    
-                    <?php foreach ($reviewed_jobs as $job): ?>
-                        <div class="job-card" style="border-left: 4px solid #4CAF50;">
-                            <div class="job-header">
-                                <div>
-                                    <div class="job-title"><?php echo htmlspecialchars($job['job_order_number']); ?></div>
-                                    <div class="job-meta">
-                                        Reviewed by: <?php echo htmlspecialchars($job['reviewed_by_name'] ?? 'Admin'); ?> • 
-                                        <?php echo date('M d, Y H:i A', strtotime($job['reviewed_at'])); ?>
-                                    </div>
-                                </div>
-                                <span class="status-badge" style="background: #4CAF50; color: white;">Reviewed</span>
-                            </div>
-
-                            <div class="job-details">
-                                <div class="job-detail-item">
-                                    <div class="job-detail-label">Service</div>
-                                    <div class="job-detail-value"><?php echo htmlspecialchars($job['service_name'] ?? 'N/A'); ?></div>
-                                </div>
-                                <div class="job-detail-item">
-                                    <div class="job-detail-label">Mechanic</div>
-                                    <div class="job-detail-value"><?php echo htmlspecialchars($job['mechanic_name'] ?? 'N/A'); ?></div>
-                                </div>
-                                <div class="job-detail-item">
-                                    <div class="job-detail-label">Estimated Cost</div>
-                                    <div class="job-detail-value">₱<?php echo number_format($job['estimated_total'] ?? 0, 2); ?></div>
-                                </div>
-                            </div>
-
-                            <?php if (!empty($job['admin_remarks'])): ?>
-                                <div style="background: #f0f8ff; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
-                                    <strong>Admin Remarks:</strong> <?php echo nl2br(htmlspecialchars($job['admin_remarks'])); ?>
-                                </div>
-                            <?php endif; ?>
-
-                            <div class="job-actions">
-                                <button class="btn btn-primary" onclick="adminFinalApproval(<?php echo $job['id']; ?>)">
-                                    <i class="fas fa-lock"></i> Final Approval (Password Required)
-                                </button>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
                 
             <?php else: ?>
                 <div class="empty-state">
@@ -1115,21 +1067,17 @@ include __DIR__ . '/../partials/header.php';
                         <?php endif; ?>
 
                         <div class="job-actions">
-                            <button class="btn btn-primary" onclick="updateJobStatus(<?php echo $job['id']; ?>, 'In Progress')">
-                                <i class="fas fa-play"></i> 🔄 In Progress
-                            </button>
-                            <button class="btn btn-warning" onclick="updateJobStatus(<?php echo $job['id']; ?>, 'Waiting Parts')">
-                                <i class="fas fa-pause"></i> ⏸️ Waiting Parts
-                            </button>
-                            <button class="btn btn-secondary" onclick="updateJobStatus(<?php echo $job['id']; ?>, 'Paused')">
-                                <i class="fas fa-pause-circle"></i> ⏹️ Paused
-                            </button>
-                            <button class="btn btn-success" onclick="completeJobOrder(<?php echo $job['id']; ?>)">
-                                <i class="fas fa-check-circle"></i> ✅ Mark Completed
-                            </button>
-                            <button class="btn btn-primary" onclick="confirmPartsUsed(<?php echo $job['id']; ?>)">
-                                <i class="fas fa-cogs"></i> 📦 Confirm Parts
-                            </button>
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <select class="form-select" onchange="handleStatusChange(<?php echo $job['id']; ?>, this)" style="flex: 1; min-width: 200px;">
+                                    <option value="">-- Change Status --</option>
+                                    <option value="In Progress" <?php echo $job['status'] === 'In Progress' ? 'selected' : ''; ?>>In Progress</option>
+                                    <option value="Completed" <?php echo $job['status'] === 'Completed' ? 'selected' : ''; ?>>Mark Completed</option>
+                                    <option value="Cancelled" <?php echo $job['status'] === 'Cancelled' ? 'selected' : ''; ?>>Cancel Job</option>
+                                </select>
+                                <button class="btn btn-primary" onclick="confirmPartsUsed(<?php echo $job['id']; ?>)">
+                                    <i class="fas fa-cogs"></i> 📦 Parts Used
+                                </button>
+                            </div>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -1255,24 +1203,6 @@ include __DIR__ . '/../partials/header.php';
 </div>
 
 <!-- Status Update Modal -->
-<div id="statusModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title">Update Job Status</h3>
-            <button class="modal-close" onclick="closeStatusModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div class="form-group">
-                <label>Add Notes/Remarks</label>
-                <textarea class="form-textarea" id="statusNotes" placeholder="Add any remarks or progress updates..."></textarea>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeStatusModal()">Cancel</button>
-            <button class="btn btn-primary" id="confirmStatusBtn" onclick="confirmStatusUpdate()">Update Status</button>
-        </div>
-    </div>
-</div>
 
 <!-- Parts Confirmation Modal -->
 <div id="partsModal" class="modal">
@@ -1463,13 +1393,13 @@ async function createJobOrder(event) {
 // ===============================================
 
 async function adminReviewApprove(jobId) {
-    const remarks = prompt('Enter approval remarks (optional):');
-    if (remarks === null) return; // User cancelled
-    
-    const formData = new FormData();
-    formData.append('action', 'admin_review_approve');
-    formData.append('job_id', jobId);
-    if (remarks) formData.append('remarks', remarks);
+     const remarks = prompt('Enter approval remarks (optional):');
+     if (remarks === null) return; // User cancelled
+     
+     const formData = new FormData();
+     formData.append('action', 'manager_review_approve');
+     formData.append('job_id', jobId);
+     if (remarks) formData.append('remarks', remarks);
 
     try {
         const response = await fetch('joborder.php', {
@@ -1492,18 +1422,18 @@ async function adminReviewApprove(jobId) {
 }
 
 async function adminReviewReject(jobId) {
-    const remarks = prompt('Enter rejection reason:');
-    if (!remarks) {
-        showToast('Rejection reason is required', 'error');
-        return;
-    }
-    
-    if (!confirm('Are you sure you want to reject this job order? It will be returned to staff.')) return;
-    
-    const formData = new FormData();
-    formData.append('action', 'admin_review_reject');
-    formData.append('job_id', jobId);
-    formData.append('remarks', remarks);
+     const remarks = prompt('Enter rejection reason:');
+     if (!remarks) {
+         showToast('Rejection reason is required', 'error');
+         return;
+     }
+     
+     if (!confirm('Are you sure you want to reject this job order? It will be returned to staff.')) return;
+     
+     const formData = new FormData();
+     formData.append('action', 'manager_review_reject');
+     formData.append('job_id', jobId);
+     formData.append('remarks', remarks);
 
     try {
         const response = await fetch('joborder.php', {
@@ -1525,37 +1455,6 @@ async function adminReviewReject(jobId) {
     }
 }
 
-async function adminFinalApproval(jobId) {
-    const password = prompt('Enter your admin password for final approval:');
-    if (!password) {
-        showToast('Password is required for final approval', 'error');
-        return;
-    }
-    
-    const formData = new FormData();
-    formData.append('action', 'admin_final_approval');
-    formData.append('job_id', jobId);
-    formData.append('admin_password', password);
-
-    try {
-        const response = await fetch('joborder.php', {
-            method: 'POST',
-            body: formData
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            showToast('Job order approved and started! ✓', 'success');
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast(result.message || 'Failed to approve job order', 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        showToast('Error in final approval', 'error');
-    }
-}
 
 // ===============================================
 // JOB ORDER COMPLETION WITH INVENTORY DEDUCTION
@@ -1715,25 +1614,40 @@ async function rejectJobOrder(jobId) {
 let currentJobId = null;
 let currentStatus = null;
 
+function handleStatusChange(jobId, selectElement) {
+    const status = selectElement.value;
+    
+    if (!status) {
+        selectElement.value = '';
+        return;
+    }
+    
+    let confirmMessage = `Change job status to "${status}"?`;
+    
+    if (status === 'Completed') {
+        confirmMessage = '⚠️ Mark job as COMPLETED?\n\nThis will:\n• Move to History\n• Lock all edits\n• Finalize the order';
+    } else if (status === 'Cancelled') {
+        confirmMessage = '⚠️ Cancel this job?\n\nThis cannot be easily undone.';
+    }
+    
+    if (confirm(confirmMessage)) {
+        updateJobStatus(jobId, status);
+    } else {
+        selectElement.value = '';
+    }
+}
+
 function updateJobStatus(jobId, status) {
-    currentJobId = jobId;
-    currentStatus = status;
-    document.getElementById('statusModal').style.display = 'block';
-    document.getElementById('statusNotes').value = '';
-    document.getElementById('confirmStatusBtn').onclick = confirmStatusUpdate;
+    if (!status) return; // Don't do anything if empty option selected
+    
+    submitStatusUpdate(jobId, status, '');
 }
 
-function closeStatusModal() {
-    document.getElementById('statusModal').style.display = 'none';
-}
-
-async function confirmStatusUpdate() {
-    const notes = document.getElementById('statusNotes').value;
-
+async function submitStatusUpdate(jobId, status, notes) {
     const formData = new FormData();
     formData.append('action', 'update_job_status');
-    formData.append('job_id', currentJobId);
-    formData.append('status', currentStatus);
+    formData.append('job_id', jobId);
+    formData.append('status', status);
     formData.append('notes', notes);
 
     try {
@@ -1746,7 +1660,6 @@ async function confirmStatusUpdate() {
 
         if (result.success) {
             showToast('Job status updated!', 'success');
-            closeStatusModal();
             setTimeout(() => location.reload(), 1500);
         } else {
             showToast(result.message, 'error');
@@ -1763,12 +1676,94 @@ function completeJobOrder(jobId) {
 
 function confirmPartsUsed(jobId) {
     currentJobId = jobId;
-    document.getElementById('partsList').innerHTML =
-        `<div class="form-group">
-            <label>Parts Used (JSON format)</label>
-            <textarea class="form-textarea" id="partsData" placeholder="[ { part_name: 'Oil Filter', quantity: 1, cost: 150.00 } ]"></textarea>
-        </div>`;
+    
+    // Create a table for parts input
+    const partsHtml = `
+        <div class="form-group">
+            <label>Parts Used</label>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+                <thead>
+                    <tr style="background: #f5f5f5;">
+                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Part Name</th>
+                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Quantity</th>
+                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Unit Price</th>
+                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Total</th>
+                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="partsTableBody">
+                    <tr id="partRow-0">
+                        <td style="border: 1px solid #ddd; padding: 5px;"><input type="text" class="form-input" placeholder="e.g., Oil Filter" style="width: 100%; margin: 0;"></td>
+                        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="1" min="1" style="width: 100%; margin: 0;" value="1"></td>
+                        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="0.00" min="0" step="0.01" style="width: 100%; margin: 0;" value="0.00"></td>
+                        <td style="border: 1px solid #ddd; padding: 5px; text-align: right; font-weight: bold;">₱0.00</td>
+                        <td style="border: 1px solid #ddd; padding: 5px; text-align: center;"><button class="btn btn-sm btn-danger" onclick="removePartRow(0)" style="padding: 5px 10px;">Remove</button></td>
+                    </tr>
+                </tbody>
+            </table>
+            <button type="button" class="btn btn-secondary" onclick="addPartRow()" style="width: 100%;">
+                <i class="fas fa-plus"></i> Add Another Part
+            </button>
+        </div>
+    `;
+    
+    document.getElementById('partsList').innerHTML = partsHtml;
     document.getElementById('partsModal').style.display = 'block';
+    
+    // Attach event listeners for calculations
+    attachPartsEventListeners();
+}
+
+function addPartRow() {
+    const tbody = document.getElementById('partsTableBody');
+    const rowCount = tbody.children.length;
+    
+    const newRow = document.createElement('tr');
+    newRow.id = `partRow-${rowCount}`;
+    newRow.innerHTML = `
+        <td style="border: 1px solid #ddd; padding: 5px;"><input type="text" class="form-input" placeholder="e.g., Engine Oil" style="width: 100%; margin: 0;"></td>
+        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="1" min="1" style="width: 100%; margin: 0;" value="1" onchange="calculateRowTotal(this)"></td>
+        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="0.00" min="0" step="0.01" style="width: 100%; margin: 0;" value="0.00" onchange="calculateRowTotal(this)"></td>
+        <td style="border: 1px solid #ddd; padding: 5px; text-align: right; font-weight: bold;">₱0.00</td>
+        <td style="border: 1px solid #ddd; padding: 5px; text-align: center;"><button class="btn btn-sm btn-danger" onclick="removePartRow(${rowCount})" style="padding: 5px 10px;">Remove</button></td>
+    `;
+    
+    tbody.appendChild(newRow);
+    attachPartsEventListeners();
+}
+
+function removePartRow(rowIndex) {
+    const row = document.getElementById(`partRow-${rowIndex}`);
+    if (row) {
+        row.remove();
+        attachPartsEventListeners();
+    }
+}
+
+function calculateRowTotal(input) {
+    const row = input.closest('tr');
+    const quantityInput = row.querySelector('td:nth-child(2) input');
+    const priceInput = row.querySelector('td:nth-child(3) input');
+    const totalCell = row.querySelector('td:nth-child(4)');
+    
+    const quantity = parseFloat(quantityInput.value) || 0;
+    const price = parseFloat(priceInput.value) || 0;
+    const total = quantity * price;
+    
+    totalCell.textContent = '₱' + total.toFixed(2);
+}
+
+function attachPartsEventListeners() {
+    const tbody = document.getElementById('partsTableBody');
+    const rows = tbody.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        const quantityInput = row.querySelector('td:nth-child(2) input');
+        const priceInput = row.querySelector('td:nth-child(3) input');
+        
+        quantityInput.onchange = () => calculateRowTotal(quantityInput);
+        priceInput.onchange = () => calculateRowTotal(priceInput);
+    });
 }
 
 function closePartsModal() {
@@ -1776,41 +1771,56 @@ function closePartsModal() {
 }
 
 async function confirmPartsConfirmation() {
-    const partsData = document.getElementById('partsData').value;
-    const notes = document.getElementById('partsNotes').value;
+     const notes = document.getElementById('partsNotes').value;
+     
+     // Read parts from table
+     const tbody = document.getElementById('partsTableBody');
+     const rows = tbody.querySelectorAll('tr');
+     
+     const partsUsed = [];
+     rows.forEach(row => {
+         const partName = row.querySelector('td:nth-child(1) input').value.trim();
+         const quantity = parseFloat(row.querySelector('td:nth-child(2) input').value) || 0;
+         const unitPrice = parseFloat(row.querySelector('td:nth-child(3) input').value) || 0;
+         
+         if (partName) {
+             partsUsed.push({
+                 part_name: partName,
+                 quantity: quantity,
+                 unit_cost: unitPrice
+             });
+         }
+     });
+     
+     if (partsUsed.length === 0) {
+         showToast('Please add at least one part', 'error');
+         return;
+     }
 
-    let partsUsed = [];
-    try {
-        partsUsed = JSON.parse(partsData);
-    } catch (e) {
-        showToast('Invalid JSON format for parts data', 'error');
-        return;
-    }
+     const formData = new FormData();
+     formData.append('action', 'confirm_parts');
+     formData.append('job_id', currentJobId);
+     formData.append('parts_used', JSON.stringify(partsUsed));
+     formData.append('notes', notes);
 
-    const formData = new FormData();
-    formData.append('action', 'confirm_parts');
-    formData.append('job_id', currentJobId);
-    formData.append('parts_used', JSON.stringify(partsUsed));
-    formData.append('notes', notes);
+     try {
+         const response = await fetch('joborder.php', {
+             method: 'POST',
+             body: formData
+         });
 
-    try {
-        const response = await fetch('joborder.php', {
-            method: 'POST',
-            body: formData
-        });
+         const result = await response.json();
 
-        const result = await response.json();
-
-        if (result.success) {
-            showToast('Parts confirmed and inventory updated!', 'success');
-            closePartsModal();
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(result.message, 'error');
-        }
-    } catch (error) {
-        showToast('Error confirming parts', 'error');
-    }
+         if (result.success) {
+             showToast('Parts confirmed and inventory updated!', 'success');
+             closePartsModal();
+             setTimeout(() => location.reload(), 1500);
+         } else {
+             showToast(result.message, 'error');
+         }
+     } catch (error) {
+         showToast('Error confirming parts', 'error');
+     }
 }
 
 function viewJobDetails(jobId) {

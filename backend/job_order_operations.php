@@ -160,10 +160,10 @@ class JobOrderOperations {
         try {
             $this->pdo->beginTransaction();
             
-            // RBAC: Manager only
+            // RBAC: Manager, Admin, or Super Admin
             $role = role_key($this->user['role'] ?? '');
-            if ($role !== 'manager') {
-                throw new Exception('Manager privileges required for job order approval');
+            if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
+                throw new Exception('Manager or admin privileges required for job order approval');
             }
             
             $job = $this->getJobOrderDetails($job_id);
@@ -179,27 +179,28 @@ class JobOrderOperations {
                 throw new Exception('Assigned mechanic is no longer available');
             }
             
-            if ($action === 'approve') {
-                // APPROVAL: Lock job order from staff editing
-                $stmt = $this->pdo->prepare("
-                    UPDATE job_orders
-                    SET status = 'Approved',
-                        approved_by = ?,
-                        approved_at = NOW(),
-                        staff_editable = 0,
-                        manager_remarks = ?
-                    WHERE id = ?
-                ");
-                $stmt->execute([$this->user['id'], $remarks, $job_id]);
-                
-                log_activity(
-                    $this->pdo,
-                    $this->user['id'],
-                    'Job Order Approved',
-                    sprintf('Job %s approved by manager. Staff editing locked. Total: ₱%.2f', $job['job_order_number'], $job['estimated_labor_cost'] + $job['estimated_parts_cost'])
-                );
-                
-                $message = 'Job order approved. Staff cannot edit billing amounts.';
+             if ($action === 'approve') {
+                 // APPROVAL: Move directly to In Progress (day-to-day manager operation)
+                 $stmt = $this->pdo->prepare("
+                     UPDATE job_orders
+                     SET status = 'In Progress',
+                         reviewed_by = ?,
+                         reviewed_at = NOW(),
+                         started_at = NOW(),
+                         staff_editable = 0,
+                         manager_remarks = ?
+                     WHERE id = ?
+                 ");
+                 $stmt->execute([$this->user['id'], $remarks, $job_id]);
+                 
+                 log_activity(
+                     $this->pdo,
+                     $this->user['id'],
+                     'Job Order Approved',
+                     sprintf('Job %s approved and started by manager. Total: ₱%.2f', $job['job_order_number'], $job['estimated_labor_cost'] + $job['estimated_parts_cost'])
+                 );
+                 
+                 $message = 'Job order approved and started!';
                 
             } elseif ($action === 'reject') {
                 // REJECTION: Return to pending
@@ -234,18 +235,18 @@ class JobOrderOperations {
     }
     
     /**
-     * Admin Finalize Job Order
-     * Admin views approved jobs (no staff can create)
+     * Manager Finalize Job Order
+     * Manager views approved jobs (no staff can create)
      * Requires manager password for security checkpoint
      */
-    public function adminFinalApproval($job_id, $manager_password) {
+    public function managerFinalApproval($job_id, $manager_password) {
         try {
             $this->pdo->beginTransaction();
             
-            // RBAC: Admin or Super Admin only
+            // RBAC: Manager or Super Admin only (Admin is read-only for hierarchy compliance)
             $role = role_key($this->user['role'] ?? '');
-            if (!in_array($role, ['admin', 'superadmin'])) {
-                throw new Exception('Admin privileges required');
+            if (!in_array($role, ['manager', 'superadmin'])) {
+                throw new Exception('Manager privileges required');
             }
             
             $job = $this->getJobOrderDetails($job_id);
@@ -253,22 +254,21 @@ class JobOrderOperations {
                 throw new Exception('Job order not found');
             }
             
-            if ($job['status'] !== 'Approved') {
-                throw new Exception('Job order must be in Approved status to finalize');
+            if ($job['status'] !== 'Reviewed') {
+                throw new Exception('Job order must be in Reviewed status to finalize');
             }
             
             // SECURITY: Super Admin bypasses password verification
             if ($role === 'superadmin') {
                 // Super Admin bypass - no password check needed
             } else {
-                // ADMIN: Verify manager password from same station
+                // MANAGER: Verify manager password
                 $stmt = $this->pdo->prepare("
                     SELECT u.password FROM users u
-                    WHERE u.station_id = ? 
-                      AND u.role IN ('manager')
+                    WHERE u.id = ?
                     LIMIT 1
                 ");
-                $stmt->execute([$this->station_id]);
+                $stmt->execute([$this->user['id']]);
                 $manager = $stmt->fetch(PDO::FETCH_ASSOC);
                 
                 if (!$manager || !password_verify($manager_password, $manager['password'])) {
@@ -276,16 +276,16 @@ class JobOrderOperations {
                 }
             }
             
-            // FINALIZE: Move to In Progress and lock all edits
-            $stmt = $this->pdo->prepare("
-                UPDATE job_orders
-                SET status = 'In Progress',
-                    finalized_by = ?,
-                    finalized_at = NOW(),
-                    staff_editable = 0,
-                    started_at = NOW()
-                WHERE id = ? AND status = 'Approved'
-            ");
+             // FINALIZE: Move to In Progress and lock all edits
+             $stmt = $this->pdo->prepare("
+                 UPDATE job_orders
+                 SET status = 'In Progress',
+                     finalized_by = ?,
+                     finalized_at = NOW(),
+                     staff_editable = 0,
+                     started_at = NOW()
+                 WHERE id = ? AND status = 'Reviewed'
+             ");
             $stmt->execute([$this->user['id'], $job_id]);
             
             if ($stmt->rowCount() === 0) {
@@ -459,11 +459,122 @@ class JobOrderOperations {
             $this->pdo->rollBack();
             return ['success' => false, 'message' => $e->getMessage()];
         }
-    }
-    
-    /**
-     * Validate Mechanic Availability Based on Duty Roster
-     */
+     }
+     
+     /**
+      * Update Job Status (for manager updates)
+      */
+     public function updateJobStatus($job_id, $status, $notes = '') {
+         try {
+             $this->pdo->beginTransaction();
+             
+             $job = $this->getJobOrderDetails($job_id);
+             if (!$job) {
+                 throw new Exception('Job order not found');
+             }
+             
+             // Validate status is in enum
+             $valid_statuses = ['Pending', 'Reviewed', 'In Progress', 'Completed', 'Verified', 'finalized', 'Cancelled', 'Rejected'];
+             if (!in_array($status, $valid_statuses)) {
+                 throw new Exception('Invalid status: ' . $status);
+             }
+             
+             // Simple status update
+             $stmt = $this->pdo->prepare("
+                 UPDATE job_orders
+                 SET status = ?,
+                     updated_at = NOW()
+                 WHERE id = ?
+             ");
+             $stmt->execute([$status, $job_id]);
+             
+             // Log the status change
+             log_activity(
+                 $this->pdo,
+                 $this->user['id'],
+                 'Job Status Updated',
+                 sprintf('Job %s status changed to %s. Notes: %s', $job['job_order_number'], $status, $notes ?: 'None')
+             );
+             
+             $this->pdo->commit();
+             
+             return ['success' => true, 'message' => 'Job status updated successfully'];
+             
+         } catch (Exception $e) {
+             $this->pdo->rollBack();
+             return ['success' => false, 'message' => $e->getMessage()];
+         }
+      }
+      
+      /**
+       * Confirm Parts Used (Record parts without completing job)
+       */
+      public function confirmPartsUsed($job_id, $parts_used = [], $notes = '') {
+          try {
+              $this->pdo->beginTransaction();
+              
+              $job = $this->getJobOrderDetails($job_id);
+              if (!$job) {
+                  throw new Exception('Job order not found');
+              }
+              
+              // Parts can be added to jobs in progress
+              if ($job['status'] !== 'In Progress') {
+                  throw new Exception('Parts can only be added to jobs in progress');
+              }
+              
+              // Record all parts
+              foreach ($parts_used as $part) {
+                  // Insert parts using part_name instead of product_id
+                  $stmt = $this->pdo->prepare("
+                      INSERT INTO job_order_parts
+                      (job_order_id, part_name, quantity_used, unit_cost, total_cost, created_at)
+                      VALUES (?, ?, ?, ?, ?, NOW())
+                  ");
+                  
+                  $part_total = $part['quantity'] * $part['unit_cost'];
+                  $stmt->execute([
+                      $job_id,
+                      $part['part_name'],
+                      $part['quantity'],
+                      $part['unit_cost'],
+                      $part_total
+                  ]);
+                  
+                  log_activity(
+                      $this->pdo,
+                      $this->user['id'],
+                      'Parts Added',
+                      sprintf('Job %s: %s (Qty: %d)', $job['job_order_number'], $part['part_name'], $part['quantity'])
+                  );
+              }
+              
+              // Update job notes if provided
+              if ($notes) {
+                  $stmt = $this->pdo->prepare("
+                      UPDATE job_orders
+                      SET notes = CONCAT(IFNULL(notes, ''), '\n', ?)
+                      WHERE id = ?
+                  ");
+                  $stmt->execute([$notes, $job_id]);
+              }
+              
+              $this->pdo->commit();
+              
+              return [
+                  'success' => true,
+                  'message' => sprintf('Parts recorded for job #%d', $job_id)
+              ];
+              
+          } catch (Exception $e) {
+              $this->pdo->rollBack();
+              return ['success' => false, 'message' => $e->getMessage()];
+          }
+      }
+      
+      /**
+       * Validate Mechanic Availability Based on Duty Roster
+       */
     private function validateMechanicAvailability($mechanic_id) {
         // Check if mechanic exists and is active
         $stmt = $this->pdo->prepare("
@@ -694,26 +805,28 @@ if (basename($_SERVER['PHP_SELF']) === 'job_order_operations.php') {
                 $result = $jobOrderOps->createJobOrder($_POST);
                 break;
                 
-            case 'manager_approve':
+            case 'manager_review_approve':
                 $result = $jobOrderOps->managerApproveJobOrder(
                     $_POST['job_id'],
-                    $_POST['approve_action'],
+                    'approve',
                     $_POST['remarks'] ?? null
                 );
                 break;
                 
-            case 'admin_final_approval':
-                $result = $jobOrderOps->adminFinalApproval(
+            case 'manager_review_reject':
+                $result = $jobOrderOps->managerApproveJobOrder(
                     $_POST['job_id'],
-                    $_POST['manager_password']
+                    'reject',
+                    $_POST['remarks'] ?? null
                 );
                 break;
                 
-            case 'start_job':
+                
+            case 'start_job_order':
                 $result = $jobOrderOps->startJobOrder($_POST['job_id']);
                 break;
                 
-            case 'complete_job':
+            case 'complete_job_order':
                 $parts_used = json_decode($_POST['parts_used'] ?? '[]', true);
                 $result = $jobOrderOps->completeJobOrder(
                     $_POST['job_id'],
