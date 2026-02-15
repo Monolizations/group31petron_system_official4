@@ -170,6 +170,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
              UPDATE JOB STATUS
           ======================= */
           if ($action === 'update_job_status') {
+              if (!$canReview) {
+                  json_response(['success'=>false,'message'=>'Manager privileges required']);
+              }
+              
               $status = $_POST['status'] ?? '';
               $notes = $_POST['notes'] ?? '';
               
@@ -1650,22 +1654,30 @@ async function submitStatusUpdate(jobId, status, notes) {
     formData.append('status', status);
     formData.append('notes', notes);
 
+    console.log('Submitting status update:', { jobId, status, notes });
+
     try {
         const response = await fetch('joborder.php', {
             method: 'POST',
             body: formData
         });
 
-        const result = await response.json();
+        console.log('Response status:', response.status);
+        const text = await response.text();
+        console.log('Response text:', text);
+        
+        const result = JSON.parse(text);
+        console.log('Parsed result:', result);
 
         if (result.success) {
             showToast('Job status updated!', 'success');
             setTimeout(() => location.reload(), 1500);
         } else {
-            showToast(result.message, 'error');
+            showToast(result.message || 'Failed to update status', 'error');
         }
     } catch (error) {
-        showToast('Error updating job status', 'error');
+        console.error('Error updating job status:', error);
+        showToast('Error updating job status: ' + error.message, 'error');
     }
 }
 
