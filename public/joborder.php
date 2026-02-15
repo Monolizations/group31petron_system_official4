@@ -1072,12 +1072,15 @@ include __DIR__ . '/../partials/header.php';
 
                         <div class="job-actions">
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                 <select class="form-select" onchange="handleStatusChange(<?php echo $job['id']; ?>, this)" style="flex: 1; min-width: 200px;">
-                                     <option value="">-- Change Status --</option>
-                                     <option value="In Progress">In Progress</option>
-                                     <option value="Completed">Mark Completed</option>
-                                     <option value="Cancelled">Cancel Job</option>
-                                 </select>
+                                <button class="btn btn-info" onclick="confirmStatusChange(<?php echo $job['id']; ?>, 'In Progress', '⏳ Keep In Progress?', 'Job will remain in progress for continued work.')">
+                                    <i class="fas fa-spinner"></i> In Progress
+                                </button>
+                                <button class="btn btn-success" onclick="confirmStatusChange(<?php echo $job['id']; ?>, 'Completed', '✅ Mark as Completed?', 'This will finalize the job and move it to history.')">
+                                    <i class="fas fa-check-circle"></i> Complete
+                                </button>
+                                <button class="btn btn-danger" onclick="confirmStatusChange(<?php echo $job['id']; ?>, 'Cancelled', '❌ Cancel This Job?', 'This action cannot be easily undone. Are you sure?')">
+                                    <i class="fas fa-times-circle"></i> Cancel
+                                </button>
                                 <button class="btn btn-primary" onclick="confirmPartsUsed(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-cogs"></i> 📦 Parts Used
                                 </button>
@@ -1618,28 +1621,27 @@ async function rejectJobOrder(jobId) {
 let currentJobId = null;
 let currentStatus = null;
 
-function handleStatusChange(jobId, selectElement) {
-    const status = selectElement.value;
+/**
+ * Confirm Status Change with Custom Dialog
+ * @param {number} jobId - The job order ID
+ * @param {string} newStatus - The new status to set
+ * @param {string} title - Dialog title (e.g., "✅ Mark as Completed?")
+ * @param {string} message - Dialog message with details
+ */
+function confirmStatusChange(jobId, newStatus, title, message) {
+    // Show detailed confirmation message
+    const fullMessage = title + '\n\n' + message;
     
-    // Reset dropdown to default state
-    selectElement.selectedIndex = 0;
+    console.log('Confirming status change:', { jobId, newStatus, title, message });
     
-    if (!status) {
-        return;
-    }
-    
-    let confirmMessage = `Change job status to "${status}"?`;
-    
-    if (status === 'Completed') {
-        confirmMessage = '⚠️ Mark job as COMPLETED?\n\nThis will:\n• Move to History\n• Lock all edits\n• Finalize the order';
-    } else if (status === 'Cancelled') {
-        confirmMessage = '⚠️ Cancel this job?\n\nThis cannot be easily undone.';
-    }
-    
-    if (confirm(confirmMessage)) {
-        updateJobStatus(jobId, status);
+    if (confirm(fullMessage)) {
+        console.log('User confirmed, updating status to:', newStatus);
+        updateJobStatus(jobId, newStatus);
+    } else {
+        console.log('User cancelled status change');
     }
 }
+
 
 function updateJobStatus(jobId, status) {
     if (!status) return; // Don't do anything if empty option selected
