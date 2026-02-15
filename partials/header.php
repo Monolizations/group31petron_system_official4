@@ -606,16 +606,25 @@ if (!isset($pdo) || !$pdo) {
           ['id'=>'verification','label'=>'Verification','href'=>'reports.php?view=verification']
       ]],
 
-      ['id'=>'unlock_records','label'=>'Unlock Records','ico'=>'fas fa-lock-open','href'=>'admin_unlock.php'],
+       ['id'=>'unlock_records','label'=>'Unlock Records','ico'=>'fas fa-lock-open','href'=>'admin_unlock.php'],
 
-      ['id'=>'station_overview','label'=>'Station Overview','ico'=>'fas fa-building','href'=>'station_profiles.php'],
+       ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items' => [
+           ['id'=>'fuel_main','label'=>'Fuel Operations Hub','href'=>'fuel_management.php'],
+           ['id'=>'fuel_delivery_finalize','label'=>'Finalize Deliveries','href'=>'fuel_delivery_finalize.php'],
+           ['id'=>'fuel_delivery_verify','label'=>'Verify Deliveries','href'=>'fuel_delivery_verify.php'],
+           ['id'=>'fuel_shift_processing','label'=>'Process Shift-End','href'=>'fuel_shift_processing.php'],
+           ['id'=>'fuel_monitoring','label'=>'Fuel Monitoring','href'=>'fuel_monitoring.php'],
+           ['id'=>'fuel_testing_workflow','label'=>'📋 Testing Workflow Guide','href'=>'fuel_testing_workflow.php'],
+       ]],
 
-      ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
-          ['id'=>'audit_logs','label'=>'Audit Logs','href'=>'audit_logs.php'],
-          ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
-          ['id'=>'override_logs','label'=>'Override Logs','href'=>'audit_logs.php?type=override'],
-          ['id'=>'system_logs','label'=>'System Logs','href'=>'audit_logs.php?type=system'],
-      ]]
+       ['id'=>'station_overview','label'=>'Station Overview','ico'=>'fas fa-building','href'=>'station_profiles.php'],
+
+       ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
+           ['id'=>'audit_logs','label'=>'Audit Logs','href'=>'audit_logs.php'],
+           ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
+           ['id'=>'override_logs','label'=>'Override Logs','href'=>'audit_logs.php?type=override'],
+           ['id'=>'system_logs','label'=>'System Logs','href'=>'audit_logs.php?type=system'],
+       ]]
     ];
  
   } elseif($role === 'manager'){
@@ -637,14 +646,20 @@ if (!isset($pdo) || !$pdo) {
            ['id'=>'joborder_completion_time','label'=>'Completion Time Reports','href'=>'manager_job_analytics.php?view=completion_time'],
        ]],
 
-       ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-           ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
-           ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
-           ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
-           ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
-           ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
-           ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
-       ]],
+        ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
+            ['id'=>'fuel_main','label'=>'Fuel Operations Hub','href'=>'fuel_management.php'],
+            ['id'=>'fuel_delivery_verify','label'=>'Verify Deliveries','href'=>'fuel_delivery_verify.php'],
+            ['id'=>'fuel_delivery_finalize','label'=>'Finalize Deliveries','href'=>'fuel_delivery_finalize.php'],
+            ['id'=>'fuel_shift_processing','label'=>'Process Shift-End','href'=>'fuel_shift_processing.php'],
+            ['id'=>'fuel_monitoring','label'=>'Fuel Monitoring','href'=>'fuel_monitoring.php'],
+            ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
+            ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
+            ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
+            ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
+            ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
+            ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
+            ['id'=>'fuel_testing_workflow','label'=>'📋 Testing Workflow Guide','href'=>'fuel_testing_workflow.php'],
+        ]],
 
        ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
            ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
@@ -685,9 +700,11 @@ if (!isset($pdo) || !$pdo) {
           ['id'=>'job_create','label'=>'Create Job Order','href'=>'joborder.php?tab=create'],
       ]],
 
-      ['id'=>'fuel','label'=>'Fuel','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-          ['id'=>'fuel_encode','label'=>'Encode Fuel Reading','href'=>'fuel_staff.php'],
-      ]],
+       ['id'=>'fuel','label'=>'Fuel','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
+           ['id'=>'fuel_encode','label'=>'Encode Fuel Reading','href'=>'fuel_staff.php'],
+           ['id'=>'fuel_main','label'=>'Fuel Management','href'=>'fuel_management.php'],
+           ['id'=>'fuel_testing_workflow','label'=>'📋 Testing Workflow Guide','href'=>'fuel_testing_workflow.php'],
+       ]],
 
       ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'#','sub_items'=>[
           ['id'=>'merch_receive','label'=>'Encode Received Items','href'=>'receiving_staff.php'],
