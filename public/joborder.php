@@ -1068,7 +1068,7 @@ include __DIR__ . '/../partials/header.php';
 
                         <div class="job-actions">
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                 <select class="form-select" onchange="handleStatusChange(<?php echo $job['id']; ?>, this)" onclick="this.selectedIndex = 0;" style="flex: 1; min-width: 200px;">
+                                 <select class="form-select" onchange="handleStatusChange(<?php echo $job['id']; ?>, this)" style="flex: 1; min-width: 200px;">
                                      <option value="">-- Change Status --</option>
                                      <option value="In Progress">In Progress</option>
                                      <option value="Completed">Mark Completed</option>
