@@ -579,126 +579,96 @@ if (!isset($pdo) || !$pdo) {
 
   }elseif($role === 'admin'){
     $items = [
-      // Dashboard
       ['id'=>'dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'dashboard.php'],
 
-      // Price Management
-      ['id'=>'price_management','label'=>'Price Management','ico'=>'fas fa-tag','href'=>'#','sub_items' => [
-          ['id'=>'propose_prices','label'=>'Propose Price Changes','href'=>'admin_propose_prices.php'],
+      ['id'=>'financial_reports','label'=>'Financial Reports','ico'=>'fas fa-chart-bar','href'=>'#','sub_items' => [
+          ['id'=>'daily_sales_report','label'=>'Daily Sales Report','href'=>'reports.php?view=daily_sales'],
+          ['id'=>'weekly_sales_report','label'=>'Weekly Sales Report','href'=>'reports.php?view=weekly_sales'],
+          ['id'=>'monthly_sales_report','label'=>'Monthly Sales Report','href'=>'reports.php?view=monthly_sales'],
+          ['id'=>'profit_loss','label'=>'Profit & Loss Statement','href'=>'reports.php?view=profit_loss'],
+          ['id'=>'fuel_cost_analysis','label'=>'Fuel Cost Analysis','href'=>'reports.php?view=fuel_cost'],
       ]],
 
-      // Inventory Management
-      ['id'=>'inventory_management','label'=>'Inventory Management','ico'=>'fas fa-box','href'=>'#','sub_items' => [
-          ['id'=>'stock_requests','label'=>'Stock Requests','href'=>'stock_requests.php'],
-          ['id'=>'approve_stock_requests','label'=>'Approve Stock Requests','href'=>'admin_approve_stock_requests.php'],
-          ['id'=>'supplier_po_confirm','label'=>'Confirm PO with Supplier','href'=>'supplier_po_confirmation.php'],
-          ['id'=>'supplier_delivery','label'=>'Supplier Delivery Tracking','href'=>'supplier_delivery_tracking.php'],
-          ['id'=>'receive_stock','label'=>'Receive & Confirm Stock','href'=>'stock_receiving_confirmation.php'],
-          ['id'=>'confirm_supplier_delivery','label'=>'Supplier Confirmation','href'=>'supplier_confirmation.php'],
-          ['id'=>'receive_items','label'=>'Receiving & Feedback','href'=>'receiving.php'],
-          ['id'=>'view_inventory_history','label'=>'Inventory History','href'=>'inventory_history.php']
-      ]],
+      ['id'=>'export_center','label'=>'Export Center','ico'=>'fas fa-download','href'=>'export_center.php'],
 
-      // Fuel Finalization (Admin/Owner)
-      ['id'=>'fuel_finalization','label'=>'Fuel Reconciliation - Finalize','ico'=>'fas fa-lock','href'=>'reconciliation_admin.php'],
-
-      // Transactions (POS)
-      ['id'=>'transactions','label'=>'Transactions (POS)','ico'=>'fas fa-shopping-cart','href'=>'#','sub_items' => [
-          ['id'=>'create_transaction','label'=>'New Transaction','href'=>'pos.php'],
-          ['id'=>'post_credit_sale','label'=>'Credit (Utang) Transactions','href'=>'credit_transactions.php'],
-          ['id'=>'view_transactions','label'=>'Transaction History','href'=>'transactions.php']
-      ]],
-
-      // Job Order Management
-      ['id'=>'job_order_management','label'=>'Job Order Management','ico'=>'fas fa-wrench','href'=>'#','sub_items' => [
-          ['id'=>'view_pending_job_orders','label'=>'Pending Job Orders','href'=>'joborder.php?tab=pending'],
-          ['id'=>'view_ongoing_job_orders','label'=>'Ongoing Job Orders','href'=>'joborder.php?tab=ongoing'],
-          ['id'=>'view_completed_job_orders','label'=>'Completed Job Orders','href'=>'joborder.php?tab=history']
-      ]],
-
-      // Customer Accounts
       ['id'=>'customer_accounts','label'=>'Customer Accounts','ico'=>'fas fa-users','href'=>'#','sub_items' => [
           ['id'=>'view_customers','label'=>'Customer List','href'=>'customers.php'],
           ['id'=>'view_customer_credit','label'=>'Credit Ledger','href'=>'customer_credit.php'],
           ['id'=>'generate_customer_statement','label'=>'Statements of Account','href'=>'customer_statements.php']
       ]],
 
-      // User Management
       ['id'=>'user_management','label'=>'User Management','ico'=>'fas fa-user-cog','href'=>'users.php'],
 
-      // Reports
       ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items' => [
-          ['id'=>'daily_sales','label'=>'Daily Sales','href'=>'reports.php?view=daily_sales'],
           ['id'=>'shift_reports','label'=>'Shift Reports','href'=>'reports.php?view=shift_reports'],
           ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
           ['id'=>'job_order_reports','label'=>'Job Order Reports','href'=>'reports.php?view=job_order_reports'],
           ['id'=>'verification','label'=>'Verification','href'=>'reports.php?view=verification']
+      ]],
+
+      ['id'=>'unlock_records','label'=>'Unlock Records','ico'=>'fas fa-lock-open','href'=>'admin_unlock.php'],
+
+      ['id'=>'station_overview','label'=>'Station Overview','ico'=>'fas fa-building','href'=>'station_profiles.php'],
+
+      ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
+          ['id'=>'audit_logs','label'=>'Audit Logs','href'=>'audit_logs.php'],
+          ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
+          ['id'=>'override_logs','label'=>'Override Logs','href'=>'audit_logs.php?type=override'],
+          ['id'=>'system_logs','label'=>'System Logs','href'=>'audit_logs.php?type=system'],
       ]]
     ];
  
- } elseif($role === 'manager'){
-    $items = [
-      ['id'=>'manager_home','label'=>'Home','ico'=>'fas fa-home','href'=>'manager_home.php'],
-      ['id'=>'dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'dashboard.php'],
+  } elseif($role === 'manager'){
+     $items = [
+       ['id'=>'manager_home','label'=>'Home','ico'=>'fas fa-home','href'=>'manager_home.php'],
+       ['id'=>'dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'dashboard.php'],
 
-      // Price Approval
-      ['id'=>'price_approval','label'=>'Price Management','ico'=>'fas fa-check-double','href'=>'#','sub_items'=>[
-          ['id'=>'approve_prices','label'=>'Verify & Approve Prices','href'=>'manager_approve_prices.php'],
-      ]],
+        ['id'=>'approvals_center','label'=>'Approvals Center','ico'=>'fas fa-tasks','href'=>'approvals_center.php'],
 
-      // Stock Request Review
-      ['id'=>'stock_request_review','label'=>'Stock Requests','ico'=>'fas fa-clipboard-check','href'=>'#','sub_items'=>[
-          ['id'=>'review_stock_requests','label'=>'Review Stock Requests','href'=>'manager_review_stock_requests.php'],
-      ]],
+        ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'#','sub_items'=>[
+            ['id'=>'inventory_list','label'=>'Inventory List','href'=>'inventory_list.php'],
+            ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
+        ]],
 
-      ['id'=>'job_orders','label'=>'Job Orders','ico'=>'fas fa-wrench','href'=>'#','sub_items'=>[
-          ['id'=>'joborder_pending','label'=>'Pending Job Orders','href'=>'joborder.php?tab=pending'],
-          ['id'=>'joborder_history','label'=>'Job Order History','href'=>'joborder.php?tab=history'],
-          ['id'=>'joborder_service_breakdown','label'=>'Service Type Breakdown','href'=>'manager_job_analytics.php?view=service_breakdown'],
-          ['id'=>'joborder_staff_performance','label'=>'Staff Performance on Jobs','href'=>'manager_job_analytics.php?view=staff_performance'],
-          ['id'=>'joborder_completion_time','label'=>'Completion Time Reports','href'=>'manager_job_analytics.php?view=completion_time'],
-      ]],
+        ['id'=>'job_orders','label'=>'Job Orders','ico'=>'fas fa-wrench','href'=>'#','sub_items'=>[
+           ['id'=>'joborder_history','label'=>'Job Order History','href'=>'joborder.php?tab=history'],
+           ['id'=>'joborder_service_breakdown','label'=>'Service Type Breakdown','href'=>'manager_job_analytics.php?view=service_breakdown'],
+           ['id'=>'joborder_staff_performance','label'=>'Staff Performance on Jobs','href'=>'manager_job_analytics.php?view=staff_performance'],
+           ['id'=>'joborder_completion_time','label'=>'Completion Time Reports','href'=>'manager_job_analytics.php?view=completion_time'],
+       ]],
 
-      ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-          ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
-          ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
-          ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
-          ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
-          ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
-          ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
-      ]],
+       ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
+           ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
+           ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
+           ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
+           ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
+           ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
+           ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
+       ]],
 
-      ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
-          ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
-          ['id'=>'reports_pending_approvals','label'=>'Pending Approvals','href'=>'approvals.php'],
-          ['id'=>'staff_performance_reports','label'=>'Individual Performance','href'=>'staff_reports.php?view=performance'],
-          ['id'=>'staff_attendance','label'=>'Attendance & Shift Coverage','href'=>'staff_reports.php?view=attendance'],
-          ['id'=>'staff_quality_metrics','label'=>'Quality Metrics','href'=>'staff_reports.php?view=quality'],
-      ]],
+       ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
+           ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
+           ['id'=>'staff_performance_reports','label'=>'Individual Performance','href'=>'staff_reports.php?view=performance'],
+           ['id'=>'staff_attendance','label'=>'Attendance & Shift Coverage','href'=>'staff_reports.php?view=attendance'],
+           ['id'=>'staff_quality_metrics','label'=>'Quality Metrics','href'=>'staff_reports.php?view=quality'],
+       ]],
 
-      ['id'=>'staff_management','label'=>'Staff Management','ico'=>'fas fa-users','href'=>'#','sub_items'=>[
-          ['id'=>'staff_active','label'=>'Active Staff','href'=>'staff_management.php?view=active'],
-          ['id'=>'staff_schedule','label'=>'Shift Schedule','href'=>'staff_management.php?view=schedule'],
-          ['id'=>'staff_tasks','label'=>'Task Assignments','href'=>'staff_management.php?view=tasks'],
-          ['id'=>'staff_productivity','label'=>'Productivity Metrics','href'=>'staff_management.php?view=productivity'],
-          ['id'=>'staff_qc','label'=>'Quality Control Scores','href'=>'staff_management.php?view=qc'],
-          ['id'=>'staff_compliance','label'=>'Compliance Tracking','href'=>'staff_management.php?view=compliance'],
-      ]],
+       ['id'=>'staff_management','label'=>'Staff Management','ico'=>'fas fa-users','href'=>'#','sub_items'=>[
+           ['id'=>'staff_active','label'=>'Active Staff','href'=>'staff_management.php?view=active'],
+           ['id'=>'staff_schedule','label'=>'Shift Schedule','href'=>'staff_management.php?view=schedule'],
+           ['id'=>'staff_tasks','label'=>'Task Assignments','href'=>'staff_management.php?view=tasks'],
+           ['id'=>'staff_productivity','label'=>'Productivity Metrics','href'=>'staff_management.php?view=productivity'],
+           ['id'=>'staff_qc','label'=>'Quality Control Scores','href'=>'staff_management.php?view=qc'],
+           ['id'=>'staff_compliance','label'=>'Compliance Tracking','href'=>'staff_management.php?view=compliance'],
+       ]],
 
-      ['id'=>'audit_logs','label'=>'Audit & Logs','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items'=>[
-          ['id'=>'view_logs','label'=>'System Logs','href'=>'audit_logs.php'],
-          ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
-          ['id'=>'safety_checks_log','label'=>'Safety Checks Log','href'=>'compliance.php?view=safety'],
-          ['id'=>'procedure_adherence','label'=>'Procedure Adherence Reports','href'=>'compliance.php?view=procedures'],
-      ]],
-
-      ['id'=>'approvals','label'=>'Approvals','ico'=>'fas fa-check-circle','href'=>'#','sub_items'=>[
-          ['id'=>'approve_reports','label'=>'Pending Actions','href'=>'approvals.php'],
-          ['id'=>'quick_approvals','label'=>'Quick Approvals Queue','href'=>'approvals.php?view=queue'],
-          ['id'=>'approved_recent','label'=>'Recently Approved','href'=>'approval_history.php?view=recent'],
-          ['id'=>'approved_history','label'=>'Approval History','href'=>'approval_history.php'],
-      ]]
-    ];
+       ['id'=>'audit_logs','label'=>'Audit & Logs','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items'=>[
+           ['id'=>'view_logs','label'=>'System Logs','href'=>'audit_logs.php'],
+           ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
+           ['id'=>'safety_checks_log','label'=>'Safety Checks Log','href'=>'compliance.php?view=safety'],
+           ['id'=>'procedure_adherence','label'=>'Procedure Adherence Reports','href'=>'compliance.php?view=procedures'],
+        ]]
+      ];
   } else { // staff
     $items = [
       ['id'=>'staff_home','label'=>'Home','ico'=>'fas fa-home','href'=>'staff_home.php'],
@@ -707,54 +677,34 @@ if (!isset($pdo) || !$pdo) {
       ['id'=>'transactions','label'=>'Transactions','ico'=>'fas fa-shopping-cart','href'=>'#','sub_items'=>[
           ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php'],
           ['id'=>'pos_credit','label'=>'Credit Sales','href'=>'credit_transactions.php'],
-          ['id'=>'my_shift_sales','label'=>'Current Shift Sales','href'=>'transactions.php?view=my_shift'],
           ['id'=>'txn_history','label'=>'Transaction History','href'=>'transactions.php?view=my_history'],
           ['id'=>'receipt_reprint','label'=>'Receipt Reprint','href'=>'transactions.php?view=reprint'],
       ]],
 
       ['id'=>'job_orders','label'=>'Job Orders','ico'=>'fas fa-wrench','href'=>'#','sub_items'=>[
           ['id'=>'job_create','label'=>'Create Job Order','href'=>'joborder.php?tab=create'],
-          ['id'=>'job_active','label'=>'My Active Job Orders','href'=>'joborder.php?tab=ongoing'],
-          ['id'=>'job_completed','label'=>'My Completed Jobs','href'=>'joborder.php?tab=completed'],
-          ['id'=>'parts_usage','label'=>'Parts Usage Log','href'=>'joborder.php?tab=parts'],
       ]],
 
       ['id'=>'fuel','label'=>'Fuel','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
           ['id'=>'fuel_encode','label'=>'Encode Fuel Reading','href'=>'fuel_staff.php'],
-          ['id'=>'fuel_my_history','label'=>'My Reading History','href'=>'fuel_staff.php?tab=myentries'],
-          ['id'=>'fuel_types','label'=>'Available Fuels','href'=>'fuel_types.php'],
       ]],
 
       ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'#','sub_items'=>[
           ['id'=>'merch_receive','label'=>'Encode Received Items','href'=>'receiving_staff.php'],
-          ['id'=>'receive_confirm','label'=>'Receive & Confirm Stock','href'=>'stock_receiving_confirmation.php'],
+          ['id'=>'receive_confirm','label'=>'Receive & Confirm Stock','href'=>'manager_receiving_review.php'],
           ['id'=>'merch_history','label'=>'My Delivery History','href'=>'receiving_staff.php?view=my_history'],
-          ['id'=>'merch_stock','label'=>'Stock View','href'=>'inventory.php?view=stock'],
-          ['id'=>'parts_available','label'=>'Available Parts','href'=>'inventory.php?view=parts'],
-          ['id'=>'low_stock','label'=>'Low Stock Alerts','href'=>'inventory.php?view=low_stock'],
-          ['id'=>'stock_requests','label'=>'Stock Requests','href'=>'stock_requests.php'],
       ]],
 
       ['id'=>'customers','label'=>'Customers','ico'=>'fas fa-users','href'=>'#','sub_items'=>[
           ['id'=>'customer_create','label'=>'Create Customer','href'=>'customers.php?view=create'],
-          ['id'=>'my_customers','label'=>'My Customers','href'=>'customers.php?view=my_customers'],
           ['id'=>'record_payment','label'=>'Record Payment','href'=>'customer_credit.php?view=record_payment'],
           ['id'=>'credit_history','label'=>'Credit History','href'=>'customer_credit.php?view=my_history'],
-      ]],
-
-      ['id'=>'loyalty','label'=>'Loyalty','ico'=>'fas fa-gift','href'=>'#','sub_items'=>[
-          ['id'=>'encode_points','label'=>'Encode Loyalty Points','href'=>'loyalty.php?view=encode'],
-          ['id'=>'points_history','label'=>'Points History','href'=>'loyalty.php?view=history'],
-          ['id'=>'rewards','label'=>'Available Rewards','href'=>'loyalty.php?view=rewards'],
-          ['id'=>'redemption_history','label'=>'Redemption History','href'=>'loyalty.php?view=redemptions'],
       ]],
 
       ['id'=>'my_reports','label'=>'My Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
           ['id'=>'shift_encoding_summary','label'=>'Shift Encoding Summary','href'=>'staff_reports.php?view=shift_summary'],
           ['id'=>'job_order_summary','label'=>'Job Order Summary','href'=>'staff_reports.php?view=job_summary'],
           ['id'=>'fuel_reading_summary','label'=>'Fuel Reading Summary','href'=>'staff_reports.php?view=fuel_summary'],
-          ['id'=>'my_metrics','label'=>'My Metrics','href'=>'staff_reports.php?view=my_metrics'],
-          ['id'=>'feedback_ratings','label'=>'Feedback & Ratings','href'=>'staff_reports.php?view=feedback'],
       ]],
 
       ['id'=>'my_shift','label'=>'My Shift','ico'=>'fas fa-clock','href'=>'#','sub_items'=>[
