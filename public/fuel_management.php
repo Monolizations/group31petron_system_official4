@@ -423,6 +423,78 @@ require_once __DIR__ . '/../partials/header.php';
     </div>
   </div>
 
+  <!-- WORKFLOW NAVIGATION SECTION -->
+  <div class="card" style="padding: 15px; margin-top: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px;">
+    <h3 style="margin: 0 0 15px 0; font-size: 18px;">⚙️ Fuel Workflow Management</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px;">
+      
+      <!-- Manager: Verify Deliveries -->
+      <?php if (in_array($me['role'], ['manager', 'admin', 'superadmin'])): ?>
+        <a href="fuel_delivery_verify.php<?php echo $isSuper ? '?station=' . htmlspecialchars($station_id) : ''; ?>" 
+           style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #28a745; transition: all 0.3s;">
+          <strong style="font-size: 16px;">🚛 Verify Deliveries</strong><br>
+          <small>Review and verify recorded fuel deliveries</small>
+          <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
+            <?php 
+              try {
+                $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Encoded'");
+                $stmt->execute([$station_id]);
+                $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+                echo "<span style='background: rgba(255,255,255,0.3); padding: 2px 6px; border-radius: 3px;'>" . intval($count) . " pending</span>";
+              } catch (Exception $e) {}
+            ?>
+          </div>
+        </a>
+      <?php endif; ?>
+      
+      <!-- Admin: Finalize Deliveries -->
+      <?php if (in_array($me['role'], ['admin', 'superadmin'])): ?>
+        <a href="fuel_delivery_finalize.php<?php echo $isSuper ? '?station=' . htmlspecialchars($station_id) : ''; ?>" 
+           style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #007bff; transition: all 0.3s;">
+          <strong style="font-size: 16px;">🔒 Finalize Deliveries</strong><br>
+          <small>Complete verified deliveries & update stock</small>
+          <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
+            <?php 
+              try {
+                $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Verified'");
+                $stmt->execute([$station_id]);
+                $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+                echo "<span style='background: rgba(255,255,255,0.3); padding: 2px 6px; border-radius: 3px;'>" . intval($count) . " awaiting</span>";
+              } catch (Exception $e) {}
+            ?>
+          </div>
+        </a>
+      <?php endif; ?>
+      
+      <!-- Manager: Shift-End Processing -->
+      <?php if (in_array($me['role'], ['manager', 'admin', 'superadmin'])): ?>
+        <a href="fuel_shift_processing.php<?php echo $isSuper ? '?station=' . htmlspecialchars($station_id) : ''; ?>" 
+           style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #ffc107; transition: all 0.3s;">
+          <strong style="font-size: 16px;">⏱️ Shift-End Processing</strong><br>
+          <small>Approve pump readings & deduct sales</small>
+          <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
+            <?php 
+              try {
+                $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending'");
+                $stmt->execute([$station_id]);
+                $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+                echo "<span style='background: rgba(255,255,255,0.3); padding: 2px 6px; border-radius: 3px;'>" . intval($count) . " readings</span>";
+              } catch (Exception $e) {}
+            ?>
+          </div>
+        </a>
+      <?php endif; ?>
+      
+      <!-- View Audit Trail -->
+      <a href="activity_logs.php?page=fuel_management<?php echo $isSuper ? '&station=' . htmlspecialchars($station_id) : ''; ?>" 
+         style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #dc3545; transition: all 0.3s;">
+        <strong style="font-size: 16px;">📋 Audit Trail</strong><br>
+        <small>View complete transaction history</small>
+      </a>
+      
+    </div>
+  </div>
+
   <?php if($msg): ?>
     <div class="card" style="padding:10px; margin-top:10px; background:#e6f4ea; color:green;">
       <?php echo $msg; ?>
