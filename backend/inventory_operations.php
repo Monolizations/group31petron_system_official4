@@ -130,56 +130,90 @@ class InventoryOperations {
                 throw new Exception('Receipt already processed');
             }
             
-            // CONFIRM: Update inventory
-            $stmt = $this->pdo->prepare("
-                SELECT ri.product_id, ri.quantity 
-                FROM receipt_items ri
-                WHERE ri.receipt_id = ?
-            ");
-            $stmt->execute([$receipt_id]);
-            $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            
-            foreach ($items as $item) {
-                // Update or create inventory record
-                $stmt = $this->pdo->prepare("
-                    SELECT id FROM station_inventory
-                    WHERE station_id = ? AND product_id = ?
-                ");
-                $stmt->execute([$this->station_id, $item['product_id']]);
-                $inv = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if ($inv) {
-                    // Increment
-                    $stmt = $this->pdo->prepare("
-                        UPDATE station_inventory
-                        SET stock_level = stock_level + ?
-                        WHERE id = ?
-                    ");
-                    $stmt->execute([$item['quantity'], $inv['id']]);
-                } else {
-                    // Create new
-                    $stmt = $this->pdo->prepare("
-                        INSERT INTO station_inventory
-                        (station_id, product_id, stock_level, last_counted_at)
-                        VALUES (?, ?, ?, NOW())
-                    ");
-                    $stmt->execute([$this->station_id, $item['product_id'], $item['quantity']]);
-                }
-                
-                // Log transaction
-                $stmt = $this->pdo->prepare("
-                    INSERT INTO inventory_transactions
-                    (station_id, product_id, transaction_type, quantity, notes, created_by, created_at)
-                    VALUES (?, ?, 'addition', ?, ?, ?, NOW())
-                ");
-                $stmt->execute([
-                    $this->station_id,
-                    $item['product_id'],
-                    $item['quantity'],
-                    'Supplier receipt confirmed',
-                    $this->user['id']
-                ]);
-            }
+            // CONFIRM: Update inventory (fuel vs merchandise)
+             $stmt = $this->pdo->prepare("
+                 SELECT ri.product_id, ri.quantity, p.type_id
+                 FROM receipt_items ri
+                 JOIN products p ON ri.product_id = p.id
+                 WHERE ri.receipt_id = ?
+             ");
+             $stmt->execute([$receipt_id]);
+             $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+             
+             foreach ($items as $item) {
+                 $product_id = $item['product_id'];
+                 $quantity = $item['quantity'];
+                 $type_id = $item['type_id'];
+                 
+                 // Determine correct inventory table based on product type
+                 if ($type_id == 1) {
+                     // FUEL: Use fuel_inventory table
+                     $stmt = $this->pdo->prepare("
+                         SELECT id FROM fuel_inventory
+                         WHERE station_id = ? AND product_id = ?
+                     ");
+                     $stmt->execute([$this->station_id, $product_id]);
+                     $inv = $stmt->fetch(PDO::FETCH_ASSOC);
+                     
+                     if ($inv) {
+                         // Increment fuel stock (in liters)
+                         $stmt = $this->pdo->prepare("
+                             UPDATE fuel_inventory
+                             SET stock_level = stock_level + ?
+                             WHERE id = ?
+                         ");
+                         $stmt->execute([$quantity, $inv['id']]);
+                     } else {
+                         // Create new fuel inventory record
+                         $stmt = $this->pdo->prepare("
+                             INSERT INTO fuel_inventory
+                             (station_id, product_id, stock_level, unit, status)
+                             VALUES (?, ?, ?, 'liters', 'active')
+                         ");
+                         $stmt->execute([$this->station_id, $product_id, $quantity]);
+                     }
+                 } else {
+                     // MERCHANDISE: Use station_inventory table
+                     $stmt = $this->pdo->prepare("
+                         SELECT id FROM station_inventory
+                         WHERE station_id = ? AND product_id = ?
+                     ");
+                     $stmt->execute([$this->station_id, $product_id]);
+                     $inv = $stmt->fetch(PDO::FETCH_ASSOC);
+                     
+                     if ($inv) {
+                         // Increment merchandise stock (in pieces)
+                         $stmt = $this->pdo->prepare("
+                             UPDATE station_inventory
+                             SET stock_level = stock_level + ?
+                             WHERE id = ?
+                         ");
+                         $stmt->execute([$quantity, $inv['id']]);
+                     } else {
+                         // Create new merchandise inventory record
+                         $stmt = $this->pdo->prepare("
+                             INSERT INTO station_inventory
+                             (station_id, product_id, stock_level, unit, status)
+                             VALUES (?, ?, ?, 'pieces', 'active')
+                         ");
+                         $stmt->execute([$this->station_id, $product_id, $quantity]);
+                     }
+                 }
+                 
+                 // Log transaction
+                 $stmt = $this->pdo->prepare("
+                     INSERT INTO inventory_transactions
+                     (station_id, product_id, transaction_type, quantity, notes, created_by, created_at)
+                     VALUES (?, ?, 'addition', ?, ?, ?, NOW())
+                 ");
+                 $stmt->execute([
+                     $this->station_id,
+                     $product_id,
+                     $quantity,
+                     'Supplier receipt confirmed',
+                     $this->user['id']
+                 ]);
+             }
             
             // UPDATE: Receipt status
             $stmt = $this->pdo->prepare("

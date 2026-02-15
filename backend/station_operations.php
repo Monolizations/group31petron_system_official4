@@ -32,13 +32,13 @@ try {
             }
             
             $stmt = $pdo->prepare("
-                SELECT s.*, 
-                       (SELECT u.name FROM users u WHERE u.station_id = s.id AND u.role = 'admin' LIMIT 1) as admin_name,
-                       (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id AND u.status = 'active') as active_users,
-                       (SELECT SUM(stock_level) FROM station_inventory i WHERE i.station_id = s.id AND i.type = 'fuel') as fuel_level
-                FROM stations s 
-                WHERE s.id = ?
-            ");
+                 SELECT s.*, 
+                        (SELECT u.name FROM users u WHERE u.station_id = s.id AND u.role = 'admin' LIMIT 1) as admin_name,
+                        (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id AND u.status = 'active') as active_users,
+                        (SELECT SUM(stock_level) FROM fuel_inventory fi WHERE fi.station_id = s.id) as fuel_level
+                 FROM stations s 
+                 WHERE s.id = ?
+             ");
             $stmt->execute([$station_id]);
             $station = $stmt->fetch(PDO::FETCH_ASSOC);
             
@@ -147,13 +147,13 @@ try {
             $search = $_GET['search'] ?? '';
             
             $sql = "
-                SELECT s.*, 
-                       (SELECT u.name FROM users u WHERE u.station_id = s.id AND u.role = 'admin' LIMIT 1) as admin_name,
-                       (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id AND u.status = 'active') as active_users,
-                       (SELECT SUM(stock_level) FROM station_inventory i WHERE i.station_id = s.id AND i.type = 'fuel') as fuel_level
-                FROM stations s 
-                WHERE 1=1
-            ";
+                 SELECT s.*, 
+                        (SELECT u.name FROM users u WHERE u.station_id = s.id AND u.role = 'admin' LIMIT 1) as admin_name,
+                        (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id AND u.status = 'active') as active_users,
+                        (SELECT SUM(stock_level) FROM fuel_inventory fi WHERE fi.station_id = s.id) as fuel_level
+                 FROM stations s 
+                 WHERE 1=1
+             ";
             $params = [];
             
             if ($status_filter) {
@@ -206,17 +206,30 @@ try {
             
             $station_id = $pdo->lastInsertId();
 
-            // Seed default fuel inventory rows for the new station so Inventory Management isn't empty.
-            // (Merchandise items are added by admin as needed.)
-            try {
-                $fuelTypes = ['Diesel Max','XCS Plus','XCS Advance','Turbo Diesel','Kerosene'];
-                $ins = $pdo->prepare("INSERT INTO station_inventory (station_id, product_name, stock_level, type) VALUES (?, ?, 0, 'fuel')");
-                foreach ($fuelTypes as $ft) {
-                    $ins->execute([$station_id, $ft]);
-                }
-            } catch (Exception $e) {
-                // Don't block station creation if seeding fails (schema may differ on older DBs).
-            }
+             // Seed default fuel inventory rows for the new station
+             // Note: Fuel products are now in the fuel_inventory table (separate domain)
+             // Fuel products should already exist in the products table with type_id=1
+             // This seeding is optional as fuel inventory is managed by fuel operations
+             try {
+                 // Get all fuel products (type_id = 1)
+                 $fuelStmt = $pdo->prepare("SELECT id FROM products WHERE type_id = 1");
+                 $fuelStmt->execute();
+                 $fuelProducts = $fuelStmt->fetchAll(PDO::FETCH_ASSOC);
+                 
+                 // Create inventory records for each fuel product at this station
+                 if (!empty($fuelProducts)) {
+                     $ins = $pdo->prepare("
+                         INSERT INTO fuel_inventory (station_id, product_id, stock_level, unit, status) 
+                         VALUES (?, ?, 0, 'liters', 'active')
+                         ON DUPLICATE KEY UPDATE status = 'active'
+                     ");
+                     foreach ($fuelProducts as $fuel) {
+                         $ins->execute([$station_id, $fuel['id']]);
+                     }
+                 }
+             } catch (Exception $e) {
+                 // Don't block station creation if seeding fails
+             }
             log_user_action('Station Creation', "Created station '$name' (ID: $station_id)");
             
             $response['success'] = true;

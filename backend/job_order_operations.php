@@ -351,63 +351,97 @@ class JobOrderOperations {
             }
             
             // INVENTORY DEDUCTION: Check stock before processing
-            foreach ($parts_used as $part) {
-                // Verify stock availability
-                $stmt = $this->pdo->prepare("
-                    SELECT stock_level FROM station_inventory
-                    WHERE station_id = ? AND product_id = ?
-                ");
-                $stmt->execute([$this->station_id, $part['product_id']]);
-                $inventory = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if (!$inventory) {
-                    throw new Exception('Product not in inventory: ID ' . $part['product_id']);
-                }
-                
-                if ($inventory['stock_level'] < $part['quantity']) {
-                    throw new Exception(
-                        sprintf('Insufficient stock. Need %d but only %d available.',
-                        $part['quantity'], $inventory['stock_level'])
-                    );
-                }
-            }
+             foreach ($parts_used as $part) {
+                 // Get product type to use correct inventory table
+                 $typeStmt = $this->pdo->prepare("SELECT type_id FROM products WHERE id = ?");
+                 $typeStmt->execute([$part['product_id']]);
+                 $product = $typeStmt->fetch(PDO::FETCH_ASSOC);
+                 
+                 if (!$product) {
+                     throw new Exception('Product not found: ID ' . $part['product_id']);
+                 }
+                 
+                 // Note: Job orders typically use merchandise parts, not fuel
+                 // But we check based on product type to be safe
+                 if ($product['type_id'] == 1) {
+                     // Fuel - check fuel_inventory
+                     $stmt = $this->pdo->prepare("
+                         SELECT stock_level FROM fuel_inventory
+                         WHERE station_id = ? AND product_id = ?
+                     ");
+                 } else {
+                     // Merchandise - check station_inventory
+                     $stmt = $this->pdo->prepare("
+                         SELECT stock_level FROM station_inventory
+                         WHERE station_id = ? AND product_id = ?
+                     ");
+                 }
+                 $stmt->execute([$this->station_id, $part['product_id']]);
+                 $inventory = $stmt->fetch(PDO::FETCH_ASSOC);
+                 
+                 if (!$inventory) {
+                     throw new Exception('Product not in inventory: ID ' . $part['product_id']);
+                 }
+                 
+                 if ($inventory['stock_level'] < $part['quantity']) {
+                     throw new Exception(
+                         sprintf('Insufficient stock. Need %d but only %d available.',
+                         $part['quantity'], $inventory['stock_level'])
+                     );
+                 }
+             }
             
             // DEDUCTION: Process all parts (now safe since stock verified)
-            $total_parts_cost = 0;
-            foreach ($parts_used as $part) {
-                // Auto-deduct from inventory
-                $stmt = $this->pdo->prepare("
-                    UPDATE station_inventory
-                    SET stock_level = stock_level - ?
-                    WHERE station_id = ? AND product_id = ?
-                ");
-                $stmt->execute([$part['quantity'], $this->station_id, $part['product_id']]);
-                
-                // Record parts used
-                $stmt = $this->pdo->prepare("
-                    INSERT INTO job_order_parts
-                    (job_order_id, product_id, quantity_used, unit_cost, total_cost, created_at)
-                    VALUES (?, ?, ?, ?, ?, NOW())
-                ");
-                
-                $part_total = $part['quantity'] * $part['unit_cost'];
-                $stmt->execute([
-                    $job_id,
-                    $part['product_id'],
-                    $part['quantity'],
-                    $part['unit_cost'],
-                    $part_total
-                ]);
-                
-                $total_parts_cost += $part_total;
-                
-                log_activity(
-                    $this->pdo,
-                    $this->user['id'],
-                    'Inventory Deduction',
-                    sprintf('Job %s: %d units deducted for product ID %d', $job['job_order_number'], $part['quantity'], $part['product_id'])
-                );
-            }
+             $total_parts_cost = 0;
+             foreach ($parts_used as $part) {
+                 // Get product type to use correct inventory table
+                 $typeStmt = $this->pdo->prepare("SELECT type_id FROM products WHERE id = ?");
+                 $typeStmt->execute([$part['product_id']]);
+                 $product = $typeStmt->fetch(PDO::FETCH_ASSOC);
+                 
+                 // Auto-deduct from appropriate inventory table based on product type
+                 if ($product['type_id'] == 1) {
+                     // Fuel - deduct from fuel_inventory
+                     $stmt = $this->pdo->prepare("
+                         UPDATE fuel_inventory
+                         SET stock_level = stock_level - ?
+                         WHERE station_id = ? AND product_id = ?
+                     ");
+                 } else {
+                     // Merchandise - deduct from station_inventory
+                     $stmt = $this->pdo->prepare("
+                         UPDATE station_inventory
+                         SET stock_level = stock_level - ?
+                         WHERE station_id = ? AND product_id = ?
+                     ");
+                 }
+                 $stmt->execute([$part['quantity'], $this->station_id, $part['product_id']]);
+                 
+                 // Record parts used
+                 $stmt = $this->pdo->prepare("
+                     INSERT INTO job_order_parts
+                     (job_order_id, product_id, quantity_used, unit_cost, total_cost, created_at)
+                     VALUES (?, ?, ?, ?, ?, NOW())
+                 ");
+                 
+                 $part_total = $part['quantity'] * $part['unit_cost'];
+                 $stmt->execute([
+                     $job_id,
+                     $part['product_id'],
+                     $part['quantity'],
+                     $part['unit_cost'],
+                     $part_total
+                 ]);
+                 
+                 $total_parts_cost += $part_total;
+                 
+                 log_activity(
+                     $this->pdo,
+                     $this->user['id'],
+                     'Inventory Deduction',
+                     sprintf('Job %s: %d units deducted for product ID %d', $job['job_order_number'], $part['quantity'], $part['product_id'])
+                 );
+             }
             
             // BILLING: Calculate and lock total (staff cannot override)
             $labor_cost = $this->calculateLaborCost($job, $actual_labor_hours);
@@ -817,18 +851,20 @@ class JobOrderOperations {
             return null;
         }
 
-        // Get parts used with hybrid product information
-        $stmt = $this->pdo->prepare("
-            SELECT jop.*,
-                   p.name as product_name,
-                   si.stock_level as current_stock
-            FROM job_order_parts jop
-            LEFT JOIN products p ON p.id = jop.product_id
-            LEFT JOIN station_inventory si ON si.station_id = ? AND si.product_id = jop.product_id
-            WHERE jop.job_order_id = ?
-            ORDER BY jop.id ASC
-        ");
-        $stmt->execute([$this->station_id, $job_id]);
+         // Get parts used with hybrid product information
+         $stmt = $this->pdo->prepare("
+             SELECT jop.*,
+                    p.name as product_name,
+                    p.type_id,
+                    COALESCE(si.stock_level, fi.stock_level, 0) as current_stock
+             FROM job_order_parts jop
+             LEFT JOIN products p ON p.id = jop.product_id
+             LEFT JOIN station_inventory si ON si.station_id = ? AND si.product_id = jop.product_id AND p.type_id = 2
+             LEFT JOIN fuel_inventory fi ON fi.station_id = ? AND fi.product_id = jop.product_id AND p.type_id = 1
+             WHERE jop.job_order_id = ?
+             ORDER BY jop.id ASC
+         ");
+         $stmt->execute([$this->station_id, $this->station_id, $job_id]);
         $parts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         // Add parts to job array

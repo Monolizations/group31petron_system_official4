@@ -27,28 +27,28 @@ function getProductsFromDB($type = null) {
     
     $products = ['fuel' => [], 'merchandise' => [], 'services' => []];
     
-    // Get fuel products
-    $fuelStmt = $pdo->query("
-        SELECT p.id, p.sku, p.name, p.description, p.price,
-               COALESCE(si.stock_level, 0) as level_l,
-               COALESCE(si.capacity, 0) as capacity_l
-        FROM products p
-        LEFT JOIN station_inventory si ON p.id = si.product_id
-        WHERE p.type_id = 1
-        ORDER BY p.name
-    ");
-    
-    while ($fuel = $fuelStmt->fetch(PDO::FETCH_ASSOC)) {
-        $products['fuel'][] = [
-            'id' => $fuel['sku'],
-            'type' => 'fuel',
-            'name' => $fuel['name'],
-            'variant' => $fuel['sku'],
-            'price' => (float)$fuel['price'],
-            'capacity_l' => (float)$fuel['capacity_l'],
-            'level_l' => (float)$fuel['level_l']
-        ];
-    }
+    // Get fuel products (from fuel_inventory table - separate domain)
+     $fuelStmt = $pdo->query("
+         SELECT p.id, p.sku, p.name, p.description, p.price,
+                COALESCE(fi.stock_level, 0) as level_l,
+                COALESCE(fi.capacity, 0) as capacity_l
+         FROM products p
+         LEFT JOIN fuel_inventory fi ON p.id = fi.product_id
+         WHERE p.type_id = 1
+         ORDER BY p.name
+     ");
+     
+     while ($fuel = $fuelStmt->fetch(PDO::FETCH_ASSOC)) {
+         $products['fuel'][] = [
+             'id' => $fuel['sku'],
+             'type' => 'fuel',
+             'name' => $fuel['name'],
+             'variant' => $fuel['sku'],
+             'price' => (float)$fuel['price'],
+             'capacity_l' => (float)$fuel['capacity_l'],
+             'level_l' => (float)$fuel['level_l']
+         ];
+     }
     
     // Get merchandise products
     $merchStmt = $pdo->query("

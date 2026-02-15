@@ -129,13 +129,33 @@ class SecurityValidator {
     
     /**
      * Check Inventory Sufficiency
-     * Before deducting, verify stock is available
+     * Before deducting, verify stock is available (handles fuel and merchandise)
      */
     public function checkInventorySufficiency($product_id, $quantity) {
-        $stmt = $this->pdo->prepare("
-            SELECT stock_level FROM station_inventory
-            WHERE station_id = ? AND product_id = ?
-        ");
+        // Get product type to determine correct inventory table
+        $typeStmt = $this->pdo->prepare("SELECT type_id FROM products WHERE id = ?");
+        $typeStmt->execute([$product_id]);
+        $product = $typeStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$product) {
+            throw new Exception('Product not found');
+        }
+        
+        // Check appropriate inventory table based on product type
+        if ($product['type_id'] == 1) {
+            // Fuel - check fuel_inventory
+            $stmt = $this->pdo->prepare("
+                SELECT stock_level FROM fuel_inventory
+                WHERE station_id = ? AND product_id = ?
+            ");
+        } else {
+            // Merchandise - check station_inventory
+            $stmt = $this->pdo->prepare("
+                SELECT stock_level FROM station_inventory
+                WHERE station_id = ? AND product_id = ?
+            ");
+        }
+        
         $stmt->execute([$this->station_id, $product_id]);
         $inventory = $stmt->fetch(PDO::FETCH_ASSOC);
         
@@ -217,7 +237,103 @@ class SecurityValidator {
     }
     
     /**
-     * Create Audit Trail Entry
+     * Admin Unlock Record
+     * Admin (Owner) can unlock finalized records with password + reason
+     * Creates full audit trail of unlock operation
+     */
+    public function adminUnlockRecord($table, $record_id, $password, $reason) {
+        $user_role = role_key($this->user['role'] ?? 'staff');
+        
+        // Only Admin can unlock records
+        if ($user_role !== 'admin' && $user_role !== 'superadmin') {
+            throw new Exception('Only Admin can unlock finalized records');
+        }
+        
+        // Verify admin password
+        $this->verifyPassword($password, $this->user['id']);
+        
+        // Require reason
+        if (empty(trim($reason))) {
+            throw new Exception('Reason is required to unlock a record');
+        }
+        
+        if (strlen(trim($reason)) < 10) {
+            throw new Exception('Reason must be at least 10 characters long');
+        }
+        
+        // Query resource status
+        $stmt = $this->pdo->prepare("
+            SELECT status, is_locked, finalized_by, finalized_at
+            FROM {$table}
+            WHERE id = ?
+        ");
+        $stmt->execute([$record_id]);
+        $resource = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$resource) {
+            throw new Exception('Record not found');
+        }
+        
+        // Check if record is locked
+        if (!$resource['is_locked']) {
+            throw new Exception('This record is not locked');
+        }
+        
+        try {
+            $this->pdo->beginTransaction();
+            
+            // Unlock the record
+            $update_stmt = $this->pdo->prepare("
+                UPDATE {$table}
+                SET is_locked = 0,
+                    override_reason = ?,
+                    override_by = ?,
+                    override_at = NOW()
+                WHERE id = ?
+            ");
+            $update_stmt->execute([$reason, $this->user['id'], $record_id]);
+            
+            // Log to admin_unlocks table
+            $unlock_stmt = $this->pdo->prepare("
+                INSERT INTO admin_unlocks
+                (table_name, record_id, unlocked_by, unlock_reason, previous_status, password_verified, ip_address, unlocked_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, NOW())
+            ");
+            $unlock_stmt->execute([
+                $table,
+                $record_id,
+                $this->user['id'],
+                $reason,
+                $resource['status'],
+                $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'
+            ]);
+            
+            // Log to activity_logs
+            log_activity(
+                $this->pdo,
+                $this->user['id'],
+                'Admin Unlock',
+                sprintf('UNLOCKED %s #ID: %d | Reason: %s', $table, $record_id, substr($reason, 0, 100))
+            );
+            
+            $this->pdo->commit();
+            
+            return [
+                'success' => true,
+                'message' => 'Record unlocked successfully',
+                'table' => $table,
+                'record_id' => $record_id,
+                'unlocked_at' => date('Y-m-d H:i:s')
+            ];
+            
+        } catch (Exception $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+    }
+    
+    /**
+     * Audit Trail Entry
      * Log all critical operations
      */
     public function auditLog($action, $resource_type, $resource_id, $details = null) {
