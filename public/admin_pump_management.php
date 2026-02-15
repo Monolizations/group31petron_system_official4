@@ -19,21 +19,25 @@ if (!$isAdmin) {
 
 // Get all stations (superadmin sees all, admin sees only their station)
 $selected_station = $_GET['station'] ?? '';
+// Default to Kauswagan station (ID 1) for superadmin if no station selected
+if ($selected_station === '' && isset($isSuper) && $isSuper) {
+     $selected_station = 1;
+}
 $stations = [];
 $pumps = [];
 $fuel_types = [];
 
 try {
-    // Fetch stations
-    if ($isSuper) {
-        $stmt = $pdo->query("SELECT id, name FROM stations ORDER BY name");
-    } else {
-        $station_id = user_station_id();
-        $stmt = $pdo->prepare("SELECT id, name FROM stations WHERE id = ?");
-        $stmt->execute([$station_id]);
-        $selected_station = $station_id;
-    }
-    $stations = $stmt->fetchAll();
+     // Fetch stations
+     if ($isSuper) {
+         $stmt = $pdo->query("SELECT id, name FROM stations ORDER BY name");
+     } else {
+         $station_id = user_station_id();
+         $stmt = $pdo->prepare("SELECT id, name FROM stations WHERE id = ?");
+         $stmt->execute([$station_id]);
+         $selected_station = $station_id;
+     }
+     $stations = $stmt->fetchAll();
     
     // Fetch fuel types for dropdowns
     $stmt = $pdo->query("SELECT id, name FROM fuel_types ORDER BY name");
@@ -239,7 +243,6 @@ require_once __DIR__ . '/../partials/header.php';
             <div style="flex: 1;">
                 <label>Select Station:</label>
                 <select name="station" onchange="this.form.submit()">
-                    <option value="">-- Choose a Station --</option>
                     <?php foreach ($stations as $st): ?>
                         <option value="<?php echo $st['id']; ?>" <?php echo $selected_station == $st['id'] ? 'selected' : ''; ?>>
                             <?php echo htmlspecialchars($st['name']); ?>
