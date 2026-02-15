@@ -530,12 +530,13 @@ if (!isset($pdo) || !$pdo) {
       // Dashboard
       ['id'=>'manager_dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'manager_dashboard.php'],
 
-      // Station Management
-      ['id'=>'station_management','label'=>'Station Management','ico'=>'fas fa-building','href'=>'#','sub_items' => [
-          ['id'=>'view_stations','label'=>'View Stations','href'=>'view_stations.php'],
-          ['id'=>'station_profiles','label'=>'Station Profiles','href'=>'station_profiles.php'],
-          ['id'=>'station_status','label'=>'Station Status','href'=>'station_status.php']
-      ]],
+       // Station Management
+       ['id'=>'station_management','label'=>'Station Management','ico'=>'fas fa-building','href'=>'#','sub_items' => [
+           ['id'=>'view_stations','label'=>'View Stations','href'=>'view_stations.php'],
+           ['id'=>'station_profiles','label'=>'Station Profiles','href'=>'station_profiles.php'],
+           ['id'=>'station_status','label'=>'Station Status','href'=>'station_status.php'],
+           ['id'=>'pump_management','label'=>'Pump Management','href'=>'admin_pump_management.php']
+       ]],
 
       // User Management (HQ)
       ['id'=>'user_management','label'=>'User Management (HQ)','ico'=>'fas fa-users-cog','href'=>'#','sub_items' => [
