@@ -200,8 +200,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             // Get product details
             try {
-                $stmt = $pdo->prepare("SELECT p.name, pt.name as type_name, p.unit FROM products p INNER JOIN product_types pt ON p.type_id = pt.id WHERE p.id = ?");
-                $stmt->execute([$product_id]);
+                $stmt = $pdo->prepare("SELECT p.name, pt.name as type_name, si.unit FROM products p INNER JOIN product_types pt ON p.type_id = pt.id INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? WHERE p.id = ?");
+                $stmt->execute([$station_id, $product_id]);
                 $product = $stmt->fetch(PDO::FETCH_ASSOC);
                 
                 if (!$product) {
@@ -211,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $product_unit = $product['unit'] ?? '';
                     
                     // Check stock availability
-                    $stmt = $pdo->prepare("SELECT stock_level FROM inventory WHERE product_id = ? AND station_id = ?");
+                    $stmt = $pdo->prepare("SELECT stock_level FROM station_inventory WHERE product_id = ? AND station_id = ?");
                     $stmt->execute([$product_id, $station_id]);
                     $stock = $stmt->fetchColumn();
                     
@@ -252,7 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $stmtItem->execute([$sale_id, $product_id, $product_name, $quantity, $price, $subtotal]);
                                 
                                 // Deduct inventory stock immediately (as per requirement)
-                                $stmtStock = $pdo->prepare("UPDATE inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
+                                $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
                                 $stmtStock->execute([$quantity, $product_id, $station_id]);
                                 
                                 $pdo->commit();
