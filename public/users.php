@@ -26,13 +26,8 @@ if (!in_array($my_role, ['admin', 'superadmin', 'manager'])) {
 $msg = '';
 
 // Helper function to generate random password
-function generate_random_password($length = 12) {
-    $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
-    $password = '';
-    for ($i = 0; $i < $length; $i++) {
-        $password .= $chars[rand(0, strlen($chars) - 1)];
-    }
-    return $password;
+function generate_random_password($length = 8) {
+    return 'petron' . rand(100, 999);
 }
 
 // --- ACTION HANDLER ---
@@ -85,12 +80,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception("As a Manager, you can only create Staff users.");
                 }
             } elseif ($my_role === 'admin') {
-                // Admin can create Staff, Manager, and Admin (not Super Admin)
-                if (!in_array($role, ['staff', 'manager', 'admin'])) {
-                    throw new Exception("As an Admin, you can only create Staff, Manager, or Admin users.");
+                // Admin can create Staff and Manager (NOT Admin or Super Admin)
+                if (!in_array($role, ['staff', 'manager'])) {
+                    throw new Exception("As an Admin, you can only create Staff or Manager users.");
                 }
             } elseif ($my_role === 'superadmin') {
-                // Super Admin can create any role
+                // Super Admin can create any role (staff, manager, admin, superadmin)
                 if (!in_array($role, ['staff', 'manager', 'admin', 'superadmin'])) {
                     throw new Exception("Invalid role selected.");
                 }
@@ -137,32 +132,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("UPDATE users SET name = ?, role = ?, email = ? WHERE id = ?");
             $stmt->execute([$name, $role, $email, $id]);
             
-            // Update password if checkbox is checked
-            if ($changePassword) {
-                $new_password = trim($_POST['new_password'] ?? '');
-                
-                // If no password provided, generate one
-                if (empty($new_password)) {
-                    $new_password = generate_random_password();
-                }
-                
-                $hashed = password_hash($new_password, PASSWORD_DEFAULT);
-                $stmt = $pdo->prepare("UPDATE users SET password = ?, must_change_password = 1 WHERE id = ?");
-                $stmt->execute([$hashed, $id]);
-                
-                // Set password expiry
-                try {
-                    $expires = (new DateTime("+90 days"))->format('Y-m-d H:i:s');
-                    $pdo->prepare("UPDATE users SET password_expires_at = ? WHERE id = ?")
-                        ->execute([$expires, $id]);
-                } catch(Exception $e){}
-                
-                $msg = "✅ User details and password updated successfully. New password: $new_password";
-                log_activity($pdo, $me['id'], 'Edit User + Password', "Updated details and password for user #$id");
-            } else {
-                $msg = "✅ User details updated.";
-                log_activity($pdo, $me['id'], 'Edit User', "Updated details for user #$id");
-            }
+             // Update password if checkbox is checked
+             if ($changePassword) {
+                 $new_password = trim($_POST['new_password'] ?? '');
+                 
+                 // If no password provided, generate one
+                 if (empty($new_password)) {
+                     $new_password = generate_random_password();
+                 }
+                 
+                 $hashed = password_hash($new_password, PASSWORD_DEFAULT);
+                 $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
+                 $stmt->execute([$hashed, $id]);
+                 
+                 $msg = "✅ User details and password updated successfully. New password: $new_password";
+                 log_activity($pdo, $me['id'], 'Edit User + Password', "Updated details and password for user #$id");
+             } else {
+                 $msg = "✅ User details updated.";
+                 log_activity($pdo, $me['id'], 'Edit User', "Updated details for user #$id");
+             }
         }
         
         // 3. Reset Password
@@ -236,6 +224,12 @@ if ($my_role === 'superadmin') {
     
     error_log("Query returned " . count($users) . " users");
     error_log("Users array: " . var_export($users, true));
+    
+    // Fetch station name for admin/manager modal display
+    $station_stmt = $pdo->prepare("SELECT name FROM stations WHERE id = ?");
+    $station_stmt->execute([$my_station_id]);
+    $station_row = $station_stmt->fetch();
+    $station_name = $station_row['name'] ?? null;
 }
 error_log("=== FETCH USERS DEBUG END ===");
 
@@ -334,9 +328,7 @@ include __DIR__ . '/../partials/header.php';
             <h3 class="modal-title">Add New User</h3>
             <button class="modal-close" onclick="closeModal('addModal')">&times;</button>
         </div>
-        <form method="post">
-        <div class="modal-body">
-                <input type="hidden" name="action" value="add_user">
+         <form method="post" onsubmit="return validatePasswords();">
                 
                 <div class="form-group mb-3">
                     <label class="lbl">Full Name</label>
@@ -350,10 +342,19 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Role</label>
                     <select name="role" id="user_role_add" class="inp full" required>
                         <option value="">Select role</option>
-                        <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
-                        <option value="admin">Admin</option>
-                        <option value="superadmin">Super Admin</option>
+                        <?php 
+                        // Show only roles that current user can create
+                        if ($my_role === 'superadmin'): ?>
+                            <option value="staff">Staff</option>
+                            <option value="manager">Manager</option>
+                            <option value="admin">Admin</option>
+                            <option value="superadmin">Super Admin</option>
+                        <?php elseif ($my_role === 'admin'): ?>
+                            <option value="staff">Staff</option>
+                            <option value="manager">Manager</option>
+                        <?php elseif ($my_role === 'manager'): ?>
+                            <option value="staff">Staff</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -366,29 +367,38 @@ include __DIR__ . '/../partials/header.php';
                         <input type="email" name="email" class="inp full">
                     </div>
                 </div>
-                <?php if($my_role === 'superadmin'): ?>
-                <div class="form-group mb-3">
-                    <label class="lbl">Station</label>
-                    <select name="station_id" class="inp full" required>
-                        <?php foreach($stations as $s): ?>
-                            <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <?php endif; ?>
+                 <div class="form-group mb-3">
+                     <label class="lbl">Station</label>
+                     <?php if($my_role === 'admin'): ?>
+                         <input type="hidden" name="station_id" value="<?php echo $my_station_id; ?>">
+                         <input type="text" value="<?php echo htmlspecialchars($station_name ?? 'Station ' . $my_station_id); ?>" class="inp full" readonly style="background: #f0f0f0; cursor: not-allowed;">
+                     <?php elseif($my_role === 'superadmin'): ?>
+                         <select name="station_id" class="inp full" required>
+                             <option value="">Select a station</option>
+                             <?php foreach($stations as $s): ?>
+                                 <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
+                             <?php endforeach; ?>
+                         </select>
+                     <?php endif; ?>
+                 </div>
                 <div class="form-group mb-3">
                     <label class="lbl">Password</label>
-                    <input type="password" name="password" id="new_password" class="inp full" placeholder="Leave empty to auto-generate secure password" required>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <input type="text" name="password" id="new_password" class="inp full" placeholder="Leave empty to auto-generate (petronXXX)">
+                        <button type="button" class="btn small ghost" onclick="generateSimplePassword()" title="Generate petron password">
+                            <i class="fas fa-dice"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="form-group mb-3">
                     <label class="lbl">Confirm Password</label>
-                    <input type="password" name="confirm_password" id="confirm_password" class="inp full" placeholder="Re-enter password" required>
+                    <input type="password" name="confirm_password" id="confirm_password" class="inp full" placeholder="Re-enter password">
                     <small class="muted">Both passwords must match</small>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn ghost" onclick="closeModal('addModal')">Cancel</button>
-                <button type="submit" class="btn primary" onclick="if (!validatePasswords()) return false;">Create User</button>
+                 <button type="submit" class="btn primary">Create User</button>
             </div>
         </form>
     </div>
@@ -414,10 +424,19 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Role</label>
                     <select name="role" id="user_role_edit" class="inp full" required>
                         <option value="">-- Select Role --</option>
-                        <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
-                        <option value="admin">Admin</option>
-                        <option value="superadmin">Super Admin</option>
+                        <?php 
+                        // Show only roles that current user can assign
+                        if ($my_role === 'superadmin'): ?>
+                            <option value="staff">Staff</option>
+                            <option value="manager">Manager</option>
+                            <option value="admin">Admin</option>
+                            <option value="superadmin">Super Admin</option>
+                        <?php elseif ($my_role === 'admin'): ?>
+                            <option value="staff">Staff</option>
+                            <option value="manager">Manager</option>
+                        <?php elseif ($my_role === 'manager'): ?>
+                            <option value="staff">Staff</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="grid-2 mb-3" style="gap:10px;">
@@ -498,7 +517,6 @@ function validatePasswords() {
     const password = document.getElementById('new_password').value;
     const confirmPassword = document.getElementById('confirm_password').value;
     const role = document.getElementById('user_role_add').value;
-    const phone = document.querySelector('input[name="phone"]').value.trim();
     const email = document.querySelector('input[name="email"]').value.trim();
 
     // Validate username
@@ -523,10 +541,12 @@ function validatePasswords() {
         return false;
     }
 
-    // Validate password
-    if (!password) {
-        alert('⚠️ Password is required. Please enter a password or leave empty to auto-generate.');
-        return false;
+    // Validate password - allow empty to auto-generate
+    if (password === '' && confirmPassword === '') {
+        // Auto-generate password - this is OK
+        document.getElementById('new_password').value = 'petron' + Math.floor(Math.random() * 900 + 100);
+        document.getElementById('confirm_password').value = document.getElementById('new_password').value;
+        return true;
     }
 
     if (password !== confirmPassword) {
@@ -534,14 +554,8 @@ function validatePasswords() {
         return false;
     }
 
-    if (password.length > 0 && password.length < 8) {
-        alert('⚠️ Password must be at least 8 characters if entered manually.');
-        return false;
-    }
-
-    // Validate phone number format (optional, but if provided must be valid)
-    if (phone && !/^\+?[\d\s\-\(\)]{7,}$/.test(phone)) {
-        alert('⚠️ Phone number format is invalid. Please enter a valid phone number or leave empty.');
+    if (password.length > 0 && password.length < 6) {
+        alert('⚠️ Password must be at least 6 characters if entered manually.');
         return false;
     }
 
@@ -554,12 +568,15 @@ function validatePasswords() {
     return true;
 }
 
+function generateSimplePassword() {
+    const password = 'petron' + Math.floor(Math.random() * 900 + 100);
+    document.getElementById('new_password').value = password;
+    document.getElementById('confirm_password').value = password;
+    alert('Generated password: ' + password);
+}
+
 function openAddModal() {
-    if (!validatePasswords()) {
-        return false;
-    }
     document.getElementById('addModal').classList.add('show');
-    return true;
 }
 
 function openEditModal(user) {
@@ -618,11 +635,7 @@ function togglePasswordField() {
 }
 
 function generatePassword() {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
-    let password = '';
-    for (let i = 0; i < 12; i++) {
-        password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    const password = 'petron' + Math.floor(Math.random() * 900 + 100);
     document.getElementById('edit_password').value = password;
     alert('Generated password: ' + password);
 }
