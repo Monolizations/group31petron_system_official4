@@ -1,2 +1,3 @@
 # Ignore the all docs folder
 all docs/
+*.md
