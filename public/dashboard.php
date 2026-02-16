@@ -100,7 +100,7 @@ try {
 
 // Active Jobs (Pending + In Progress)
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress')" . $station_filter);
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress', 'Awaiting Parts')" . $station_filter);
     $stmt->execute($station_param);
     $metrics['active_jobs'] = $stmt->fetchColumn() ?: 0;
     
@@ -155,7 +155,7 @@ try {
 $metrics['jobs_completed'] = 0;
 $metrics['jobs_delayed'] = 0;
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(CASE WHEN status = 'Completed' AND DATE(updated_at) = CURDATE() THEN 1 END) as completed, COUNT(CASE WHEN status IN ('Pending', 'In Progress') AND due_date < CURDATE() THEN 1 END) as delayed FROM job_orders WHERE 1=1" . $station_filter);
+    $stmt = $pdo->prepare("SELECT COUNT(CASE WHEN status = 'Completed' AND DATE(updated_at) = CURDATE() THEN 1 END) as completed, COUNT(CASE WHEN status IN ('Pending', 'In Progress', 'Awaiting Parts') AND due_date < CURDATE() THEN 1 END) as delayed FROM job_orders WHERE 1=1" . $station_filter);
     $stmt->execute($station_param);
     $res = $stmt->fetch(PDO::FETCH_ASSOC);
     $metrics['jobs_completed'] = $res['completed'] ?? 0;
@@ -225,7 +225,210 @@ if ($isSuper || $role === 'admin') {
         $stmt = $pdo->prepare($user_query);
         $stmt->execute($user_params);
         $users = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
-    } catch(Exception $e){}
+} catch(Exception $e){}
+
+// --- SUPERADMIN COMPREHENSIVE METRICS ---
+if ($isSuper) {
+    $superadmin_metrics = [];
+    
+    // 1. NATIONWIDE STATION OVERVIEW
+    try {
+        $stmt = $pdo->query("
+            SELECT 
+                COUNT(*) as total_stations,
+                COUNT(CASE WHEN status = 'active' THEN 1 END) as active_stations,
+                COUNT(CASE WHEN status = 'inactive' THEN 1 END) as inactive_stations
+            FROM stations
+        ");
+        $station_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+        $superadmin_metrics['total_stations'] = $station_stats['total_stations'] ?? 0;
+        $superadmin_metrics['active_stations'] = $station_stats['active_stations'] ?? 0;
+        $superadmin_metrics['inactive_stations'] = $station_stats['inactive_stations'] ?? 0;
+    } catch(Exception $e) {
+        $superadmin_metrics['total_stations'] = 0;
+        $superadmin_metrics['active_stations'] = 0;
+        $superadmin_metrics['inactive_stations'] = 0;
+    }
+    
+    // 2. NATIONWIDE FINANCIAL METRICS
+    try {
+        // Today's sales across all stations
+        $stmt = $pdo->query("
+            SELECT 
+                COALESCE(SUM(total), 0) as today_sales,
+                COUNT(DISTINCT station_id) as stations_with_sales
+            FROM sales 
+            WHERE DATE(sale_date) = CURDATE()
+        ");
+        $daily_sales = $stmt->fetch(PDO::FETCH_ASSOC);
+        $superadmin_metrics['today_sales_nationwide'] = $daily_sales['today_sales'] ?? 0;
+        $superadmin_metrics['active_stations_today'] = $daily_sales['stations_with_sales'] ?? 0;
+        
+        // This month's revenue
+        $stmt = $pdo->query("
+            SELECT COALESCE(SUM(total), 0) as month_revenue 
+            FROM sales 
+            WHERE YEAR(sale_date) = YEAR(CURDATE()) 
+            AND MONTH(sale_date) = MONTH(CURDATE())
+        ");
+        $superadmin_metrics['month_revenue'] = $stmt->fetchColumn() ?? 0;
+        
+        // This year's revenue
+        $stmt = $pdo->query("
+            SELECT COALESCE(SUM(total), 0) as year_revenue 
+            FROM sales 
+            WHERE YEAR(sale_date) = YEAR(CURDATE())
+        ");
+        $superadmin_metrics['year_revenue'] = $stmt->fetchColumn() ?? 0;
+        
+    } catch(Exception $e) {
+        $superadmin_metrics['today_sales_nationwide'] = 0;
+        $superadmin_metrics['active_stations_today'] = 0;
+        $superadmin_metrics['month_revenue'] = 0;
+        $superadmin_metrics['year_revenue'] = 0;
+    }
+    
+    // 3. FUEL INVENTORY NATIONWIDE
+    try {
+        $stmt = $pdo->query("
+            SELECT 
+                COALESCE(SUM(si.stock_level), 0) as total_fuel_liters,
+                COUNT(DISTINCT si.station_id) as stations_with_fuel,
+                COUNT(CASE WHEN si.stock_level <= si.reorder_level THEN 1 END) as low_stock_items
+            FROM station_inventory si 
+            JOIN products p ON si.product_id = p.id 
+            JOIN product_types pt ON p.type_id = pt.id 
+            WHERE pt.name = 'fuel'
+        ");
+        $fuel_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+        $superadmin_metrics['total_fuel_liters'] = $fuel_stats['total_fuel_liters'] ?? 0;
+        $superadmin_metrics['stations_with_fuel'] = $fuel_stats['stations_with_fuel'] ?? 0;
+        $superadmin_metrics['fuel_low_stock'] = $fuel_stats['low_stock_items'] ?? 0;
+        
+    } catch(Exception $e) {
+        $superadmin_metrics['total_fuel_liters'] = 0;
+        $superadmin_metrics['stations_with_fuel'] = 0;
+        $superadmin_metrics['fuel_low_stock'] = 0;
+    }
+    
+    // 4. OPERATIONAL METRICS
+    try {
+        // Active job orders nationwide
+        $stmt = $pdo->query("
+            SELECT 
+                COUNT(CASE WHEN status IN ('Pending', 'In Progress', 'Awaiting Parts') THEN 1 END) as active_jobs,
+                COUNT(CASE WHEN status = 'Completed' AND DATE(updated_at) = CURDATE() THEN 1 END) as completed_today,
+                COUNT(CASE WHEN status IN ('Pending', 'In Progress', 'Awaiting Parts') AND due_date < CURDATE() THEN 1 END) as overdue_jobs
+            FROM job_orders
+        ");
+        $job_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+        $superadmin_metrics['active_jobs_nationwide'] = $job_stats['active_jobs'] ?? 0;
+        $superadmin_metrics['jobs_completed_today'] = $job_stats['completed_today'] ?? 0;
+        $superadmin_metrics['overdue_jobs'] = $job_stats['overdue_jobs'] ?? 0;
+        
+        // Total users and active users
+        $stmt = $pdo->query("
+            SELECT 
+                COUNT(*) as total_users,
+                COUNT(CASE WHEN status = 'active' THEN 1 END) as active_users,
+                COUNT(CASE WHEN role = 'manager' THEN 1 END) as managers,
+                COUNT(CASE WHEN role = 'admin' THEN 1 END) as admins
+            FROM users
+        ");
+        $user_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+        $superadmin_metrics['total_users'] = $user_stats['total_users'] ?? 0;
+        $superadmin_metrics['active_users'] = $user_stats['active_users'] ?? 0;
+        $superadmin_metrics['total_managers'] = $user_stats['managers'] ?? 0;
+        $superadmin_metrics['total_admins'] = $user_stats['admins'] ?? 0;
+        
+    } catch(Exception $e) {
+        $superadmin_metrics['active_jobs_nationwide'] = 0;
+        $superadmin_metrics['jobs_completed_today'] = 0;
+        $superadmin_metrics['overdue_jobs'] = 0;
+        $superadmin_metrics['total_users'] = 0;
+        $superadmin_metrics['active_users'] = 0;
+        $superadmin_metrics['total_managers'] = 0;
+        $superadmin_metrics['total_admins'] = 0;
+    }
+    
+    // 5. TOP PERFORMING STATIONS
+    try {
+        $stmt = $pdo->query("
+            SELECT 
+                s.name as station_name,
+                s.id as station_id,
+                COALESCE(SUM(sales.total), 0) as total_sales,
+                COUNT(sales.id) as transaction_count
+            FROM stations s
+            LEFT JOIN sales ON s.id = sales.station_id 
+                AND DATE(sales.sale_date) = CURDATE()
+            WHERE s.status = 'active'
+            GROUP BY s.id, s.name
+            ORDER BY total_sales DESC
+            LIMIT 5
+        ");
+        $superadmin_metrics['top_stations'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(Exception $e) {
+        $superadmin_metrics['top_stations'] = [];
+    }
+    
+    // 6. RECENT CRITICAL ALERTS
+    try {
+        $stmt = $pdo->query("
+            SELECT 
+                'Low Fuel Stock' as alert_type,
+                CONCAT(s.name, ' - ', p.name) as description,
+                si.stock_level as current_level,
+                si.reorder_level as threshold,
+                'critical' as severity
+            FROM station_inventory si
+            JOIN stations s ON si.station_id = s.id
+            JOIN products p ON si.product_id = p.id
+            JOIN product_types pt ON p.type_id = pt.id
+            WHERE pt.name = 'fuel' 
+            AND si.stock_level <= si.reorder_level
+            AND si.stock_level > 0
+            ORDER BY (si.stock_level / si.reorder_level) ASC
+            LIMIT 10
+        ");
+        $superadmin_metrics['critical_alerts'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(Exception $e) {
+        $superadmin_metrics['critical_alerts'] = [];
+    }
+    
+    // 7. DAILY SALES TREND FOR CHART (Last 7 days)
+    try {
+        $stmt = $pdo->query("
+            SELECT 
+                DATE(sale_date) as sale_date,
+                SUM(total) as daily_total
+            FROM sales 
+            WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(sale_date)
+            ORDER BY sale_date ASC
+        ");
+        $superadmin_metrics['daily_sales_trend'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(Exception $e) {
+        $superadmin_metrics['daily_sales_trend'] = [];
+    }
+    
+    // 8. FUEL DELIVERIES TODAY
+    try {
+        $stmt = $pdo->query("
+            SELECT 
+                COUNT(*) as deliveries_count,
+                SUM(delivery_liters) as total_liters_delivered
+            FROM fuel_deliveries 
+            WHERE DATE(delivery_date) = CURDATE()
+        ");
+        $delivery_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+        $superadmin_metrics['deliveries_today'] = $delivery_stats['deliveries_count'] ?? 0;
+        $superadmin_metrics['liters_delivered_today'] = $delivery_stats['total_liters_delivered'] ?? 0;
+    } catch(Exception $e) {
+        $superadmin_metrics['deliveries_today'] = 0;
+        $superadmin_metrics['liters_delivered_today'] = 0;
+    }
+}
 }
 
 // Fetch unique action types for filter
@@ -249,7 +452,7 @@ if ($role === 'admin' || $role === 'superadmin') {
 
 // 2. Active Job Orders
 try {
-    $sqlActiveJobs = "SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress')";
+    $sqlActiveJobs = "SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress', 'Awaiting Parts')";
     if ($f_station) {
         $sqlActiveJobs .= " AND station_id = " . intval($f_station);
     } elseif (!$isSuper) {
@@ -786,208 +989,229 @@ if ($role === 'manager') {
   </div>
   <?php endif; ?>
 
-  <?php if($role === 'superadmin'): 
-    // Super Admin Data Fetching
-    $sa_stats = [];
-    // 1. Stations
-    $stmt = $pdo->query("SELECT COUNT(*) as total, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) as active, SUM(CASE WHEN status='inactive' THEN 1 ELSE 0 END) as inactive FROM stations");
-    $sa_stats['stations'] = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    // 2. Sales
-    $stmt = $pdo->query("SELECT 
-        COALESCE(SUM(CASE WHEN sale_date = CURDATE() THEN total ELSE 0 END), 0) as daily,
-        COALESCE(SUM(CASE WHEN MONTH(sale_date) = MONTH(CURDATE()) AND YEAR(sale_date) = YEAR(CURDATE()) THEN total ELSE 0 END), 0) as monthly,
-        COALESCE(SUM(CASE WHEN YEAR(sale_date) = YEAR(CURDATE()) THEN total ELSE 0 END), 0) as yearly
-        FROM sales");
-    $sa_stats['sales'] = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    // 3. Job Orders
-    $stmt = $pdo->query("SELECT 
-        COUNT(CASE WHEN status IN ('Pending', 'In Progress') THEN 1 END) as open,
-        COUNT(CASE WHEN status = 'Completed' THEN 1 END) as closed
-        FROM job_orders");
-    $sa_stats['jobs'] = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    // 4. Alerts
-    $sa_stats['alerts'] = ['fuel' => 0, 'audit' => 0];
-    try {
-        $sa_stats['alerts']['audit'] = $pdo->query("SELECT COUNT(*) FROM activity_logs WHERE action LIKE '%Failed%' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")->fetchColumn();
-        $sa_stats['alerts']['fuel'] = $pdo->query("SELECT COUNT(*) FROM fuel_variance_reports WHERE status = 'Open'")->fetchColumn(); 
-    } catch (Exception $e) {}
-    $sa_stats['alerts']['total'] = $sa_stats['alerts']['fuel'] + $sa_stats['alerts']['audit'];
-
-    // Charts Data Generation
-    // 1. Sales Trend (Last 7 Days)
-    $trend_labels = [];
-    $trend_data = [];
-    try {
-        $stmt = $pdo->query("SELECT DATE(sale_date) as d, SUM(total) as t FROM sales WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE(sale_date) ORDER BY d ASC");
-        $trends = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
-        for($i=6; $i>=0; $i--){
-            $d = date('Y-m-d', strtotime("-$i days"));
-            $trend_labels[] = date('M d', strtotime($d));
-            $trend_data[] = $trends[$d] ?? 0;
-        }
-    } catch(Exception $e) {
-        // Fallback
-        $trend_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        $trend_data = [0,0,0,0,0,0,0];
-    }
-
-    // 2. Top Stations
-    $station_labels = [];
-    $station_data = [];
-    try {
-        $stmt = $pdo->query("SELECT s.name, COALESCE(SUM(sa.total), 0) as t FROM stations s LEFT JOIN sales sa ON s.id = sa.station_id GROUP BY s.id ORDER BY t DESC LIMIT 5");
-        while($row = $stmt->fetch(PDO::FETCH_ASSOC)){
-            $station_labels[] = $row['name'];
-            $station_data[] = $row['t'];
-        }
-    } catch(Exception $e) {}
-    if(empty($station_labels)) { $station_labels = ['No Data']; $station_data = [0]; }
-
-    // 3. Fuel Variance (Mock logic based on stations for now)
-    $var_labels = $station_labels;
-    $var_expected = array_map(function($v){ return 10000; }, $station_data); // Mock capacity
-    $var_actual = array_map(function($v){ return 9950; }, $station_data); // Mock actual
-  ?>
-  <!-- SUPER ADMIN DASHBOARD -->
+  <?php if($role === 'superadmin'): ?>
+  <!-- SUPERADMIN DASHBOARD - DATABASE DRIVEN -->
   <div class="admin-grid">
     
-    <!-- ROW 1: KPI CARDS -->
-    <div class="row-kpi-4">
+    <!-- ROW 1: NATIONWIDE OVERVIEW KPIs -->
+    <div class="row-kpi">
       <div class="kpi-box">
         <i class="fas fa-building kpi-icon-tiny"></i>
         <div class="kpi-lbl">Total Stations</div>
-        <div class="kpi-num"><?php echo $sa_stats['stations']['total']; ?></div>
+        <div class="kpi-num">
+          <?php echo $superadmin_metrics['total_stations']; ?>
+          <span class="kpi-dot <?php echo $superadmin_metrics['active_stations'] == $superadmin_metrics['total_stations'] ? 'dot-green' : 'dot-orange'; ?>"></span>
+        </div>
         <div style="font-size:10px; color:#888; margin-top:2px;">
-          <span style="color:#22c55e; font-weight:600;"><?php echo $sa_stats['stations']['active']; ?> Active</span> | <?php echo $sa_stats['stations']['inactive']; ?> Inactive
+          <?php echo $superadmin_metrics['active_stations']; ?> Active
         </div>
       </div>
+      
+      <div class="kpi-box">
+        <i class="fas fa-peso-sign kpi-icon-tiny"></i>
+        <div class="kpi-lbl">Today's Sales</div>
+        <div class="kpi-num">
+          ₱<?php echo number_format($superadmin_metrics['today_sales_nationwide'] / 1000, 1); ?>k
+        </div>
+        <div style="font-size:10px; color:#888; margin-top:2px;">
+          <?php echo $superadmin_metrics['active_stations_today']; ?> stations reporting
+        </div>
+      </div>
+      
+      <div class="kpi-box">
+        <i class="fas fa-calendar-month kpi-icon-tiny"></i>
+        <div class="kpi-lbl">This Month</div>
+        <div class="kpi-num">
+          ₱<?php echo number_format($superadmin_metrics['month_revenue'] / 1000000, 2); ?>M
+        </div>
+        <div style="font-size:10px; color:#888; margin-top:2px;">Revenue MTD</div>
+      </div>
+      
       <div class="kpi-box">
         <i class="fas fa-chart-line kpi-icon-tiny"></i>
-        <div class="kpi-lbl">Total Sales</div>
-        <div class="kpi-num">₱<?php echo number_format($sa_stats['sales']['yearly']); ?></div>
+        <div class="kpi-lbl">Annual Revenue</div>
+        <div class="kpi-num">
+          ₱<?php echo number_format($superadmin_metrics['year_revenue'] / 1000000, 1); ?>M
+        </div>
+        <div style="font-size:10px; color:#888; margin-top:2px;">YTD Total</div>
+      </div>
+      
+      <div class="kpi-box">
+        <i class="fas fa-gas-pump kpi-icon-tiny"></i>
+        <div class="kpi-lbl">Fuel Inventory</div>
+        <div class="kpi-num">
+          <?php echo number_format($superadmin_metrics['total_fuel_liters'] / 1000, 1); ?>k L
+          <?php if($superadmin_metrics['fuel_low_stock'] > 0): ?>
+            <span class="kpi-dot dot-red"></span>
+          <?php endif; ?>
+        </div>
         <div style="font-size:10px; color:#888; margin-top:2px;">
-          Daily: ₱<?php echo number_format($sa_stats['sales']['daily']); ?> | Mo: ₱<?php echo number_format($sa_stats['sales']['monthly']); ?>
+          <?php echo $superadmin_metrics['stations_with_fuel']; ?> stations
         </div>
       </div>
+      
       <div class="kpi-box">
         <i class="fas fa-tools kpi-icon-tiny"></i>
-        <div class="kpi-lbl">Job Orders</div>
-        <div class="kpi-num"><?php echo $sa_stats['jobs']['open']; ?> <span style="font-size:12px; color:#666; font-weight:normal;">Open</span></div>
+        <div class="kpi-lbl">Active Jobs</div>
+        <div class="kpi-num">
+          <?php echo $superadmin_metrics['active_jobs_nationwide']; ?>
+          <?php if($superadmin_metrics['overdue_jobs'] > 0): ?>
+            <span class="kpi-dot dot-red"></span>
+          <?php endif; ?>
+        </div>
         <div style="font-size:10px; color:#888; margin-top:2px;">
-          <?php echo $sa_stats['jobs']['closed']; ?> Closed
+          <?php echo $superadmin_metrics['jobs_completed_today']; ?> completed today
         </div>
       </div>
+      
       <div class="kpi-box">
-        <i class="fas fa-exclamation-triangle kpi-icon-tiny"></i>
-        <div class="kpi-lbl">Active Alerts</div>
-        <div class="kpi-num" style="color:<?php echo $sa_stats['alerts']['total'] > 0 ? '#ef4444' : '#22c55e'; ?>;">
-          <?php echo $sa_stats['alerts']['total']; ?>
+        <i class="fas fa-users kpi-icon-tiny"></i>
+        <div class="kpi-lbl">System Users</div>
+        <div class="kpi-num">
+          <?php echo $superadmin_metrics['total_users']; ?>
+          <span class="kpi-dot <?php echo $superadmin_metrics['active_users'] > ($superadmin_metrics['total_users'] * 0.8) ? 'dot-green' : 'dot-orange'; ?>"></span>
         </div>
         <div style="font-size:10px; color:#888; margin-top:2px;">
-          Fuel: <?php echo $sa_stats['alerts']['fuel']; ?> | Audit: <?php echo $sa_stats['alerts']['audit']; ?>
+          <?php echo $superadmin_metrics['active_users']; ?> active
+        </div>
+      </div>
+      
+      <div class="kpi-box">
+        <i class="fas fa-truck kpi-icon-tiny"></i>
+        <div class="kpi-lbl">Fuel Deliveries</div>
+        <div class="kpi-num">
+          <?php echo $superadmin_metrics['deliveries_today']; ?>
+        </div>
+        <div style="font-size:10px; color:#888; margin-top:2px;">
+          <?php echo number_format($superadmin_metrics['liters_delivered_today']); ?>L today
         </div>
       </div>
     </div>
 
     <!-- ROW 2: CHARTS -->
     <div class="row-charts">
-      <!-- Nationwide Sales Trend -->
+      <!-- Sales Trend Chart -->
       <div class="dash-card">
         <div class="dash-head">
-          <div class="dash-title">Nationwide Sales Trend</div>
-          <select class="input-xs" style="border:1px solid #ddd; border-radius:4px;">
-            <option>Last 7 Days</option>
-            <option>Last 30 Days</option>
-          </select>
+          <div class="dash-title">Nationwide Sales Trend (7 Days)</div>
+          <a href="reports.php?view=sales" class="dash-link">View Details</a>
         </div>
         <div style="height:200px; position:relative;">
-          <canvas id="saSalesTrendChart"></canvas>
+          <canvas id="superadminSalesChart"></canvas>
         </div>
       </div>
-      <!-- Sales per Station -->
+      
+      <!-- Top Performing Stations -->
       <div class="dash-card">
         <div class="dash-head">
-          <div class="dash-title">Top Stations (Sales)</div>
+          <div class="dash-title">Top Stations Today</div>
+          <a href="reports.php?view=station_performance" class="dash-link">View All</a>
         </div>
-        <div style="height:200px; position:relative;">
-          <canvas id="saStationSalesChart"></canvas>
+        <div style="height:200px; padding:10px 0;">
+          <?php if(!empty($superadmin_metrics['top_stations'])): ?>
+            <?php foreach($superadmin_metrics['top_stations'] as $index => $station): ?>
+              <div class="list-item">
+                <div style="display:flex; align-items:center;">
+                  <div style="width:20px; height:20px; border-radius:50%; background:#<?php echo ['22c55e', 'f59e0b', 'ef4444', '6366f1', '8b5cf6'][$index] ?? 'ccc'; ?>; display:flex; align-items:center; justify-content:center; color:white; font-size:10px; font-weight:bold; margin-right:10px;">
+                    <?php echo $index + 1; ?>
+                  </div>
+                  <div>
+                    <div class="list-main"><?php echo htmlspecialchars($station['station_name']); ?></div>
+                    <div class="list-sub"><?php echo $station['transaction_count']; ?> transactions</div>
+                  </div>
+                </div>
+                <div class="list-sub" style="color:#22c55e; font-weight:700;">
+                  ₱<?php echo number_format($station['total_sales']); ?>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          <?php else: ?>
+            <p style="color:#888; font-size:12px; text-align:center; margin:50px 0;">No sales data available for today</p>
+          <?php endif; ?>
         </div>
       </div>
     </div>
 
-    <!-- ROW 3: FUEL VARIANCE CHART -->
-    <div class="dash-card">
-      <div class="dash-head">
-        <div class="dash-title">Fuel Variance Overview</div>
-      </div>
-      <div style="height:180px; position:relative;">
-        <canvas id="saFuelVarianceChart"></canvas>
-      </div>
-    </div>
-
-    <!-- ROW 4: TABLES -->
+    <!-- ROW 3: CRITICAL ALERTS & OPERATIONAL STATUS -->
     <div class="row-split">
-      <!-- Recent Anomalies -->
+      <!-- Critical Alerts -->
       <div class="dash-card">
         <div class="dash-head">
-          <div class="dash-title">Recent Anomalies</div>
-          <a href="activity_logs.php" class="dash-link">View All</a>
+          <div class="dash-title">Critical Alerts</div>
+          <a href="system_alerts.php" class="dash-link">View All</a>
         </div>
-        <table class="tbl-mini">
-          <thead><tr><th>Station</th><th>Issue</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody>
-            <?php
-            $anomalies = [];
-            try {
-                // Fixed query: Join users to get station if station_id is not directly in logs
-                $anomalies = $pdo->query("SELECT al.id, s.name as station, al.action, al.created_at FROM activity_logs al LEFT JOIN users u ON al.user_id = u.id LEFT JOIN stations s ON u.station_id = s.id WHERE al.action LIKE '%Failed%' OR al.details LIKE '%variance%' ORDER BY al.created_at DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);
-            } catch(Exception $e) { /* Ignore error if table missing */ }
-            
-            if(empty($anomalies)) {
-                echo '<tr><td colspan="4" style="text-align:center; color:#999;">No recent anomalies</td></tr>';
-            } else {
-                foreach($anomalies as $a) {
-                    echo '<tr>
-                        <td>'.htmlspecialchars($a['station'] ?? 'System').'<br><span style="font-size:10px; color:#888;">'.date('M d H:i', strtotime($a['created_at'])).'</span></td>
-                        <td>'.htmlspecialchars($a['action']).'</td>
-                        <td><span class="badge" style="background:#fee2e2; color:#dc2626; font-size:10px;">Critical</span></td>
-                        <td><button class="btn ghost small" style="padding:2px 6px; font-size:10px;">View</button></td>
-                    </tr>';
-                }
-            }
-            ?>
-          </tbody>
-        </table>
+        <div style="max-height:300px; overflow-y:auto;">
+          <?php if(!empty($superadmin_metrics['critical_alerts'])): ?>
+            <?php foreach($superadmin_metrics['critical_alerts'] as $alert): ?>
+              <div class="list-item" style="border-left: 3px solid #ef4444; padding-left:10px;">
+                <div>
+                  <div class="list-main" style="color:#ef4444;">
+                    <i class="fas fa-exclamation-triangle" style="margin-right:8px;"></i>
+                    <?php echo htmlspecialchars($alert['alert_type']); ?>
+                  </div>
+                  <div class="list-sub"><?php echo htmlspecialchars($alert['description']); ?></div>
+                </div>
+                <div class="list-sub" style="color:#ef4444; font-weight:700;">
+                  <?php echo number_format($alert['current_level']); ?>/<?php echo number_format($alert['threshold']); ?>L
+                </div>
+              </div>
+            <?php endforeach; ?>
+          <?php else: ?>
+            <div style="text-align:center; padding:40px; color:#22c55e;">
+              <i class="fas fa-check-circle" style="font-size:24px; margin-bottom:10px;"></i>
+              <p style="margin:0; font-size:14px; font-weight:600;">All Systems Normal</p>
+              <p style="margin:5px 0 0; font-size:12px; color:#888;">No critical alerts at this time</p>
+            </div>
+          <?php endif; ?>
+        </div>
       </div>
-      <!-- Stations with High Variance -->
+      
+      <!-- System Overview -->
       <div class="dash-card">
         <div class="dash-head">
-          <div class="dash-title">High Variance Stations</div>
+          <div class="dash-title">System Overview</div>
         </div>
-        <table class="tbl-mini">
-          <thead><tr><th>Station</th><th>Variance %</th><th>Risk</th><th>Last Audit</th></tr></thead>
-          <tbody>
-            <?php
-            // Mock data for high variance stations if no real data
-            $high_var_stations = [
-                ['name' => 'Station 4 (Butuan)', 'var' => '2.5%', 'risk' => 'High', 'date' => 'Oct 20'],
-                ['name' => 'Station 2 (Kauswagan)', 'var' => '1.8%', 'risk' => 'Medium', 'date' => 'Oct 22']
-            ];
-            foreach($high_var_stations as $hv) {
-                $riskColor = $hv['risk'] === 'High' ? '#ef4444' : '#f59e0b';
-                echo '<tr>
-                    <td>'.htmlspecialchars($hv['name']).'</td>
-                    <td style="color:#ef4444; font-weight:bold;">'.htmlspecialchars($hv['var']).'</td>
-                    <td><span style="color:'.$riskColor.'; font-weight:600;">'.htmlspecialchars($hv['risk']).'</span></td>
-                    <td>'.htmlspecialchars($hv['date']).'</td>
-                </tr>';
-            }
-            ?>
-          </tbody>
-        </table>
+        <div>
+          <div class="list-item">
+            <div>
+              <div class="list-main">Station Managers</div>
+              <div class="list-sub">Active operational managers</div>
+            </div>
+            <div class="list-sub" style="color:#22c55e; font-weight:700;">
+              <?php echo $superadmin_metrics['total_managers']; ?>
+            </div>
+          </div>
+          
+          <div class="list-item">
+            <div>
+              <div class="list-main">Station Admins</div>
+              <div class="list-sub">Oversight administrators</div>
+            </div>
+            <div class="list-sub" style="color:#3b82f6; font-weight:700;">
+              <?php echo $superadmin_metrics['total_admins']; ?>
+            </div>
+          </div>
+          
+          <div class="list-item">
+            <div>
+              <div class="list-main">Fuel Low Stock Items</div>
+              <div class="list-sub">Items below reorder level</div>
+            </div>
+            <div class="list-sub" style="color:<?php echo $superadmin_metrics['fuel_low_stock'] > 0 ? '#ef4444' : '#22c55e'; ?>; font-weight:700;">
+              <?php echo $superadmin_metrics['fuel_low_stock']; ?>
+            </div>
+          </div>
+          
+          <div class="list-item">
+            <div>
+              <div class="list-main">Overdue Job Orders</div>
+              <div class="list-sub">Jobs past due date</div>
+            </div>
+            <div class="list-sub" style="color:<?php echo $superadmin_metrics['overdue_jobs'] > 0 ? '#ef4444' : '#22c55e'; ?>; font-weight:700;">
+              <?php echo $superadmin_metrics['overdue_jobs']; ?>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1061,72 +1285,82 @@ if ($role === 'manager') {
       });
     }
 
-    // SUPER ADMIN CHARTS
-    const saSalesCtx = document.getElementById('saSalesTrendChart');
-    if (saSalesCtx) {
-      new Chart(saSalesCtx, {
+    // SUPERADMIN CHARTS
+    const superadminSalesCtx = document.getElementById('superadminSalesChart');
+    if (superadminSalesCtx) {
+      const salesTrendData = <?php 
+        if($isSuper && !empty($superadmin_metrics['daily_sales_trend'])) {
+          $chart_labels = [];
+          $chart_data = [];
+          foreach($superadmin_metrics['daily_sales_trend'] as $day) {
+            $chart_labels[] = date('M d', strtotime($day['sale_date']));
+            $chart_data[] = $day['daily_total'];
+          }
+          echo json_encode(['labels' => $chart_labels, 'data' => $chart_data]);
+        } else {
+          echo json_encode(['labels' => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], 'data' => [0,0,0,0,0,0,0]]);
+        }
+      ?>;
+      
+      new Chart(superadminSalesCtx, {
         type: 'line',
         data: {
-          labels: <?php echo json_encode($trend_labels ?? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']); ?>,
+          labels: salesTrendData.labels,
           datasets: [{
-            label: 'Nationwide Sales',
-            data: <?php echo json_encode($trend_data ?? [0,0,0,0,0,0,0]); ?>,
+            label: 'Daily Sales',
+            data: salesTrendData.data,
             borderColor: '#003366',
             backgroundColor: 'rgba(0, 51, 102, 0.1)',
-            borderWidth: 2,
-            tension: 0.3,
-            fill: true
+            borderWidth: 3,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointBackgroundColor: '#003366',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 2
           }]
         },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-      });
-    }
-
-    const saStationCtx = document.getElementById('saStationSalesChart');
-    if (saStationCtx) {
-      new Chart(saStationCtx, {
-        type: 'bar',
-        data: {
-          labels: <?php echo json_encode($station_labels ?? []); ?>,
-          datasets: [{
-            label: 'Total Sales',
-            data: <?php echo json_encode($station_data ?? []); ?>,
-            backgroundColor: '#3b82f6',
-            borderRadius: 4
-          }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-      });
-    }
-
-    const saFuelVarCtx = document.getElementById('saFuelVarianceChart');
-    if (saFuelVarCtx) {
-      new Chart(saFuelVarCtx, {
-        type: 'bar',
-        data: {
-          labels: <?php echo json_encode($var_labels ?? []); ?>,
-          datasets: [
-            {
-              label: 'Expected',
-              data: <?php echo json_encode($var_expected ?? []); ?>,
-              backgroundColor: '#cbd5e1',
-              borderRadius: 2
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: false
             },
-            {
-              label: 'Actual',
-              data: <?php echo json_encode($var_actual ?? []); ?>,
-              backgroundColor: '#22c55e',
-              borderRadius: 2
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return 'Sales: ₱' + context.parsed.y.toLocaleString();
+                }
+              }
             }
-          ]
-        },
-        options: { 
-            responsive: true, 
-            maintainAspectRatio: false,
-            scales: {
-                x: { stacked: false },
-                y: { beginAtZero: true }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: {
+                color: 'rgba(0, 0, 0, 0.05)'
+              },
+              ticks: {
+                callback: function(value) {
+                  return '₱' + (value/1000).toFixed(0) + 'k';
+                },
+                font: {
+                  size: 11
+                }
+              }
+            },
+            x: {
+              grid: {
+                display: false
+              },
+              ticks: {
+                font: {
+                  size: 11
+                }
+              }
             }
+          }
         }
       });
     }
@@ -1283,7 +1517,7 @@ function getOpenJobOrdersRows() {
                 FROM job_orders jo 
                 LEFT JOIN customers c ON jo.customer_id = c.id 
                 LEFT JOIN users u ON jo.mechanic_id = u.id 
-                WHERE jo.status IN ('Pending', 'In Progress')";
+                WHERE jo.status IN ('Pending', 'In Progress', 'Awaiting Parts')";
         
         $params = [];
         
@@ -1392,7 +1626,7 @@ function ensureSampleData() {
         }
         
         // Check if job_orders table has data
-        $jobs_count = $pdo->query("SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress')")->fetchColumn();
+        $jobs_count = $pdo->query("SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress', 'Awaiting Parts')")->fetchColumn();
         
         if ($jobs_count == 0) {
             // Add sample job orders

@@ -5,8 +5,9 @@ require_once __DIR__ . '/../public/db_connect.php';
 require_login();
 
 $me = current_user();
-$isAdmin = in_array($me['role'], ['admin', 'superadmin', 'manager']);
-$station_id = $me['station_id'] ?? 1;
+// Credit approval: Admin ONLY per hierarchy (Manager cannot approve credits)
+$isAdmin = in_array($me['role'], ['admin', 'superadmin']);
+$station_id = user_station_id();
 
 // Get current view
 $view = $_GET['view'] ?? 'ledger';

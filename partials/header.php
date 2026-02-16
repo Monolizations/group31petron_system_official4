@@ -7,7 +7,7 @@ $user = $_SESSION['user'];
 // Get current page ID from filename
 $page_id = basename($_SERVER['PHP_SELF'], '.php');
 // Normalize Role to ensure sidebar works correctly regardless of DB casing / naming
-// Supports: manager/supervisor, operations_staff, etc.
+// Supports: manager/supervisor, staff, etc.
 $role = function_exists('role_key') ? role_key($user['role'] ?? '') : strtolower(trim($user['role'] ?? 'staff'));
 
 // --- FETCH ALERTS FOR DROPDOWN ---
@@ -51,8 +51,8 @@ if(in_array($role, ['superadmin','admin','manager'])){
     } catch(Exception $e){}
     // 7. Pending Purchase Orders
     try {
-        $pending_po = $pdo->query("SELECT id FROM purchase_orders WHERE status = 'pending' LIMIT 5")->fetchAll();
-        foreach($pending_po as $po) $header_alerts[] = ['msg'=>"Pending PO #{$po['id']}", 'time'=>'Now', 'link'=>'purchase_order.php'];
+        $pending_po = $pdo->query("SELECT id, po_number FROM purchase_orders WHERE status = 'Pending' LIMIT 5")->fetchAll();
+        foreach($pending_po as $po) $header_alerts[] = ['msg'=>"Pending PO #{$po['po_number']}", 'time'=>'Now', 'link'=>'purchase_order.php'];
     } catch(Exception $e){}
     // 8. Pending Deliveries
     try {
@@ -141,7 +141,7 @@ try {
         // Reports Aggregate
         $badges['reports'] = ($badges['pos'] ?? 0) + ($badges['joborder'] ?? 0) + ($badges['inventory'] ?? 0);
     } elseif ($role === 'staff') {
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE user_id = ? AND status IN ('Pending', 'In Progress')");
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE user_id = ? AND status IN ('Pending', 'In Progress', 'Awaiting Parts')");
         $stmt->execute([$user['id']]);
         $badges['joborder'] = $stmt->fetchColumn();
     }
@@ -523,213 +523,8 @@ if (!isset($pdo) || !$pdo) {
     <div class="sidebar-menu">
       <nav class="nav">
 <?php
-  $items = [];
-
-  if($role === 'superadmin'){
-    $items = [
-      // Dashboard
-      ['id'=>'manager_dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'manager_dashboard.php'],
-
-       // Station Management
-       ['id'=>'station_management','label'=>'Station Management','ico'=>'fas fa-building','href'=>'#','sub_items' => [
-           ['id'=>'view_stations','label'=>'View Stations','href'=>'view_stations.php'],
-           ['id'=>'station_profiles','label'=>'Station Profiles','href'=>'station_profiles.php'],
-           ['id'=>'station_status','label'=>'Station Status','href'=>'station_status.php'],
-           ['id'=>'pump_management','label'=>'Pump Management','href'=>'admin_pump_management.php']
-       ]],
-
-      // User Management (HQ)
-      ['id'=>'user_management','label'=>'User Management (HQ)','ico'=>'fas fa-users-cog','href'=>'#','sub_items' => [
-          ['id'=>'create_station_admin','label'=>'Create Station Admin','href'=>'create_station_admin.php'],
-          ['id'=>'create_default_roles','label'=>'Auto-create Default Manager & Staff','href'=>'auto_create_defaults.php'],
-          ['id'=>'view_all_users','label'=>'View All Users','href'=>'view_all_users.php']
-      ]],
-
-      // Nationwide Reports
-      ['id'=>'nationwide_reports','label'=>'Nationwide Reports','ico'=>'fas fa-chart-line','href'=>'#','sub_items' => [
-          ['id'=>'sales_reports','label'=>'Sales Reports','href'=>'sales_reports.php'],
-          ['id'=>'fuel_reports','label'=>'Fuel Reconciliation Reports','href'=>'reconciliation.php'],
-          ['id'=>'job_order_reports','label'=>'Job Order Reports','href'=>'joborder.php'],
-          ['id'=>'customer_credit_reports','label'=>'Customer Credit Reports','href'=>'customer_credit_reports.php']
-      ]],
-
-      // Audit Logs
-      ['id'=>'audit_logs','label'=>'Audit Logs','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
-          ['id'=>'user_logs','label'=>'User Logs','href'=>'audit_logs.php?type=user'],
-          ['id'=>'transaction_logs','label'=>'Transaction Logs','href'=>'audit_logs.php?type=transaction'],
-          ['id'=>'inventory_logs','label'=>'Inventory Logs','href'=>'audit_logs.php?type=inventory']
-      ]],
-
-      // System Settings
-      ['id'=>'system_settings','label'=>'System Settings','ico'=>'fas fa-cogs','href'=>'#','sub_items' => [
-          ['id'=>'service_rates','label'=>'Service Rate Masterlist','href'=>'settings.php?section=service_rates'],
-          ['id'=>'calibration_values','label'=>'Fuel Calibration Values','href'=>'settings.php?section=calibration']
-      ]],
-
-      // Developer Panel
-      ['id'=>'developer_panel','label'=>'Developer Panel','ico'=>'fas fa-code','href'=>'developer_panel.php'],
-
-      ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items' => [
-          ['id'=>'daily_sales','label'=>'Daily Sales','href'=>'reports.php?view=daily_sales'],
-          ['id'=>'shift_reports','label'=>'Shift Reports','href'=>'reports.php?view=shift_reports'],
-          ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
-          ['id'=>'job_order_reports','label'=>'Job Order Reports','href'=>'reports.php?view=job_order_reports'],
-          ['id'=>'verification','label'=>'Verification','href'=>'reports.php?view=verification']
-      ]]
-    ];
-
-  }elseif($role === 'admin'){
-    $items = [
-      ['id'=>'dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'dashboard.php'],
-
-      ['id'=>'financial_reports','label'=>'Financial Reports','ico'=>'fas fa-chart-bar','href'=>'#','sub_items' => [
-          ['id'=>'daily_sales_report','label'=>'Daily Sales Report','href'=>'reports.php?view=daily_sales'],
-          ['id'=>'weekly_sales_report','label'=>'Weekly Sales Report','href'=>'reports.php?view=weekly_sales'],
-          ['id'=>'monthly_sales_report','label'=>'Monthly Sales Report','href'=>'reports.php?view=monthly_sales'],
-          ['id'=>'profit_loss','label'=>'Profit & Loss Statement','href'=>'reports.php?view=profit_loss'],
-          ['id'=>'fuel_cost_analysis','label'=>'Fuel Cost Analysis','href'=>'reports.php?view=fuel_cost'],
-      ]],
-
-      ['id'=>'export_center','label'=>'Export Center','ico'=>'fas fa-download','href'=>'export_center.php'],
-
-      ['id'=>'customer_accounts','label'=>'Customer Accounts','ico'=>'fas fa-users','href'=>'#','sub_items' => [
-          ['id'=>'view_customers','label'=>'Customer List','href'=>'customers.php'],
-          ['id'=>'view_customer_credit','label'=>'Credit Ledger','href'=>'customer_credit.php'],
-          ['id'=>'generate_customer_statement','label'=>'Statements of Account','href'=>'customer_statements.php']
-      ]],
-
-      ['id'=>'user_management','label'=>'User Management','ico'=>'fas fa-user-cog','href'=>'users.php'],
-
-       ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items' => [
-           ['id'=>'shift_reports','label'=>'Shift Reports','href'=>'reports.php?view=shift_reports'],
-           ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
-           ['id'=>'job_order_reports','label'=>'Job Order Reports','href'=>'reports.php?view=job_order_reports'],
-           ['id'=>'sales_by_pump','label'=>'Sales by Pump','href'=>'reports/sales_by_pump.php'],
-           ['id'=>'fuel_variance_report','label'=>'Fuel Variance Report','href'=>'reports/fuel_variance_report.php'],
-           ['id'=>'verification','label'=>'Verification','href'=>'reports.php?view=verification']
-       ]],
-
-      ['id'=>'unlock_records','label'=>'Unlock Records','ico'=>'fas fa-lock-open','href'=>'admin_unlock.php'],
-
-       ['id'=>'station_overview','label'=>'Station Overview','ico'=>'fas fa-building','href'=>'station_profiles.php'],
-
-       ['id'=>'pump_management','label'=>'Pump Management','ico'=>'fas fa-gas-pump','href'=>'admin_pump_management.php'],
-
-       ['id'=>'fuel_pricing','label'=>'Fuel Pricing','ico'=>'fas fa-dollar-sign','href'=>'#','sub_items' => [
-           ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'fuel_pricing_manager.php'],
-           ['id'=>'price_change_logs','label'=>'Price Change History','href'=>'price_change_logs.php']
-       ]],
-
-       ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
-          ['id'=>'audit_logs','label'=>'Audit Logs','href'=>'audit_logs.php'],
-          ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
-          ['id'=>'override_logs','label'=>'Override Logs','href'=>'audit_logs.php?type=override'],
-          ['id'=>'system_logs','label'=>'System Logs','href'=>'audit_logs.php?type=system'],
-      ]]
-    ];
- 
-  } elseif($role === 'manager'){
-     $items = [
-       ['id'=>'manager_home','label'=>'Home','ico'=>'fas fa-home','href'=>'manager_home.php'],
-       ['id'=>'dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'dashboard.php'],
-
-        ['id'=>'approvals_center','label'=>'Approvals Center','ico'=>'fas fa-tasks','href'=>'approvals_center.php'],
-
-        ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'#','sub_items'=>[
-            ['id'=>'inventory_list','label'=>'Inventory List','href'=>'inventory_list.php'],
-            ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
-        ]],
-
-        ['id'=>'job_orders','label'=>'Job Orders','ico'=>'fas fa-wrench','href'=>'#','sub_items'=>[
-           ['id'=>'joborder_history','label'=>'Job Order History','href'=>'joborder.php?tab=history'],
-           ['id'=>'joborder_service_breakdown','label'=>'Service Type Breakdown','href'=>'manager_job_analytics.php?view=service_breakdown'],
-           ['id'=>'joborder_staff_performance','label'=>'Staff Performance on Jobs','href'=>'manager_job_analytics.php?view=staff_performance'],
-           ['id'=>'joborder_completion_time','label'=>'Completion Time Reports','href'=>'manager_job_analytics.php?view=completion_time'],
-       ]],
-
-       ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-            ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'fuel_pricing_manager.php'],
-            ['id'=>'price_change_logs','label'=>'Price Change History','href'=>'price_change_logs.php'],
-            ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
-            ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
-            ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
-            ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
-            ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
-            ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
-        ]],
-
-        ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
-            ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
-            ['id'=>'staff_performance_reports','label'=>'Individual Performance','href'=>'staff_reports.php?view=performance'],
-            ['id'=>'staff_attendance','label'=>'Attendance & Shift Coverage','href'=>'staff_reports.php?view=attendance'],
-            ['id'=>'staff_quality_metrics','label'=>'Quality Metrics','href'=>'staff_reports.php?view=quality'],
-            ['id'=>'sales_by_pump','label'=>'Sales by Pump','href'=>'reports/sales_by_pump.php'],
-            ['id'=>'fuel_variance_report','label'=>'Fuel Variance Report','href'=>'reports/fuel_variance_report.php'],
-        ]],
-
-       ['id'=>'staff_management','label'=>'Staff Management','ico'=>'fas fa-users','href'=>'#','sub_items'=>[
-           ['id'=>'staff_active','label'=>'Active Staff','href'=>'staff_management.php?view=active'],
-           ['id'=>'staff_schedule','label'=>'Shift Schedule','href'=>'staff_management.php?view=schedule'],
-           ['id'=>'staff_tasks','label'=>'Task Assignments','href'=>'staff_management.php?view=tasks'],
-           ['id'=>'staff_productivity','label'=>'Productivity Metrics','href'=>'staff_management.php?view=productivity'],
-           ['id'=>'staff_qc','label'=>'Quality Control Scores','href'=>'staff_management.php?view=qc'],
-           ['id'=>'staff_compliance','label'=>'Compliance Tracking','href'=>'staff_management.php?view=compliance'],
-       ]],
-
-       ['id'=>'audit_logs','label'=>'Audit & Logs','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items'=>[
-           ['id'=>'view_logs','label'=>'System Logs','href'=>'audit_logs.php'],
-           ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
-           ['id'=>'safety_checks_log','label'=>'Safety Checks Log','href'=>'compliance.php?view=safety'],
-           ['id'=>'procedure_adherence','label'=>'Procedure Adherence Reports','href'=>'compliance.php?view=procedures'],
-        ]]
-      ];
-  } else { // staff
-    $items = [
-      ['id'=>'staff_home','label'=>'Home','ico'=>'fas fa-home','href'=>'staff_home.php'],
-      ['id'=>'staff_dashboard','label'=>'My Dashboard','ico'=>'fas fa-gauge','href'=>'staff_dashboard.php'],
-
-      ['id'=>'transactions','label'=>'Transactions','ico'=>'fas fa-shopping-cart','href'=>'#','sub_items'=>[
-          ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php'],
-          ['id'=>'pos_multi','label'=>'Multi-Item Transaction','href'=>'pos_multi.php'],
-          ['id'=>'pos_credit','label'=>'Credit Sales','href'=>'credit_transactions.php'],
-          ['id'=>'txn_history','label'=>'Transaction History','href'=>'transactions.php?view=my_history'],
-          ['id'=>'receipt_reprint','label'=>'Receipt Reprint','href'=>'transactions.php?view=reprint'],
-      ]],
-
-      ['id'=>'job_orders','label'=>'Job Orders','ico'=>'fas fa-wrench','href'=>'#','sub_items'=>[
-          ['id'=>'job_create','label'=>'Create Job Order','href'=>'joborder.php?tab=create'],
-      ]],
-
-      ['id'=>'fuel','label'=>'Fuel','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-          ['id'=>'fuel_encode','label'=>'Encode Fuel Reading','href'=>'fuel_staff.php'],
-      ]],
-
-      ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'#','sub_items'=>[
-          ['id'=>'merch_receive','label'=>'Encode Received Items','href'=>'receiving_staff.php'],
-          ['id'=>'receive_confirm','label'=>'Receive & Confirm Stock','href'=>'manager_receiving_review.php'],
-          ['id'=>'merch_history','label'=>'My Delivery History','href'=>'receiving_staff.php?view=my_history'],
-      ]],
-
-      ['id'=>'customers','label'=>'Customers','ico'=>'fas fa-users','href'=>'#','sub_items'=>[
-          ['id'=>'customer_create','label'=>'Create Customer','href'=>'customers.php?view=create'],
-          ['id'=>'record_payment','label'=>'Record Payment','href'=>'customer_credit.php?view=record_payment'],
-          ['id'=>'credit_history','label'=>'Credit History','href'=>'customer_credit.php?view=my_history'],
-      ]],
-
-      ['id'=>'my_reports','label'=>'My Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
-          ['id'=>'shift_encoding_summary','label'=>'Shift Encoding Summary','href'=>'staff_reports.php?view=shift_summary'],
-          ['id'=>'job_order_summary','label'=>'Job Order Summary','href'=>'staff_reports.php?view=job_summary'],
-          ['id'=>'fuel_reading_summary','label'=>'Fuel Reading Summary','href'=>'staff_reports.php?view=fuel_summary'],
-      ]],
-
-      ['id'=>'my_shift','label'=>'My Shift','ico'=>'fas fa-clock','href'=>'#','sub_items'=>[
-          ['id'=>'today_schedule','label'=>"Today's Schedule",'href'=>'my_shift.php?view=today'],
-          ['id'=>'upcoming_shifts','label'=>'Upcoming Shifts','href'=>'my_shift.php?view=upcoming'],
-          ['id'=>'clock_in_out','label'=>'Clock In/Out','href'=>'my_shift.php?view=clock'],
-          ['id'=>'hours_worked','label'=>'Hours Worked','href'=>'my_shift.php?view=hours'],
-      ]]
-    ];
-  }
+// Include the new RBAC menu generation
+require_once __DIR__ . '/rbac_menu.php';
 
   $base_path = '/group31petron_system_official4/public/';
   

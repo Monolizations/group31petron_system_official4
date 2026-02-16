@@ -60,7 +60,7 @@ function normalize_role($role){
   if($r === 'superadmin' || $r === 'super admin') return 'Super Admin';
   if($r === 'admin' || $r === 'admin/manager' || $r === 'station admin') return 'Admin';
   if($r === 'manager') return 'Manager';
-  if($r === 'operations staff' || $r === 'operations_staff') return 'Staff';
+  // Remove operations_staff - all operational roles are now 'staff'
   return 'Staff';
 }
 
@@ -71,18 +71,179 @@ function role_key($role){
   if(in_array($r, ['superadmin','super admin','super_admin'])) return 'superadmin';
   if(in_array($r, ['admin','station admin','station_admin'])) return 'admin';
   if(in_array($r, ['manager','supervisor','manager / supervisor','manager/supervisor','supervisor/manager'])) return 'manager';
-  if(in_array($r, ['staff','operations staff','operations_staff','operations','ops','operations_staff '])) return 'staff';
-  // Fallback: if legacy normalize_role labels indicate Admin, treat manager/admin as admin.
-  $label = normalize_role($role);
-  if($label === 'Super Admin') return 'superadmin';
-  if($label === 'Admin') return 'admin';
+  // Remove operations_staff handling - all staff roles use 'staff'
   return 'staff';
 }
 
 /**
- * Check if current user is Manager or Super Admin
- * Used for Manager-level approvals and finalizations
+ * RBAC Permission Matrix
+ * Defines what each role can access in the system
+ * Based on: Managers handle day-to-day operations, Admins provide oversight
  */
+
+/**
+ * Get user permissions based on role
+ * Returns array of permission strings that the role has access to
+ */
+function get_user_permissions($role) {
+    $role = role_key($role);
+    
+    $permissions = [];
+    
+    switch($role) {
+        case 'superadmin':
+            // Superadmin: Complete system access - all permissions
+            $permissions = [
+                // Basic access
+                'view_dashboard',
+                
+                // Transaction permissions
+                'create_transactions', 'approve_transactions',
+                
+                // Job order permissions  
+                'create_job_orders', 'manage_job_orders',
+                
+                // Fuel management permissions
+                'encode_fuel', 'manage_fuel',
+                
+                // Inventory permissions
+                'manage_inventory', 'view_inventory', 'receive_inventory',
+                
+                // Customer management permissions
+                'manage_customers', 'manage_customers_basic',
+                
+                // Staff management permissions
+                'manage_staff', 'manage_shifts',
+                
+                // Report permissions (all types)
+                'view_personal_reports', 'view_operational_reports', 'view_financial_reports', 'view_all_reports',
+                
+                // User management permissions
+                'manage_users_station', 'manage_all_users',
+                
+                // Station management permissions
+                'manage_stations',
+                
+                // System administration permissions
+                'manage_system_settings', 'view_audit_logs', 'developer_access',
+                
+                // Additional admin permissions
+                'export_data', 'audit_oversight', 'manage_pricing', 'manage_pricing_station',
+                'handle_approvals', 'unlock_records', 'view_nationwide_reports', 'view_audit_logs_station'
+            ];
+            break;
+            
+        case 'admin':
+            // Admin: Oversight and management, not always on-site
+            $permissions = [
+                'view_dashboard', 'view_financial_reports', 'export_data', 'manage_customers',
+                'manage_users_station', 'view_inventory', 'view_reports', 'audit_oversight',
+                'manage_pricing_station', 'unlock_records'
+            ];
+            break;
+            
+        case 'manager':
+            // Manager: Day-to-day operations, actually running the store
+            $permissions = [
+                'view_dashboard', 'approve_transactions', 'manage_inventory', 'manage_job_orders',
+                'manage_fuel', 'manage_staff', 'view_operational_reports', 'approve_pricing',
+                'handle_approvals', 'manage_shifts', 'view_audit_logs_station'
+            ];
+            break;
+            
+        case 'staff':
+            // Staff: Front-line operations
+            $permissions = [
+                'view_dashboard', 'create_transactions', 'create_job_orders', 'encode_fuel',
+                'receive_inventory', 'manage_customers_basic', 'view_personal_reports', 'manage_shift'
+            ];
+            break;
+    }
+    
+    return $permissions;
+}
+
+/**
+ * Check if user can access a specific menu item
+ */
+function user_can_access_menu($menu_id, $user_role, $required_permissions = []) {
+    $user_permissions = get_user_permissions($user_role);
+    
+    // If no specific permissions required, allow access
+    if (empty($required_permissions)) {
+        return true;
+    }
+    
+    // Check if user has any of the required permissions
+    foreach ($required_permissions as $permission) {
+        if (in_array($permission, $user_permissions)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+/**
+ * Check if user has station-specific access vs global access
+ */
+function is_station_specific_role($role) {
+    $role = role_key($role);
+    return in_array($role, ['admin', 'manager', 'staff']);
+}
+
+/**
+ * Check if user can access global (all stations) data
+ */
+function has_global_access($role) {
+    $role = role_key($role);
+    return $role === 'superadmin';
+}
+
+// Individual capability functions for specific features
+
+function can_manage_users($role) {
+    return user_can_access_menu('users', $role, ['manage_all_users', 'manage_users_station']);
+}
+
+function can_approve_transactions($role) {
+    return user_can_access_menu('approvals', $role, ['approve_transactions']);
+}
+
+function can_manage_inventory($role) {
+    return user_can_access_menu('inventory', $role, ['manage_inventory', 'view_inventory', 'receive_inventory']);
+}
+
+function can_manage_fuel($role) {
+    return user_can_access_menu('fuel', $role, ['manage_fuel', 'encode_fuel']);
+}
+
+function can_view_reports($role, $report_type = 'basic') {
+    $permissions = [];
+    switch($report_type) {
+        case 'financial':
+            $permissions = ['view_financial_reports', 'view_all_reports'];
+            break;
+        case 'operational':
+            $permissions = ['view_operational_reports', 'view_all_reports'];
+            break;
+        case 'audit':
+            $permissions = ['view_audit_logs', 'view_audit_logs_station'];
+            break;
+        default:
+            $permissions = ['view_personal_reports', 'view_operational_reports', 'view_financial_reports', 'view_all_reports'];
+    }
+    
+    return user_can_access_menu('reports', $role, $permissions);
+}
+
+function can_manage_job_orders($role) {
+    return user_can_access_menu('job_orders', $role, ['manage_job_orders', 'create_job_orders']);
+}
+
+function can_manage_customers($role) {
+    return user_can_access_menu('customers', $role, ['manage_customers', 'manage_customers_basic']);
+}
 function is_manager_or_above(){
   $u = current_user();
   if(!$u) return false;
@@ -149,7 +310,7 @@ function require_role($minRole){
 function user_station_id(){
   $u = current_user();
   if(!$u) return null;
-  
+
   // Refresh station_id from database to ensure latest data after migrations
   // This ensures users who were migrated to a new station see the correct station
   try {
@@ -167,7 +328,7 @@ function user_station_id(){
   } catch(Exception $e) {
     // Fall back to session value if DB query fails
   }
-  
+
   return $u['station_id'] ?? null;
 }
 

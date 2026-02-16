@@ -72,7 +72,9 @@ try {
 $isStaff   = ($role === 'staff');
 $isManager = ($role === 'manager');
 $isAdmin   = in_array($role, ['admin','superadmin']);
-$canReview = ($isManager || $isAdmin);
+// Manager approval required - Admin should NOT do Manager work per hierarchy
+// Admin only has unlock/validation capability
+$canReview = ($isManager);
 
 /* =========================================================
    HANDLE POST ACTIONS - Using Enhanced Job Order Backend
@@ -89,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
            CREATE JOB ORDER (Staff Action)
         ======================= */
         if ($action === 'create_job_order') {
-            if (!in_array($role, ['staff','operations_staff'])) {
+            if (!in_array($role, ['staff'])) {
                 json_response(['success'=>false,'message'=>'Permission denied']);
             }
             
@@ -167,14 +169,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
          }
 
           /* =======================
-             UPDATE JOB STATUS
+             UPDATE JOB STATUS - Universal Access
           ======================= */
           if ($action === 'update_job_status') {
-              if (!$canReview) {
-                  json_response(['success'=>false,'message'=>'Manager privileges required']);
-              }
-              
-              $status = $_POST['status'] ?? '';
+              // Allow all users to update status (not just managers)
+              $status = $_POST['new_status'] ?? '';
               $notes = $_POST['notes'] ?? '';
               
               if (!$status) {
@@ -226,12 +225,15 @@ $service_categories = [];
 try {
     $stmt = $pdo->query("SELECT id, name, description, default_parts_cost, default_labor_cost, default_duration FROM service_categories WHERE is_active = 1 ORDER BY name");
     $service_categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Also create a simple array for filtering
+    $service_types = array_column($service_categories, 'name');
 } catch (Exception $e) {
     // Fallback to static list if table doesn't exist
     $service_types = [
         'Change Oil', 'Brake Service', 'Vulcanizing', 'Car Wash', 'Battery Check',
-        'Engine Tune-up', 'Air Filter Replacement', 'Wheel Alignment', 'Other Service'
+        'Engine Tune-up', 'Air Filter Replacement', 'Wheel Alignment'
     ];
+    $service_categories = [];
 }
 
 // Customers (shared list)
@@ -246,7 +248,7 @@ $mechanics_list = [];
 try {
     $stmt = $pdo->prepare("
         SELECT m.id, m.full_name, m.specialization, m.status,
-               (SELECT COUNT(*) FROM job_orders WHERE assigned_mechanic_id = m.id AND status = 'In Progress') as active_jobs
+               (SELECT COUNT(*) FROM job_orders WHERE assigned_mechanic_id = m.id AND status IN ('In Progress', 'Awaiting Parts')) as active_jobs
         FROM mechanics m
         WHERE m.station_id = ? AND m.status = 'active'
         ORDER BY active_jobs ASC, m.full_name ASC
@@ -320,7 +322,7 @@ $stmt = $pdo->prepare("
     LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
     LEFT JOIN service_categories sc ON sc.id = jo.service_category_id
     LEFT JOIN users u ON u.id = jo.assigned_by
-    WHERE jo.station_id = ? AND jo.status = 'In Progress'
+    WHERE jo.station_id = ? AND jo.status IN ('In Progress', 'Awaiting Parts')
     ORDER BY jo.started_at DESC
 ");
 $stmt->execute([$station_id]);
@@ -328,6 +330,13 @@ $ongoing_jobs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Completed Jobs (History)
 $completed_jobs = [];
+
+// Staff list for history filter
+$staff_list = [];
+$stmt = $pdo->prepare("SELECT id, name, username FROM users WHERE station_id = ? AND role = 'staff' ORDER BY name");
+$stmt->execute([$station_id]);
+$staff_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 $stmt = $pdo->prepare("
     SELECT jo.*,
            c.name as customer_name,
@@ -646,7 +655,7 @@ include __DIR__ . '/../partials/header.php';
     color: #155724;
 }
 
-.status-waiting-parts {
+.status-waiting-parts, .status-awaiting-parts {
     background: #FFF3CD;
     color: #856404;
 }
@@ -1151,21 +1160,43 @@ include __DIR__ . '/../partials/header.php';
                         <?php if (!empty($job['notes'])): ?>
                             <div style="margin-bottom: 20px;">
                                 <div class="job-detail-label">Notes/Progress</div>
-                                <div class="job-detail-value"><?php echo nl2br(htmlspecialchars($job['notes'])); ?></div>
+                                <div class="job-detail-value" style="line-height: 1.6;">
+                                    <?php
+                                    // Simple formatting: just convert timestamps to readable format
+                                    $notes = $job['notes'];
+                                    // Convert [YYYY-MM-DD HH:MM:SS] to readable format
+                                    $notes = preg_replace_callback('/\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/', function($matches) {
+                                        try {
+                                            $date = new DateTime($matches[1]);
+                                            return '<strong>' . $date->format('M d, g:i A') . '</strong>';
+                                        } catch (Exception $e) {
+                                            return $matches[0];
+                                        }
+                                    }, $notes);
+                                    echo nl2br(htmlspecialchars_decode($notes));
+                                    ?>
+                                </div>
                             </div>
                         <?php endif; ?>
 
                         <div class="job-actions">
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button type="button" class="btn btn-info" onclick="event.stopPropagation(); event.preventDefault(); console.log('In Progress button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'In Progress', '⏳ Keep In Progress?', 'Job will remain in progress for continued work.')">
-                                    <i class="fas fa-spinner"></i> In Progress
+                                <!-- Universal Update Status Button - Available to All Users -->
+                                <button type="button" class="btn btn-primary" onclick="event.stopPropagation(); event.preventDefault(); openUpdateStatusModal(<?php echo $job['id']; ?>, '<?php echo htmlspecialchars($job['status']); ?>')">
+                                    <i class="fas fa-edit"></i> Update Status
                                 </button>
-                                <button type="button" class="btn btn-success" onclick="event.stopPropagation(); event.preventDefault(); console.log('Complete button clicked'); completeJobOrder(<?php echo $job['id']; ?>)">
-                                    <i class="fas fa-check-circle"></i> Complete
-                                </button>
-                                <button type="button" class="btn btn-danger" onclick="event.stopPropagation(); event.preventDefault(); console.log('Cancel button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'Cancelled', '❌ Cancel This Job?', 'This action cannot be easily undone. Are you sure?')">
-                                    <i class="fas fa-times-circle"></i> Cancel
-                                </button>
+                                
+                                <?php if (!$isStaff): // Hide these buttons from staff users ?>
+                                    <button type="button" class="btn btn-info" onclick="event.stopPropagation(); event.preventDefault(); console.log('In Progress button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'In Progress', '⏳ Keep In Progress?', 'Job will remain in progress for continued work.')">
+                                        <i class="fas fa-spinner"></i> In Progress
+                                    </button>
+                                    <button type="button" class="btn btn-success" onclick="event.stopPropagation(); event.preventDefault(); console.log('Complete button clicked'); completeJobOrder(<?php echo $job['id']; ?>)">
+                                        <i class="fas fa-check-circle"></i> Complete
+                                    </button>
+                                    <button type="button" class="btn btn-danger" onclick="event.stopPropagation(); event.preventDefault(); console.log('Cancel button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'Cancelled', '❌ Cancel This Job?', 'This action cannot be easily undone. Are you sure?')">
+                                        <i class="fas fa-times-circle"></i> Cancel
+                                    </button>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -1362,6 +1393,84 @@ include __DIR__ . '/../partials/header.php';
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" id="confirmModalCancel" style="margin-right: 10px;">Cancel</button>
             <button type="button" class="btn btn-success" id="confirmModalConfirm">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<!-- Status Update Modal -->
+<div id="statusUpdateModal" class="modal" style="display: none; z-index: 10002;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 class="modal-title"><i class="fas fa-edit"></i> Update Job Status</h3>
+            <button class="modal-close" onclick="closeStatusUpdateModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 25px;">
+            <form id="statusUpdateForm">
+                <input type="hidden" id="statusUpdateJobId" value="">
+                
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="lbl" style="font-weight: 600; margin-bottom: 8px; display: block;">
+                        <i class="fas fa-clipboard-check"></i> New Status
+                    </label>
+                    <select class="form-select" id="statusUpdateSelect" required style="width: 100%; padding: 12px; font-size: 14px;">
+                        <option value="">Select Status...</option>
+                        <?php if ($role === 'staff'): ?>
+                            <!-- Staff can only set jobs to active work statuses -->
+                            <option value="In Progress">⏳ In Progress</option>
+                            <option value="Awaiting Parts">📦 Awaiting Parts</option>
+                        <?php else: ?>
+                            <!-- Manager/Admin/Superadmin can set any status -->
+                            <option value="Pending">📋 Pending</option>
+                            <option value="In Progress">⏳ In Progress</option>
+                            <option value="Awaiting Parts">📦 Awaiting Parts</option>
+                            <option value="Completed">✅ Completed</option>
+                            <option value="Cancelled">❌ Cancelled</option>
+                        <?php endif; ?>
+                    </select>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 25px;">
+                    <label class="lbl" style="font-weight: 600; margin-bottom: 8px; display: block;">
+                        <i class="fas fa-sticky-note"></i> Notes (Optional)
+                    </label>
+                    <textarea class="form-input" id="statusUpdateNotes" rows="4" 
+                              placeholder="Add any notes about this status change..."
+                              style="width: 100%; padding: 12px; font-size: 14px; resize: vertical; min-height: 100px;"></textarea>
+                    <small style="color: #6c757d; font-size: 12px;">
+                        This note will be visible to all team members and included in the job history.
+                    </small>
+                </div>
+                
+                <div style="background: #e8f4f8; padding: 15px; border-radius: 8px; border-left: 4px solid #17a2b8;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                        <i class="fas fa-info-circle" style="color: #17a2b8;"></i>
+                        <strong style="color: #17a2b8;">Status Guidelines:</strong>
+                    </div>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #495057;">
+                        <?php if ($role === 'staff'): ?>
+                            <!-- Staff-specific guidelines -->
+                            <li><strong>In Progress:</strong> Work is currently being performed</li>
+                            <li><strong>Awaiting Parts:</strong> Job is on hold waiting for parts/materials</li>
+                            <li style="color: #6c757d; margin-top: 10px;"><em>Note: Only managers can mark jobs as Completed, Pending, or Cancelled</em></li>
+                        <?php else: ?>
+                            <!-- Manager/Admin/Superadmin guidelines -->
+                            <li><strong>Pending:</strong> Job is waiting for approval or assignment</li>
+                            <li><strong>In Progress:</strong> Work is currently being performed</li>
+                            <li><strong>Awaiting Parts:</strong> Job is on hold waiting for parts/materials</li>
+                            <li><strong>Completed:</strong> Job is finished (requires verification)</li>
+                            <li><strong>Cancelled:</strong> Job has been cancelled</li>
+                        <?php endif; ?>
+                    </ul>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeStatusUpdateModal()" style="margin-right: 10px;">
+                Cancel
+            </button>
+            <button type="button" class="btn btn-primary" onclick="submitStatusUpdate()">
+                <i class="fas fa-save"></i> Update Status
+            </button>
         </div>
     </div>
 </div>
@@ -2166,7 +2275,7 @@ function formatDate(dateStr) {
 
 function getStatusClass(status) {
     const s = (status || '').toLowerCase().replace(/\s+/g, '-');
-    const validStatuses = ['pending', 'in-progress', 'completed', 'cancelled', 'rejected'];
+    const validStatuses = ['pending', 'in-progress', 'completed', 'cancelled', 'rejected', 'awaiting-parts'];
     return validStatuses.includes(s) ? s : 'pending';
 }
 
@@ -2185,6 +2294,63 @@ function testClick() {
 
 function closeDetailsModal() {
     document.getElementById('detailsModal').style.display = 'none';
+}
+
+// Status Update Modal Functions
+function openUpdateStatusModal(jobId, currentStatus) {
+    console.log('Opening status update modal for job:', jobId, 'current status:', currentStatus);
+    
+    // Set the job ID
+    document.getElementById('statusUpdateJobId').value = jobId;
+    
+    // Reset the form
+    document.getElementById('statusUpdateSelect').value = '';
+    document.getElementById('statusUpdateNotes').value = '';
+    
+    // Show the modal
+    document.getElementById('statusUpdateModal').style.display = 'block';
+}
+
+function closeStatusUpdateModal() {
+    document.getElementById('statusUpdateModal').style.display = 'none';
+}
+
+function submitStatusUpdate() {
+    const jobId = document.getElementById('statusUpdateJobId').value;
+    const newStatus = document.getElementById('statusUpdateSelect').value;
+    const notes = document.getElementById('statusUpdateNotes').value;
+    
+    if (!newStatus) {
+        alert('Please select a status');
+        return;
+    }
+    
+    // Prepare form data
+    const formData = new FormData();
+    formData.append('action', 'update_job_status');
+    formData.append('job_id', jobId);
+    formData.append('new_status', newStatus);
+    formData.append('notes', notes);
+    
+    // Submit the request
+    fetch(window.location.pathname, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Status updated successfully!');
+            closeStatusUpdateModal();
+            location.reload(); // Refresh the page to show updated status
+        } else {
+            alert('Error: ' + (data.message || 'Failed to update status'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating status. Please try again.');
+    });
 }
 
 function viewAuditTrail(jobId) {

@@ -8,8 +8,8 @@ $me = current_user();
 $role = role_key($me['role'] ?? '');
 $station_id = user_station_id();
 
-// Manager/Admin/SuperAdmin can finalize
-if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
+// Only Admin/SuperAdmin can finalize and lock reports
+if (!in_array($role, ['admin', 'superadmin'])) {
     header("Location: dashboard.php");
     exit;
 }
@@ -39,11 +39,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 if (!$recon) {
                     $msg = "❌ Reconciliation record not found.";
-                } elseif ($recon['status'] !== 'approved') {
+                } elseif (!in_array($recon['status'], ['approved', 'Verified'])) {
                     $msg = "❌ Reconciliation must be approved by manager first.";
                 } else {
                     // Calculate variance
-                    $system_stock = $recon['present_reading'] - $recon['previous_reading'] - ($recon['calibration_adjustment'] ?? 0);
+                    $system_stock = $recon['present_reading'] - $recon['previous_reading'] - ($recon['calibration'] ?? 0);
                     $variance = $physical_stock - $system_stock;
                     $variance_percent = $system_stock != 0 ? ($variance / $system_stock) * 100 : 0;
                     
@@ -73,26 +73,26 @@ $reconciliations = [];
 try {
     if ($role === 'superadmin') {
         $stmt = $pdo->query("
-            SELECT fr.*, s.name as station_name, p.name as product_name, p.price,
-                   u1.name as created_by_name, u2.name as validated_by_name
+            SELECT fr.*, s.name as station_name, ft.name as fuel_type_name,
+                   u1.name as verified_by_name, u2.name as approved_by_name
             FROM fuel_reconciliation fr
             LEFT JOIN stations s ON fr.station_id = s.id
-            LEFT JOIN products p ON fr.product_id = p.id
-            LEFT JOIN users u1 ON fr.created_by = u1.id
-            LEFT JOIN users u2 ON fr.validated_by = u2.id
-            WHERE fr.status IN ('approved', 'finalized')
+            LEFT JOIN fuel_types ft ON fr.fuel_type_id = ft.id
+            LEFT JOIN users u1 ON fr.verified_by = u1.id
+            LEFT JOIN users u2 ON fr.approved_by = u2.id
+            WHERE fr.status IN ('approved', 'finalized', 'Verified')
             ORDER BY fr.reconciliation_date DESC
         ");
     } else {
         $stmt = $pdo->prepare("
-            SELECT fr.*, s.name as station_name, p.name as product_name, p.price,
-                   u1.name as created_by_name, u2.name as validated_by_name
+            SELECT fr.*, s.name as station_name, ft.name as fuel_type_name,
+                   u1.name as verified_by_name, u2.name as approved_by_name
             FROM fuel_reconciliation fr
             LEFT JOIN stations s ON fr.station_id = s.id
-            LEFT JOIN products p ON fr.product_id = p.id
-            LEFT JOIN users u1 ON fr.created_by = u1.id
-            LEFT JOIN users u2 ON fr.validated_by = u2.id
-            WHERE fr.station_id = ? AND fr.status IN ('approved', 'finalized')
+            LEFT JOIN fuel_types ft ON fr.fuel_type_id = ft.id
+            LEFT JOIN users u1 ON fr.verified_by = u1.id
+            LEFT JOIN users u2 ON fr.approved_by = u2.id
+            WHERE fr.station_id = ? AND fr.status IN ('approved', 'finalized', 'Verified')
             ORDER BY fr.reconciliation_date DESC
         ");
         $stmt->execute([$station_id]);
@@ -108,13 +108,13 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     
     try {
         $stmt = $pdo->prepare("
-            SELECT fr.*, s.name as station_name, p.name as product_name, p.price,
-                   u1.name as created_by_name, u2.name as validated_by_name, u3.name as finalized_by_name
+            SELECT fr.*, s.name as station_name, ft.name as fuel_type_name,
+                   u1.name as verified_by_name, u2.name as approved_by_name, u3.name as finalized_by_name
             FROM fuel_reconciliation fr
             LEFT JOIN stations s ON fr.station_id = s.id
-            LEFT JOIN products p ON fr.product_id = p.id
-            LEFT JOIN users u1 ON fr.created_by = u1.id
-            LEFT JOIN users u2 ON fr.validated_by = u2.id
+            LEFT JOIN fuel_types ft ON fr.fuel_type_id = ft.id
+            LEFT JOIN users u1 ON fr.verified_by = u1.id
+            LEFT JOIN users u2 ON fr.approved_by = u2.id
             LEFT JOIN users u3 ON fr.finalized_by = u3.id
             WHERE fr.id=? AND fr.status='finalized'
         ");
@@ -129,31 +129,31 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
             
             fputcsv($output, ['FUEL RECONCILIATION REPORT']);
             fputcsv($output, ['Station', 'Product', 'Date', 'Status']);
-            fputcsv($output, [$recon['station_name'], $recon['product_name'], $recon['reconciliation_date'], strtoupper($recon['status'])]);
+            fputcsv($output, [$recon['station_name'], $recon['fuel_type_name'] ?? $recon['fuel_type'], $recon['reconciliation_date'], strtoupper($recon['status'])]);
             fputcsv($output, []);
             
             fputcsv($output, ['READINGS & CALCULATIONS']);
             fputcsv($output, ['Present Reading (L)', number_format($recon['present_reading'], 2)]);
             fputcsv($output, ['Previous Reading (L)', number_format($recon['previous_reading'], 2)]);
             fputcsv($output, ['Raw Difference (L)', number_format($recon['present_reading'] - $recon['previous_reading'], 2)]);
-            fputcsv($output, ['Calibration Adjustment (L)', number_format($recon['calibration_adjustment'], 2)]);
-            fputcsv($output, ['System Stock (L)', number_format($recon['present_reading'] - $recon['previous_reading'] - $recon['calibration_adjustment'], 2)]);
+            fputcsv($output, ['Calibration Adjustment (L)', number_format($recon['calibration'] ?? 0, 2)]);
+            fputcsv($output, ['System Stock (L)', number_format($recon['present_reading'] - $recon['previous_reading'] - ($recon['calibration'] ?? 0), 2)]);
             fputcsv($output, ['Physical Stock Observed (L)', number_format($recon['physical_stock'], 2)]);
             fputcsv($output, []);
             
             fputcsv($output, ['VARIANCE ANALYSIS']);
             fputcsv($output, ['Variance (L)', number_format($recon['variance'], 2)]);
             fputcsv($output, ['Variance (%)', number_format($recon['variance_percent'], 2) . '%']);
-            fputcsv($output, ['Unit Price (₱/L)', number_format($recon['price'], 2)]);
-            fputcsv($output, ['Variance Value (₱)', number_format($recon['variance'] * $recon['price'], 2)]);
+            fputcsv($output, ['Unit Price (₱/L)', number_format($recon['price_per_liter'] ?? $recon['price'] ?? 0, 2)]);
+            fputcsv($output, ['Variance Value (₱)', number_format($recon['variance'] * ($recon['price_per_liter'] ?? $recon['price'] ?? 0), 2)]);
             fputcsv($output, []);
             
             fputcsv($output, ['APPROVALS & SIGN-OFF']);
-            fputcsv($output, ['Created By', $recon['created_by_name']]);
-            fputcsv($output, ['Created Date', $recon['reconciliation_date']]);
-            fputcsv($output, ['Validated By', $recon['validated_by_name']]);
-            fputcsv($output, ['Validated Date', $recon['reconciliation_date']]);
-            fputcsv($output, ['Finalized By', $recon['finalized_by_name']]);
+            fputcsv($output, ['Verified By', $recon['verified_by_name'] ?? '-']);
+            fputcsv($output, ['Verified Date', $recon['verified_at'] ?? $recon['reconciliation_date']]);
+            fputcsv($output, ['Approved By', $recon['approved_by_name'] ?? '-']);
+            fputcsv($output, ['Approved Date', $recon['approved_at'] ?? '-']);
+            fputcsv($output, ['Finalized By', $recon['finalized_by_name'] ?? '-']);
             fputcsv($output, ['Finalized Date', $recon['finalized_at']]);
             fputcsv($output, ['Report Status', 'LOCKED - No Changes Allowed']);
             
@@ -246,7 +246,7 @@ include __DIR__ . '/../partials/header.php';
       <div class="ff-header-icon">🔐</div>
       <div>
         <h1>Fuel Reconciliation - Finalize & Lock</h1>
-        <p>Admin/Owner - Encode physical stock, finalize report with password lock</p>
+        <p>Admin Only - Finalize approved reconciliations with password lock</p>
       </div>
     </div>
   </div>
@@ -270,7 +270,7 @@ include __DIR__ . '/../partials/header.php';
         <div class="ff-card <?php echo $rec['status'] === 'finalized' ? 'locked' : ''; ?>">
           <div class="ff-card-header">
             <div>
-              <div class="ff-card-title"><?php echo htmlspecialchars($rec['product_name'] ?? 'Fuel'); ?></div>
+              <div class="ff-card-title"><?php echo htmlspecialchars($rec['fuel_type_name'] ?? $rec['fuel_type'] ?? 'Fuel'); ?></div>
               <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;"><?php echo htmlspecialchars($rec['station_name']); ?></div>
             </div>
             <div class="ff-card-badge ff-card-badge-<?php echo $rec['status']; ?>">
@@ -287,11 +287,11 @@ include __DIR__ . '/../partials/header.php';
             <!-- Variance Display -->
             <div class="ff-calc-box">
               <div class="ff-calc-label">📊 Calculated Variance:</div>
-              <div class="ff-calc-line">System Stock: <?php echo number_format($rec['present_reading'] - $rec['previous_reading'] - $rec['calibration_adjustment'], 2); ?> L</div>
+              <div class="ff-calc-line">System Stock: <?php echo number_format($rec['present_reading'] - $rec['previous_reading'] - ($rec['calibration'] ?? 0), 2); ?> L</div>
               <div class="ff-calc-line">Physical Stock: <?php echo $rec['physical_stock'] ? number_format($rec['physical_stock'], 2) : 'Not encoded'; ?> L</div>
               <?php if($rec['physical_stock']): ?>
               <div class="ff-calc-result">Variance: <?php echo number_format($rec['variance'], 2); ?> L (<?php echo number_format($rec['variance_percent'], 2); ?>%)</div>
-              <div class="ff-calc-line">Variance Value: ₱<?php echo number_format($rec['variance'] * ($rec['price'] ?? 0), 2); ?></div>
+              <div class="ff-calc-line">Variance Value: ₱<?php echo number_format($rec['variance'] * ($rec['price_per_liter'] ?? $rec['price'] ?? 0), 2); ?></div>
               <?php endif; ?>
             </div>
             
@@ -357,15 +357,15 @@ include __DIR__ . '/../partials/header.php';
   <?php endif; ?>
   
   <div style="margin-top: 40px; padding: 20px; background: #fce7f3; border-left: 4px solid #c026d3; border-radius: 8px;">
-    <strong style="color: #9d174d;">🔐 Admin Finalization Flow:</strong>
+    <strong style="color: #9d174d;">🔐 Admin Finalization Flow (Admin/SuperAdmin Only):</strong>
     <ul style="margin-top: 8px; margin-left: 20px; color: #9d174d; font-size: 13px; line-height: 1.8;">
-      <li>✓ Wait for manager to validate and approve reconciliation</li>
-      <li>🔍 Encode physical stock reading from fuel gauge</li>
-      <li>📊 System automatically calculates variance (physical vs system)</li>
-      <li>🔒 Enter admin password to lock report</li>
-      <li>✅ Finalize reconciliation report</li>
+      <li>✓ Manager validates data and runs reconciliation</li>
+      <li>✓ Manager approves reconciliation (sets status to "Approved")</li>
+      <li>🔍 Admin reviews approved reconciliations</li>
+      <li>🔒 Admin enters password to verify and lock report</li>
+      <li>✅ Finalize reconciliation - report is now LOCKED</li>
       <li>📥 Export to CSV for records/archive</li>
-      <li>🔐 Report is now LOCKED - no changes allowed</li>
+      <li>🔐 Locked reports cannot be modified</li>
     </ul>
   </div>
 </div>

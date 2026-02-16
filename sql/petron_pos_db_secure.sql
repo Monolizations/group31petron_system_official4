@@ -316,12 +316,12 @@ CREATE TABLE `fuel_pumps` (
 --
 
 INSERT INTO `fuel_pumps` (`id`, `station_id`, `pump_number`, `fuel_type_id`, `capacity`, `status`, `created_at`) VALUES
-(1, 1, 'Pump 1', 1, 0.00, 'Active', '2026-02-10 08:52:44'),
-(2, 1, 'Pump 2', 1, 0.00, 'Active', '2026-02-10 08:52:44'),
-(3, 1, 'Pump 3', 2, 0.00, 'Active', '2026-02-10 08:52:44'),
-(4, 226, 'Pump 1', 2, 0.00, 'Active', '2026-02-10 08:59:35'),
-(5, 226, 'Pump 2', 1, 0.00, 'Active', '2026-02-10 08:59:35'),
-(6, 226, 'Pump 3', 3, 0.00, 'Active', '2026-02-10 08:59:35');
+(1, 1205, 'Pump 1', 1, 0.00, 'Active', '2026-02-10 08:52:44'),
+(2, 1205, 'Pump 2', 1, 0.00, 'Active', '2026-02-10 08:52:44'),
+(3, 1205, 'Pump 3', 2, 0.00, 'Active', '2026-02-10 08:52:44'),
+(4, 1205, 'Pump 1', 2, 0.00, 'Active', '2026-02-10 08:59:35'),
+(5, 1205, 'Pump 2', 1, 0.00, 'Active', '2026-02-10 08:59:35'),
+(6, 1205, 'Pump 3', 3, 0.00, 'Active', '2026-02-10 08:59:35');
 
 -- --------------------------------------------------------
 
@@ -415,9 +415,9 @@ CREATE TABLE `inventory` (
 --
 
 INSERT INTO `inventory` (`id`, `station_id`, `product_id`, `stock_level`, `reorder_level`, `capacity`, `unit`, `status`, `last_updated`) VALUES
-(1, 1, 1, 1000.00, 100, 10000.00, 'liters', 'active', '2026-02-07 12:14:22'),
-(2, 1, 2, 500.00, 50, 5000.00, 'pieces', 'active', '2026-02-07 12:14:22'),
-(3, 1, 3, 200.00, 20, 2000.00, 'pieces', 'active', '2026-02-07 12:14:22');
+(1, 1205, 1, 1000.00, 100, 10000.00, 'liters', 'active', '2026-02-07 12:14:22'),
+(2, 1205, 2, 500.00, 50, 5000.00, 'pieces', 'active', '2026-02-07 12:14:22'),
+(3, 1205, 3, 200.00, 20, 2000.00, 'pieces', 'active', '2026-02-07 12:14:22');
 
 -- --------------------------------------------------------
 
@@ -482,7 +482,7 @@ CREATE TABLE `job_orders` (
 --
 
 INSERT INTO `job_orders` (`id`, `job_order_number`, `station_id`, `user_id`, `customer_id`, `vehicle_plate`, `vehicle_type`, `service_category_id`, `assigned_mechanic_id`, `assigned_by`, `service_description`, `estimated_duration`, `status`, `notes`, `started_at`, `completed_at`, `created_at`, `updated_at`, `requires_approval`, `reviewed_by`, `reviewed_at`, `approved_by`, `approved_at`, `admin_remarks`, `estimated_labor_cost`, `estimated_parts_cost`, `actual_labor_cost`, `actual_parts_cost`, `total_cost`, `actual_duration`) VALUES
-(9, 'JO-2026-02-09-0001', 226, NULL, 9, '12345', 'HONDA', 7, 16, 15, 'General Service', 60, 'Reviewed', 'gwapo', NULL, NULL, '2026-02-09 10:39:46', '2026-02-09 11:34:14', 0, 14, '2026-02-09 11:34:14', NULL, NULL, 'okiee kayow', 600.00, 800.00, 0.00, 0.00, 0.00, NULL);
+(9, 'JO-2026-02-09-0001', 1205, NULL, 9, '12345', 'HONDA', 7, 16, 15, 'General Service', 60, 'Reviewed', 'gwapo', NULL, NULL, '2026-02-09 10:39:46', '2026-02-09 11:34:14', 0, 14, '2026-02-09 11:34:14', NULL, NULL, 'okiee kayow', 600.00, 800.00, 0.00, 0.00, 0.00, NULL);
 
 -- --------------------------------------------------------
 
@@ -2536,7 +2536,7 @@ CREATE TABLE `users` (
   `emp_id` varchar(50) DEFAULT NULL,
   `username` varchar(50) NOT NULL,
   `password` varchar(255) NOT NULL,
-  `role` enum('superadmin','admin','manager','operations_staff','staff') NOT NULL DEFAULT 'staff',
+  `role` enum('superadmin','admin','manager','staff') NOT NULL DEFAULT 'staff',
   `hourly_rate` decimal(10,2) DEFAULT 150.00,
   `email` varchar(150) DEFAULT NULL,
   `name` varchar(100) DEFAULT NULL,
@@ -2555,16 +2555,16 @@ CREATE TABLE `users` (
 INSERT INTO `users` (`id`, `emp_id`, `username`, `password`, `role`, `hourly_rate`, `email`, `name`, `station_id`, `status`, `is_deleted`, `deleted_at`, `deleted_by`, `created_at`) VALUES
 (1, NULL, 'superadmin', '$2y$10$vIH4dgr29FVfXbKyaa7U1OrCMx4ZuetW1ZwRDwuQbsYLLwdqA/36i', 'superadmin', 150.00, 'superadmin@petron.com', 'Super Admin', NULL, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
 (2, NULL, 'admin', '$2y$10$pip5fV3ZDTnWrHuvh019Z.VPE1ufgSmzk8fD1YwteM/4barHlJGIC', 'admin', 150.00, 'admin@petron.com', 'Admin', NULL, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
-(3, NULL, 'manager', '$2y$10$/.HlYc4MkETFJ/jjuBYDBui3LcrPatVKVmULSN1bBb7KqcnGMq0iS', 'manager', 150.00, 'manager@petron.com', 'Station Manager', 1, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
-(4, NULL, 'operations', '$2y$10$YO63CN8KeYXxFn0qIOPibuvPkxAf8Fpwbq.dze.kViC8Imj9cW1/6', 'operations_staff', 150.00, 'operations@petron.com', 'Operations Staff', 1, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
+(3, NULL, 'manager', '$2y$10$/.HlYc4MkETFJ/jjuBYDBui3LcrPatVKVmULSN1bBb7KqcnGMq0iS', 'manager', 150.00, 'manager@petron.com', 'Station Manager', 1205, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
+(4, NULL, 'operations', '$2y$10$YO63CN8KeYXxFn0qIOPibuvPkxAf8Fpwbq.dze.kViC8Imj9cW1/6', 'staff', 150.00, 'operations@petron.com', 'Operations Staff', 1205, 'active', 0, NULL, NULL, '2026-02-06 01:37:41'),
 (5, NULL, 'juan.carlo', '$2y$10$FPAZIKierCzy9Tr/PqVa.u.sicyWM9r8SAy7JO5994UyoVXQx3BZS', 'staff', 150.00, NULL, 'Juan Carlo', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),
 (6, NULL, 'carla', '$2y$10$vJkcoK1ekWO3iNtL7P5BI.uY4piTKR4nMGL5PCFRP.Y1rk7robiNG', 'staff', 150.00, NULL, 'Carla', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),
 (7, NULL, 'miguel', '$2y$10$E75FtVdHlD3vW1x.sM6Ec..MdvemI7f6O7QrYjptofXftaKHe9/x2', 'staff', 150.00, NULL, 'Miguel', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),
 (8, NULL, 'andrea', '$2y$10$fpazu0ufqlPUCUM416C4m.17bc9dPNWvoVQ1c8.0HsSk.OEjO.Aem', 'staff', 150.00, NULL, 'Andrea', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:27'),
 (9, NULL, 'mark', '$2y$10$R67TPE3vadfh1pmYJ33ruOKeroOWs42AbCXAxyD4wUvkvSJlBmpMK', 'staff', 150.00, NULL, 'Mark', NULL, 'active', 0, NULL, NULL, '2026-02-07 20:16:28'),
-(14, NULL, 'amie', '$2y$10$J6iLJbFR3vr2OUKgoyYgmen2A3BXDgBDW4qAs2IDPM8ijzT.kNaNa', 'admin', 150.00, 'amie@gmail.com', 'amie cabahug', 226, 'active', 0, NULL, NULL, '2026-02-07 20:19:20'),
-(15, NULL, 'altea', '$2y$10$1Enh9TVIihLWCzAmBb9YHeZiGnj6u.FSY7VgeG5zCy4TM5vLt0/hO', 'staff', 150.00, 'altea@gmail.com', 'ALTEA PAGALING', 226, 'active', 0, NULL, NULL, '2026-02-07 20:41:54'),
-(16, NULL, 'sandara', '$2y$10$4.LhjZIYKEOb051MFO172uoQYdR8L2fVCkbceof15EAKA2LyKL0O.', 'manager', 150.00, 'sandara@gmail.com', 'pagaling,sandara jane m.', 226, 'active', 0, NULL, NULL, '2026-02-07 20:42:17');
+(14, NULL, 'amie', '$2y$10$J6iLJbFR3vr2OUKgoyYgmen2A3BXDgBDW4qAs2IDPM8ijzT.kNaNa', 'admin', 150.00, 'amie@gmail.com', 'amie cabahug', 1205, 'active', 0, NULL, NULL, '2026-02-07 20:19:20'),
+(15, NULL, 'altea', '$2y$10$1Enh9TVIihLWCzAmBb9YHeZiGnj6u.FSY7VgeG5zCy4TM5vLt0/hO', 'staff', 150.00, 'altea@gmail.com', 'ALTEA PAGALING', 1205, 'active', 0, NULL, NULL, '2026-02-07 20:41:54'),
+(16, NULL, 'sandara', '$2y$10$4.LhjZIYKEOb051MFO172uoQYdR8L2fVCkbceof15EAKA2LyKL0O.', 'manager', 150.00, 'sandara@gmail.com', 'pagaling,sandara jane m.', 1205, 'active', 0, NULL, NULL, '2026-02-07 20:42:17');
 
 --
 -- Indexes for dumped tables
@@ -3352,6 +3352,32 @@ ALTER TABLE `supplier_confirmations`
 --
 ALTER TABLE `users`
   ADD CONSTRAINT `fk_user_station` FOREIGN KEY (`station_id`) REFERENCES `stations` (`id`) ON DELETE SET NULL;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `stock_requests`
+--
+CREATE TABLE IF NOT EXISTS `stock_requests` (
+  `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `station_id` int(11) NOT NULL,
+  `requested_by` int(11) DEFAULT NULL,
+  `type` enum('fuel','merch','parts') NOT NULL DEFAULT 'merch',
+  `product_name` varchar(255) NOT NULL,
+  `qty` decimal(10,2) NOT NULL,
+  `notes` text DEFAULT NULL,
+  `status` enum('pending','approved','rejected','received') DEFAULT 'pending',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `processed_by` int(11) DEFAULT NULL,
+  `processed_at` datetime DEFAULT NULL,
+  `reviewed_by` int(11) DEFAULT NULL,
+  `reviewed_at` datetime DEFAULT NULL,
+  `received_qty` decimal(10,2) DEFAULT NULL,
+  `received_date` datetime DEFAULT NULL,
+  KEY `idx_station_status` (`station_id`,`status`),
+  KEY `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

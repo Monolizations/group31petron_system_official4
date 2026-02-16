@@ -27,11 +27,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = "❌ Error: Selling price must be at least equal to cost.";
         } else {
             try {
+                // Fetch old values for audit trail
+                $stmtOld = $pdo->prepare("SELECT name, cost, price FROM products WHERE id = ?");
+                $stmtOld->execute([$product_id]);
+                $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
+                
                 $stmt = $pdo->prepare("UPDATE products SET cost = ?, price = ? WHERE id = ?");
                 $stmt->execute([$cost, $price, $product_id]);
                 $msg = "✅ Price updated successfully!";
                 
-                log_activity($pdo, $me['id'], 'Update Product Price', "Updated price for product ID: $product_id to ₱$price");
+                $product_name = $old['name'] ?? "ID:$product_id";
+                $price_change = '';
+                if ($old && ($old['cost'] != $cost || $old['price'] != $price)) {
+                    $price_change = " | Cost: P{$old['cost']} -> P{$cost} | Price: P{$old['price']} -> P{$price}";
+                }
+                log_activity($pdo, $me['id'], 'Update Product Price', "Updated $product_name (ID: $product_id){$price_change}");
             } catch (Exception $e) {
                 $msg = "❌ Error: " . $e->getMessage();
             }

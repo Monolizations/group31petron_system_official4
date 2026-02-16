@@ -55,7 +55,7 @@ Password:     operations123
 Password Hash: $2y$10$noiaaIMqkpHujnNoKE92ceolYVjG5P7wSpTs0y/ouC2wjHwoxYrDa
 Name:         Operations Staff
 Email:        operations@petron.com
-Role:         operations_staff
+Role:         staff
 Station ID:   1
 Status:       active
 Verified:     ✓ Password verified (2026-02-14)

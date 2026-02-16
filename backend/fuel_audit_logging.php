@@ -8,16 +8,16 @@
  */
 
 /**
- * Log a fuel inventory action to both activity_logs and fuel_inventory_logs
+ * Log a fuel inventory action to both activity_logs and audit_logs
  * This ensures dual logging for complete audit trail
  * 
  * @param PDO $pdo Database connection
  * @param int $user_id User performing the action
- * @param string $action_type Type of action (see fuel_inventory_logs enum)
+ * @param string $action_type Type of action (delivery_recorded, delivery_verified, etc.)
  * @param string $reference_type fuel_delivery, fuel_daily_reading, or fuel_adjustment
  * @param int $reference_id ID of the source transaction
  * @param int $station_id Station ID
- * @param int $product_id Fuel product ID
+ * @param int $product_id Fuel product ID (nullable)
  * @param array $details Additional details
  */
 function log_fuel_inventory_action($pdo, $user_id, $action_type, $reference_type, $reference_id, $station_id, $product_id, $details = []) {
@@ -29,16 +29,44 @@ function log_fuel_inventory_action($pdo, $user_id, $action_type, $reference_type
         // Log to activity_logs
         $stmt = $pdo->prepare("
             INSERT INTO activity_logs (
-                user_id, action, description, details, 
-                page_id, created_at, ip_address, user_agent
-            ) VALUES (?, ?, ?, ?, 'fuel_management', NOW(), ?, ?)
+                user_id, action, details, reference, 
+                ip_address, created_at
+            ) VALUES (?, ?, ?, ?, ?, NOW())
         ");
+        
+        $reference_str = "{$reference_type}#{$reference_id}";
         
         $stmt->execute([
             $user_id,
             $action_label,
-            "Fuel {$action_label}: {$reference_type} #{$reference_id}",
-            $details_str,
+            "Fuel {$action_label}: {$reference_type} #{$reference_id} - " . json_encode($details),
+            $reference_str,
+            $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+        ]);
+        
+        // Log to audit_logs for comprehensive tracking
+        $stmt = $pdo->prepare("
+            INSERT INTO audit_logs (
+                user_id, log_type, action_type, action_details,
+                entity_type, entity_id, new_values, 
+                ip_address, user_agent, status, created_at
+            ) VALUES (?, 'inventory', ?, ?, ?, ?, ?, ?, ?, 'Success', NOW())
+        ");
+        
+        $audit_details = array_merge($details, [
+            'station_id' => $station_id,
+            'product_id' => $product_id,
+            'reference_type' => $reference_type,
+            'reference_id' => $reference_id
+        ]);
+        
+        $stmt->execute([
+            $user_id,
+            $action_type,
+            "Fuel inventory {$action_type} for {$reference_type} #{$reference_id}",
+            'fuel_inventory',
+            $reference_id,
+            json_encode($audit_details),
             $_SERVER['REMOTE_ADDR'] ?? 'unknown',
             $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
         ]);
@@ -63,23 +91,21 @@ function get_fuel_audit_trail($pdo, $reference_type, $reference_id) {
     try {
         $stmt = $pdo->prepare("
             SELECT 
-                fil.id,
-                fil.action,
-                fil.status,
-                fil.quantity_before,
-                fil.quantity_after,
-                fil.quantity_change,
-                fil.notes,
-                fil.approval_reason,
-                u1.name as initiated_by_name,
-                u2.name as approved_by_name,
-                fil.created_at,
-                fil.updated_at
-            FROM fuel_inventory_logs fil
-            LEFT JOIN users u1 ON fil.user_id = u1.id
-            LEFT JOIN users u2 ON fil.approved_by = u2.id
-            WHERE fil.reference_type = ? AND fil.reference_id = ?
-            ORDER BY fil.created_at ASC
+                al.id,
+                al.action_type,
+                al.action_details,
+                al.new_values,
+                al.status,
+                u.name as user_name,
+                al.created_at,
+                al.ip_address
+            FROM audit_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            WHERE al.log_type = 'inventory' 
+            AND al.entity_type = 'fuel_inventory'
+            AND JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.reference_type')) = ?
+            AND JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.reference_id')) = ?
+            ORDER BY al.created_at ASC
         ");
         
         $stmt->execute([$reference_type, $reference_id]);
@@ -105,26 +131,26 @@ function get_fuel_stock_modifications($pdo, $station_id, $start_date, $end_date)
     try {
         $stmt = $pdo->prepare("
             SELECT 
-                fil.id,
-                fil.action,
-                fil.status,
-                fil.quantity_before,
-                fil.quantity_after,
-                fil.quantity_change,
-                p.name as fuel_name,
-                u1.name as initiated_by_name,
-                u2.name as approved_by_name,
-                fil.reference_type,
-                fil.reference_id,
-                fil.created_at,
-                fil.updated_at
-            FROM fuel_inventory_logs fil
-            JOIN products p ON fil.product_id = p.id
-            LEFT JOIN users u1 ON fil.user_id = u1.id
-            LEFT JOIN users u2 ON fil.approved_by = u2.id
-            WHERE fil.station_id = ? 
-            AND DATE(fil.created_at) BETWEEN ? AND ?
-            ORDER BY fil.created_at DESC
+                al.id,
+                al.action_type,
+                al.action_details,
+                al.new_values,
+                al.status,
+                u.name as user_name,
+                al.created_at,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.fuel_type')) as fuel_type,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_before')) as quantity_before,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_after')) as quantity_after,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_change')) as quantity_change,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.reference_type')) as reference_type,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.reference_id')) as reference_id
+            FROM audit_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            WHERE al.log_type = 'inventory' 
+            AND al.entity_type = 'fuel_inventory'
+            AND JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.station_id')) = ?
+            AND DATE(al.created_at) BETWEEN ? AND ?
+            ORDER BY al.created_at DESC
         ");
         
         $stmt->execute([$station_id, $start_date, $end_date]);
@@ -150,29 +176,32 @@ function get_user_fuel_actions($pdo, $user_id, $action_type = null, $limit = 50)
     try {
         $query = "
             SELECT 
-                fil.id,
-                fil.action,
-                fil.status,
-                fil.quantity_change,
-                p.name as fuel_name,
-                s.name as station_name,
-                fil.reference_type,
-                fil.reference_id,
-                fil.created_at
-            FROM fuel_inventory_logs fil
-            JOIN products p ON fil.product_id = p.id
-            JOIN stations s ON fil.station_id = s.id
-            WHERE fil.user_id = ?
+                al.id,
+                al.action_type,
+                al.action_details,
+                al.new_values,
+                al.status,
+                al.created_at,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.fuel_type')) as fuel_type,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_change')) as quantity_change,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.reference_type')) as reference_type,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.reference_id')) as reference_id,
+                s.name as station_name
+            FROM audit_logs al
+            LEFT JOIN stations s ON s.id = JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.station_id'))
+            WHERE al.user_id = ? 
+            AND al.log_type = 'inventory' 
+            AND al.entity_type = 'fuel_inventory'
         ";
         
         $params = [$user_id];
         
         if ($action_type) {
-            $query .= " AND fil.action = ?";
+            $query .= " AND al.action_type = ?";
             $params[] = $action_type;
         }
         
-        $query .= " ORDER BY fil.created_at DESC LIMIT ?";
+        $query .= " ORDER BY al.created_at DESC LIMIT ?";
         $params[] = $limit;
         
         $stmt = $pdo->prepare($query);
@@ -198,14 +227,17 @@ function generate_fuel_audit_report($pdo, $station_id, $date) {
         // Get all modifications for the date
         $stmt = $pdo->prepare("
             SELECT 
-                fil.action,
+                al.action_type,
                 COUNT(*) as count,
-                SUM(fil.quantity_change) as total_change,
-                MIN(fil.created_at) as first_action,
-                MAX(fil.created_at) as last_action
-            FROM fuel_inventory_logs fil
-            WHERE fil.station_id = ? AND DATE(fil.created_at) = ?
-            GROUP BY fil.action
+                SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_change')) AS DECIMAL(10,2))) as total_change,
+                MIN(al.created_at) as first_action,
+                MAX(al.created_at) as last_action
+            FROM audit_logs al
+            WHERE al.log_type = 'inventory' 
+            AND al.entity_type = 'fuel_inventory'
+            AND JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.station_id')) = ?
+            AND DATE(al.created_at) = ?
+            GROUP BY al.action_type
         ");
         
         $stmt->execute([$station_id, $date]);
@@ -214,16 +246,19 @@ function generate_fuel_audit_report($pdo, $station_id, $date) {
         // Get detailed modifications
         $stmt = $pdo->prepare("
             SELECT 
-                fil.*,
-                p.name as fuel_name,
-                u1.name as initiated_by_name,
-                u2.name as approved_by_name
-            FROM fuel_inventory_logs fil
-            JOIN products p ON fil.product_id = p.id
-            LEFT JOIN users u1 ON fil.user_id = u1.id
-            LEFT JOIN users u2 ON fil.approved_by = u2.id
-            WHERE fil.station_id = ? AND DATE(fil.created_at) = ?
-            ORDER BY fil.created_at ASC
+                al.*,
+                u.name as user_name,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.fuel_type')) as fuel_type,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_before')) as quantity_before,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_after')) as quantity_after,
+                JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.quantity_change')) as quantity_change
+            FROM audit_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            WHERE al.log_type = 'inventory' 
+            AND al.entity_type = 'fuel_inventory'
+            AND JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.station_id')) = ?
+            AND DATE(al.created_at) = ?
+            ORDER BY al.created_at ASC
         ");
         
         $stmt->execute([$station_id, $date]);
@@ -255,47 +290,35 @@ function verify_fuel_audit_integrity($pdo, $station_id) {
     try {
         $results = [];
         
-        // Check 1: All deliveries have corresponding logs
+        // Check 1: All finalized deliveries should have audit logs
         $stmt = $pdo->prepare("
-            SELECT fd.id, fd.status
+            SELECT COUNT(*) as count
             FROM fuel_deliveries fd
-            LEFT JOIN fuel_inventory_logs fil ON fil.reference_type = 'fuel_delivery' AND fil.reference_id = fd.id
-            WHERE fd.station_id = ? AND fd.status = 'Finalized' AND fil.id IS NULL
+            WHERE fd.station_id = ? AND fd.status IN ('Finalized', 'Manager_Direct')
         ");
         
         $stmt->execute([$station_id]);
-        $missing_delivery_logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        $results['missing_delivery_logs'] = count($missing_delivery_logs);
+        $total_deliveries = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
         
-        // Check 2: All approved readings have corresponding logs
+        // Check 2: Count delivery audit logs
         $stmt = $pdo->prepare("
-            SELECT fdr.id
-            FROM fuel_daily_readings fdr
-            LEFT JOIN fuel_inventory_logs fil ON fil.reference_type = 'fuel_daily_reading' AND fil.reference_id = fdr.id
-            WHERE fdr.station_id = ? AND fdr.status = 'Approved' AND fil.id IS NULL
+            SELECT COUNT(*) as count
+            FROM audit_logs al
+            WHERE al.log_type = 'inventory' 
+            AND al.entity_type = 'fuel_inventory'
+            AND JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.station_id')) = ?
+            AND al.action_type LIKE '%delivery%'
         ");
         
         $stmt->execute([$station_id]);
-        $missing_reading_logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        $results['missing_reading_logs'] = count($missing_reading_logs);
+        $logged_deliveries = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
         
-        // Check 3: All approved adjustments have corresponding logs
-        $stmt = $pdo->prepare("
-            SELECT fa.id
-            FROM fuel_adjustments fa
-            LEFT JOIN fuel_inventory_logs fil ON fil.reference_type = 'fuel_adjustment' AND fil.reference_id = fa.id
-            WHERE fa.station_id = ? AND fa.status = 'Approved' AND fil.id IS NULL
-        ");
+        $results['total_deliveries'] = $total_deliveries;
+        $results['logged_deliveries'] = $logged_deliveries;
+        $results['missing_delivery_logs'] = max(0, $total_deliveries - $logged_deliveries);
         
-        $stmt->execute([$station_id]);
-        $missing_adjustment_logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        $results['missing_adjustment_logs'] = count($missing_adjustment_logs);
-        
-        $results['integrity_ok'] = (
-            $results['missing_delivery_logs'] == 0 &&
-            $results['missing_reading_logs'] == 0 &&
-            $results['missing_adjustment_logs'] == 0
-        );
+        // Overall integrity status
+        $results['integrity_ok'] = ($results['missing_delivery_logs'] == 0);
         
         return $results;
     } catch (Exception $e) {

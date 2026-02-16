@@ -1,13 +1,17 @@
 <?php
 /**
- * INVENTORY LIST - Manager View
+ * INVENTORY LIST - Inventory View
  * 
  * Displays current inventory with:
  * - Product names and SKUs
- * - Current stock quantities for the manager's station
- * - Cost and selling prices
+ * - Current stock quantities for the user's station
+ * - Cost and selling prices (hidden for staff - read-only view)
  * - Last updated timestamps
  * - Search and filter functionality
+ * 
+ * Access:
+ * - Staff: Read-only view (stock levels and selling prices only)
+ * - Manager/Admin/Superadmin: Full view with cost prices and margins
  */
 
 $page_id = 'inventory_list';
@@ -17,20 +21,27 @@ require_login();
 
 $me = current_user();
 $role = role_key($me['role'] ?? 'staff');
-$station_id = $me['station_id'] ?? 0;
+$station_id = user_station_id();
 
-// Only manager and admin can view inventory list
-if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
+// Staff, Manager, Admin, and Superadmin can view inventory list
+// Staff gets read-only access with limited information
+if (!in_array($role, ['staff', 'manager', 'admin', 'superadmin'])) {
     header('Location: dashboard.php');
     exit;
 }
+
+// Determine if user can see cost/margin data (staff cannot)
+$can_see_costs = in_array($role, ['manager', 'admin', 'superadmin']);
 
 $search = $_GET['search'] ?? '';
 $sort = $_GET['sort'] ?? 'name';
 $order = $_GET['order'] ?? 'ASC';
 
-// Validate sort column
-$allowed_sorts = ['name', 'sku', 'stock_level', 'cost', 'price', 'last_updated'];
+// Validate sort column - staff can't sort by cost
+$allowed_sorts = ['name', 'sku', 'stock_level', 'price', 'last_updated'];
+if ($can_see_costs) {
+    $allowed_sorts[] = 'cost';
+}
 if (!in_array($sort, $allowed_sorts)) {
     $sort = 'name';
 }
@@ -39,8 +50,8 @@ if (!in_array($sort, $allowed_sorts)) {
 $where_clauses = [];
 $params = [];
 
-// Manager can only see their station's inventory, superadmin sees all
-if ($station_id && !in_array($role, ['admin', 'superadmin'])) {
+// Manager and staff can only see their station's inventory, admin/superadmin see all
+if ($station_id && in_array($role, ['manager', 'staff'])) {
     $where_clauses[] = "si.station_id = ?";
     $params[] = $station_id;
 }
@@ -91,7 +102,13 @@ include __DIR__ . '/../partials/header.php';
 <div class="page-head">
     <div>
         <h1 class="h1">Inventory List</h1>
-        <div class="sub">View and verify product prices and stock quantities</div>
+        <div class="sub">
+            <?php if ($can_see_costs): ?>
+                View and verify product prices and stock quantities
+            <?php else: ?>
+                View product stock levels and selling prices (read-only)
+            <?php endif; ?>
+        </div>
     </div>
 </div>
 
@@ -111,7 +128,9 @@ include __DIR__ . '/../partials/header.php';
                     <option value="name" <?php echo $sort === 'name' ? 'selected' : ''; ?>>Sort by Name</option>
                     <option value="sku" <?php echo $sort === 'sku' ? 'selected' : ''; ?>>Sort by SKU</option>
                     <option value="stock_level" <?php echo $sort === 'stock_level' ? 'selected' : ''; ?>>Sort by Stock</option>
+                    <?php if ($can_see_costs): ?>
                     <option value="cost" <?php echo $sort === 'cost' ? 'selected' : ''; ?>>Sort by Cost Price</option>
+                    <?php endif; ?>
                     <option value="price" <?php echo $sort === 'price' ? 'selected' : ''; ?>>Sort by Selling Price</option>
                     <option value="last_updated" <?php echo $sort === 'last_updated' ? 'selected' : ''; ?>>Sort by Updated</option>
                 </select>
@@ -151,16 +170,19 @@ include __DIR__ . '/../partials/header.php';
             }
             ?>
             
+            <?php if ($can_see_costs): ?>
             <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; text-align: center;">
                 <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Total Cost Value</div>
                 <div style="font-size: 24px; font-weight: bold; color: #002F6C;">₱<?php echo number_format($total_cost_value, 2); ?></div>
             </div>
+            <?php endif; ?>
             
             <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; text-align: center;">
                 <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Total Selling Value</div>
                 <div style="font-size: 24px; font-weight: bold; color: #002F6C;">₱<?php echo number_format($total_selling_value, 2); ?></div>
             </div>
             
+            <?php if ($can_see_costs): ?>
             <?php 
             $total_margin = 0;
             if ($total_cost_value > 0) {
@@ -172,6 +194,7 @@ include __DIR__ . '/../partials/header.php';
                 <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Overall Margin</div>
                 <div style="font-size: 24px; font-weight: bold; color: #28a745;"><?php echo number_format($total_margin, 1); ?>%</div>
             </div>
+            <?php endif; ?>
         </div>
 
         <!-- Inventory Table -->
@@ -182,10 +205,14 @@ include __DIR__ . '/../partials/header.php';
                         <th style="padding: 12px; text-align: left;">Product Name</th>
                         <th style="padding: 12px; text-align: center;">SKU</th>
                         <th style="padding: 12px; text-align: right;">Stock Qty</th>
+                        <?php if ($can_see_costs): ?>
                         <th style="padding: 12px; text-align: right;">Cost Price</th>
+                        <?php endif; ?>
                         <th style="padding: 12px; text-align: right;">Selling Price</th>
+                        <?php if ($can_see_costs): ?>
                         <th style="padding: 12px; text-align: right;">Margin</th>
                         <th style="padding: 12px; text-align: center;">Stock Value</th>
+                        <?php endif; ?>
                         <th style="padding: 12px; text-align: center;">Last Updated</th>
                     </tr>
                 </thead>
@@ -209,12 +236,15 @@ include __DIR__ . '/../partials/header.php';
                                     <?php echo number_format($item['stock_level'] ?? 0, 2); ?>
                                 </strong>
                             </td>
+                            <?php if ($can_see_costs): ?>
                             <td style="padding: 12px; text-align: right;">
                                 ₱<?php echo number_format($item['cost'] ?? 0, 2); ?>
                             </td>
+                            <?php endif; ?>
                             <td style="padding: 12px; text-align: right;">
                                 <strong>₱<?php echo number_format($item['price'] ?? 0, 2); ?></strong>
                             </td>
+                            <?php if ($can_see_costs): ?>
                             <td style="padding: 12px; text-align: right;">
                                 <?php 
                                 $margin = 0;
@@ -233,6 +263,7 @@ include __DIR__ . '/../partials/header.php';
                                 ?>
                                 <strong>₱<?php echo number_format($stock_value, 2); ?></strong>
                             </td>
+                            <?php endif; ?>
                             <td style="padding: 12px; text-align: center;">
                                 <div style="font-size: 12px; color: #666;">
                                     <?php 
@@ -250,7 +281,7 @@ include __DIR__ . '/../partials/header.php';
                         <?php endforeach; ?>
                     <?php else: ?>
                     <tr>
-                        <td colspan="8" style="padding: 30px; text-align: center; color: #999;">
+                        <td colspan="<?php echo $can_see_costs ? '8' : '5'; ?>" style="padding: 30px; text-align: center; color: #999;">
                             <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; opacity: 0.5;"></i>
                             No inventory items found. Try adjusting your search filters.
                         </td>
@@ -260,7 +291,8 @@ include __DIR__ . '/../partials/header.php';
             </table>
         </div>
 
-        <!-- Legend -->
+        <!-- Legend (only for roles that can see margins) -->
+        <?php if ($can_see_costs): ?>
         <div style="margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 8px;">
             <div style="font-weight: bold; margin-bottom: 10px;">Legend:</div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; font-size: 12px;">
@@ -278,6 +310,7 @@ include __DIR__ . '/../partials/header.php';
                 </div>
             </div>
         </div>
+        <?php endif; ?>
     </div>
 </div>
 

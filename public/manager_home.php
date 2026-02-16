@@ -43,7 +43,7 @@ try {
 }
 
 try {
-  $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE station_id = ? AND status IN ('Pending','PENDING_REVIEW','Pending Review','In Progress')");
+  $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE station_id = ? AND status IN ('Pending','PENDING_REVIEW','Pending Review','In Progress','Awaiting Parts')");
   $stmt->execute([$station_id]);
   $metrics['active_jobs'] = (int)$stmt->fetchColumn();
 } catch(Exception $e) {}

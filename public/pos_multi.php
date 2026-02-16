@@ -16,6 +16,7 @@
 
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
+require_once __DIR__ . '/../backend/inventory_automation.php';
 require_login();
 
 $me = current_user();
@@ -44,17 +45,26 @@ try {
      
      // Load fuel products
      $stmt = $pdo->prepare("
-         SELECT p.id, p.name, p.price, p.sku, i.stock_level, i.unit, i.status as inventory_status, pt.name as type_name, p.type_id,
-                fp.price_per_liter as price
+         SELECT p.id, p.name, p.price, p.sku, p.fuel_type_id, i.stock_level, i.unit, i.status as inventory_status, pt.name as type_name, p.type_id,
+                fp.price_per_liter as current_price
          FROM products p
          INNER JOIN product_types pt ON p.type_id = pt.id
          INNER JOIN station_inventory i ON p.id = i.product_id AND i.station_id = ? AND i.status = 'active'
-         LEFT JOIN fuel_pricing fp ON fp.fuel_type_id = p.type_id AND fp.station_id = ? AND fp.is_active = 1
-         WHERE pt.name = 'fuel'
+         LEFT JOIN fuel_pricing fp ON fp.fuel_type_id = p.fuel_type_id AND fp.station_id = ? AND fp.is_active = 1
+         WHERE pt.name = 'fuel' AND p.fuel_type_id IS NOT NULL
          ORDER BY p.name
      ");
      $stmt->execute([$station_id, $station_id]);
      $fuelProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+     
+     // Fallback to products.price if fuel_pricing not available
+     foreach ($fuelProducts as &$fp) {
+         if (!$fp['current_price'] || $fp['current_price'] <= 0) {
+             $fp['current_price'] = $fp['price']; // Use product's base price as fallback
+         }
+         // Set the price field for consistency
+         $fp['price'] = $fp['current_price'];
+     }
      
      // Combine both
      $inventory = [
@@ -120,29 +130,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                       break;
                   }
                   
-                  // Validate pump and nozzle for fuel products
+                  // Validate pump for fuel products (nozzle validation removed)
                   if ($product['type_name'] === 'fuel') {
                       if (empty($pump_id)) {
                           $validation_error = "❌ Error: Pump selection is required for {$product['name']}";
                           break;
-                      } elseif (empty($nozzle_id)) {
-                          $validation_error = "❌ Error: Nozzle selection is required for {$product['name']}";
-                          break;
                       }
-                      
+
                       // Validate pump exists and belongs to this station
                       $stmt = $pdo->prepare("SELECT id FROM fuel_pumps WHERE id = ? AND station_id = ? AND status = 'Active'");
                       $stmt->execute([$pump_id, $station_id]);
                       if (!$stmt->fetch()) {
                           $validation_error = "❌ Error: Invalid pump selection for {$product['name']}";
-                          break;
-                      }
-                      
-                      // Validate nozzle exists and belongs to the pump
-                      $stmt = $pdo->prepare("SELECT id FROM nozzles WHERE id = ? AND pump_id = ? AND status = 'active'");
-                      $stmt->execute([$nozzle_id, $pump_id]);
-                      if (!$stmt->fetch()) {
-                          $validation_error = "❌ Error: Invalid nozzle selection for {$product['name']}";
                           break;
                       }
                   }
@@ -189,10 +188,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    }
                    $msg = "❌ Error: Total amount must be greater than 0.";
                } else {
-                 // Insert sale
-                 $initial_status = $isAdmin ? 'Completed' : 'Pending';
+                 // Insert sale - All transactions are immediate/completed
+                 $initial_status = 'Completed';
                  $sale_id = uniqid('SALE-');
-                 $is_locked = $isAdmin ? 1 : 0;
+                 $is_locked = 1; // Lock completed transactions
                  
                  // Add pump_id column if it doesn't exist
                  try {
@@ -220,18 +219,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                      // Columns already exist, ignore
                  }
                  
-                 // Insert items
-                 $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, name, pump_id, nozzle_id, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                 foreach ($item_details as $item) {
-                     $stmtItem->execute([$sale_id, $item['product_id'], $item['name'], $item['pump_id'], $item['nozzle_id'], $item['quantity'], $item['unit_price'], $item['total']]);
-                     
-                     // Deduct stock for each item
-                     $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
-                     $stmtStock->execute([$item['quantity'], $item['product_id'], $station_id]);
-                 }
-                 
-                  $pdo->commit();
-                  $msg = "✅ Transaction completed successfully. Stock deducted immediately for all items.";
+                  // Insert items and deduct stock with audit trail
+                   $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, pump_id, nozzle_id, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                   $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ?, last_updated = NOW() WHERE product_id = ? AND station_id = ?");
+                   $stmtAudit = $pdo->prepare("INSERT INTO inventory_transactions (station_id, product_id, transaction_type, quantity, reference_type, reference_id, notes, created_by, created_at) VALUES (?, ?, 'pos_sale', ?, 'sales', ?, ?, ?, NOW())");
+                   
+                   foreach ($item_details as $item) {
+                       $stmtItem->execute([$sale_id, $item['product_id'], $item['pump_id'], $item['nozzle_id'], $item['quantity'], $item['unit_price'], $item['total']]);
+                      
+                      // Deduct stock
+                      $stmtStock->execute([$item['quantity'], $item['product_id'], $station_id]);
+                      
+                      // Record in inventory_transactions for audit trail
+                      $stmtAudit->execute([
+                          $station_id,
+                          $item['product_id'],
+                          -$item['quantity'],  // Negative = deduction
+                          $sale_id,
+                          "POS sale: {$item['name']} x{$item['quantity']} @ P{$item['unit_price']}",
+                          $me['id']
+                      ]);
+                  }
+                  
+                   $pdo->commit();
+                   
+                   // Log activity after commit (outside transaction)
+                   $item_summary = array_map(function($i) { return $i['name'] . ' x' . $i['quantity']; }, $item_details);
+                   log_activity($pdo, $me['id'], 'POS Sale', "Sale $sale_id: " . implode(', ', $item_summary) . " | Total: P" . number_format($final_total, 2) . " ($payment_type)", 'pos');
+                   
+                   $msg = "Transaction completed successfully. Sale ID: $sale_id";
               }
          } catch (Exception $e) {
              if ($pdo->inTransaction()) {

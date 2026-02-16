@@ -55,7 +55,7 @@ LEFT JOIN customers c ON s.customer_id = c.id
 LEFT JOIN users u ON s.user_id = u.id
 LEFT JOIN products p ON si.product_id = p.id
 LEFT JOIN product_types pt ON p.type_id = pt.id
-WHERE s.station_id = 1
+WHERE s.station_id = 1205
 ORDER BY s.created_at DESC LIMIT 5";
 
 try {

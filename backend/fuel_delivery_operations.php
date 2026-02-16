@@ -204,7 +204,7 @@ class FuelDeliveryOperations {
             
             // Get current stock before update
             $stmt = $this->pdo->prepare("
-                SELECT stock_level FROM fuel_inventory 
+                SELECT stock_level FROM station_inventory 
                 WHERE station_id = ? AND product_id = ?
             ");
             $stmt->execute([$delivery['station_id'], $product_id]);
@@ -215,9 +215,9 @@ class FuelDeliveryOperations {
             $this->pdo->beginTransaction();
             
             try {
-                // Update fuel_inventory - ADD delivery liters to stock
+                // Update station_inventory - ADD delivery liters to stock
                 $stmt = $this->pdo->prepare("
-                    UPDATE fuel_inventory 
+                    UPDATE station_inventory 
                     SET stock_level = stock_level + ? 
                     WHERE station_id = ? AND product_id = ?
                 ");
@@ -230,7 +230,7 @@ class FuelDeliveryOperations {
                 
                 // Get new stock level
                 $stmt = $this->pdo->prepare("
-                    SELECT stock_level FROM fuel_inventory 
+                    SELECT stock_level FROM station_inventory 
                     WHERE station_id = ? AND product_id = ?
                 ");
                 $stmt->execute([$delivery['station_id'], $product_id]);

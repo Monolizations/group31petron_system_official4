@@ -1,5 +1,5 @@
 <?php
-require_once '../db_connect.php';
+require_once __DIR__ . '/../public/db_connect.php';
 
 $station_id = $_GET['station_id'] ?? '';
 $user_id = $_GET['user_id'] ?? '';

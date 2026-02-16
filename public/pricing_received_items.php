@@ -31,7 +31,7 @@ if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
     exit;
 }
 
-$station_id = $me['station_id'] ?? 0;
+$station_id = user_station_id();
 $batch_id = $_GET['batch'] ?? null;
 $msg = '';
 $error = '';

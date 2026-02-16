@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/rbac.php';
-require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/station_management.php';
+require_once __DIR__ . '/../public/db_connect.php';
 
 // Ensure user is logged in and has proper permissions
 require_login();
@@ -54,7 +55,19 @@ try {
             $email = trim($_POST['email'] ?? '');
             $username = trim($_POST['username'] ?? '');
             $phone_number = trim($_POST['phone_number'] ?? '');
-            $assigned_station = $_POST['assigned_station'] ?? 226; // Default to Station 226
+            
+            // Use StationManager to determine target station
+            $current_user = current_user();
+            try {
+                $assigned_station = StationManager::getTargetStationForUserCreation(
+                    $current_user['role'],
+                    user_station_id(),
+                    $_POST['assigned_station'] ?? null
+                );
+            } catch (Exception $e) {
+                throw new Exception('Station assignment error: ' . $e->getMessage());
+            }
+            
             $status = $_POST['status'] ?? 'active';
             
             if (empty($full_name) || empty($email) || empty($username)) {
@@ -103,7 +116,18 @@ try {
         case 'create_default_accounts':
             require_permission(CREATE_DEFAULT_ROLES_FOR_STATION);
             
-            $station_id = $_POST['station_id'] ?? 1250; // Default to Station 1250 (Kauswagan CDO Petron)
+            $current_user = current_user();
+            
+            // Use StationManager to determine target station
+            try {
+                $station_id = StationManager::getTargetStationForUserCreation(
+                    $current_user['role'],
+                    user_station_id(),
+                    $_POST['station_id'] ?? null
+                );
+            } catch (Exception $e) {
+                throw new Exception('Station assignment error: ' . $e->getMessage());
+            }
             
             // Get station info
             $station = $pdo->prepare("SELECT name FROM stations WHERE id = ?");

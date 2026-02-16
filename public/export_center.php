@@ -32,7 +32,7 @@ if ($role !== 'admin' && $role !== 'superadmin') {
 }
 
 $active_tab = $_GET['tab'] ?? 'sales';
-$station_id = $me['station_id'] ?? 0;
+$station_id = user_station_id();
 $export_message = '';
 $message_type = '';
 

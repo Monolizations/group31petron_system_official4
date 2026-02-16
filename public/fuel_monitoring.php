@@ -16,7 +16,7 @@ $me = current_user();
 $role = role_key($me['role'] ?? 'staff');
 if (!in_array($role, ['manager','admin','superadmin'])) { header("Location: dashboard.php"); exit; }
 
-$station_id = $me['station_id'] ?? 1;
+$station_id = user_station_id();
 $view = $_GET['view'] ?? 'daily';
 
 // Fetch station info

@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/rbac.php';
-require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../public/db_connect.php';
 
 // Ensure user is logged in and has proper permissions
 require_login();

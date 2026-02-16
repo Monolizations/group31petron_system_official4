@@ -12,6 +12,16 @@ $canReview = in_array($role, ['manager', 'admin'], true);
 $canFinalize = ($role === 'admin');
 $station_id = user_station_id();
 
+// Load fuel types from database for validation and dropdowns
+$fuel_type_names = [];
+try {
+    $stmtFuelTypes = $pdo->query("SELECT name FROM fuel_types ORDER BY id");
+    $fuel_type_names = $stmtFuelTypes->fetchAll(PDO::FETCH_COLUMN);
+} catch (PDOException $e) {
+    // Fallback to Petron brand names if query fails
+    $fuel_type_names = ['Diesel Max', 'XCS Plus', 'XCS Advance', 'Turbo Diesel', 'Kerosene'];
+}
+
 $msg = '';
 
 // CSRF Token for Security
@@ -38,6 +48,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST')
                 // Input validation
                 if (empty($fuel_type)) {
                     $msg = "❌ Error: Fuel type is required.";
+                } elseif (!in_array($fuel_type, $fuel_type_names)) {
+                    $msg = "❌ Error: Invalid fuel type.";
                 } elseif ($liters <= 0 || $liters > 100000) { // Reasonable max to prevent abuse
                     $msg = "❌ Error: Liters must be a positive number and less than 100,000.";
                 } elseif ($role === 'superadmin' && empty($station)) {
@@ -110,12 +122,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST')
                             $stmt->execute([$id, $station]);
                             $product_id = $stmt->fetchColumn();
                             if ($product_id) {
+                                // Fetch old values for audit trail
+                                $stmtOld = $pdo->prepare("SELECT name, cost, price FROM products WHERE id = ?");
+                                $stmtOld->execute([$product_id]);
+                                $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
+                                
                                 $stmt = $pdo->prepare("UPDATE products SET name=?, sku=?, category_id=?, cost=?, price=? WHERE id=?");
                                 $stmt->execute([$name, $sku, $category, $cost, $price, $product_id]);
                                 $stmt = $pdo->prepare("UPDATE station_inventory SET stock_level=? WHERE id=?");
                                 $stmt->execute([$stock, $id]);
-                                $msg = "✅ Merchandise updated successfully.";
-                                log_activity($pdo, $me['id'], 'Update Merchandise Inventory', "Updated $name (ID: $id)");
+                                $msg = "Merchandise updated successfully.";
+                                
+                                $price_change = '';
+                                if ($old && ($old['cost'] != $cost || $old['price'] != $price)) {
+                                    $price_change = " | Cost: P{$old['cost']} -> P{$cost} | Price: P{$old['price']} -> P{$price}";
+                                }
+                                log_activity($pdo, $me['id'], 'Update Merchandise Inventory', "Updated $name (ID: $id){$price_change}");
                             } else {
                                 $msg = "❌ Error: Item not found.";
                             }
@@ -333,7 +355,7 @@ if ($role === 'superadmin') {
 
 include __DIR__ . '/../partials/header.php';
 ?>
-  <div class="page-head">
+  <div class="page-head" data-rendering="php">
     <div>
       <h1 class="h1">Inventory Management</h1>
       <div class="sub">Track fuel levels and merchandise stock</div>
@@ -605,17 +627,16 @@ include __DIR__ . '/../partials/header.php';
 
     <div class="table-wrap">
       <table class="table">
-         <thead>
-           <tr>
-             <?php if ($role === 'superadmin'): ?><th>Station</th><?php endif; ?>
-             <th>Date Received</th>
-             <th>Item</th>
-             <th>Quantity</th>
-             <th>Received By</th>
-             <th>Supplier</th>
-             <th class="right">Actions</th>
-           </tr>
-         </thead>
+        <thead>
+          <tr>
+            <?php if ($role === 'superadmin'): ?><th>Station</th><?php endif; ?>
+            <th>Date Received</th>
+            <th>Item</th>
+            <th>Quantity</th>
+            <th>Received By</th>
+            <th class="right">Actions</th>
+          </tr>
+        </thead>
         <tbody>
           <?php
           // Fetch received items from database
@@ -648,19 +669,18 @@ include __DIR__ . '/../partials/header.php';
             $received_items = [];
           }
           ?>
-           <?php foreach ($received_items as $item): ?>
-             <tr>
-               <?php if ($role === 'superadmin'): ?><td>Main Station</td><?php endif; ?>
-               <td><?php echo date('M d, Y', strtotime($item['received_date'] ?? '')); ?></td>
-               <td><?php echo htmlspecialchars($item['item_name'] ?? ''); ?></td>
-               <td><?php echo number_format($item['quantity'] ?? 0, 0); ?></td>
-               <td><?php echo htmlspecialchars($item['received_by_name'] ?? ''); ?></td>
-               <td><?php echo htmlspecialchars($item['supplier'] ?? '-'); ?></td>
-               <td class="right">
-                 <button class="btn ghost small" onclick="viewReceivedItem(<?php echo $item['id']; ?>)">View</button>
-               </td>
-             </tr>
-           <?php endforeach; ?>
+          <?php foreach ($received_items as $item): ?>
+            <tr>
+              <?php if ($role === 'superadmin'): ?><td>Main Station</td><?php endif; ?>
+              <td><?php echo date('M d, Y', strtotime($item['received_date'] ?? '')); ?></td>
+              <td><?php echo htmlspecialchars($item['item_name'] ?? ''); ?></td>
+              <td><?php echo number_format($item['quantity'] ?? 0, 0); ?></td>
+              <td><?php echo htmlspecialchars($item['received_by_name'] ?? ''); ?></td>
+              <td class="right">
+                <button class="btn ghost small" onclick="viewReceivedItem(<?php echo $item['id']; ?>)">View</button>
+              </td>
+            </tr>
+          <?php endforeach; ?>
         </tbody>
       </table>
     </div>
@@ -937,6 +957,9 @@ include __DIR__ . '/../partials/header.php';
           <label class="pay-label">Fuel Type</label>
           <select class="select" name="fuel_type" id="fuelSelect" required>
             <option value="">-- Select Fuel Type --</option>
+            <?php foreach ($fuel_type_names as $ft_name): ?>
+              <option value="<?php echo htmlspecialchars($ft_name); ?>"><?php echo htmlspecialchars($ft_name); ?></option>
+            <?php endforeach; ?>
           </select>
         </div>
         <div class="pay-section">
@@ -1053,30 +1076,27 @@ function openMerchModal() {
 }
 
 function editMerch(id) {
-    // Fetch merchandise data and populate modal
-    fetch('backend/inventory.php?action=get&id=' + id)
-        .then(response => response.json())
-        .then(data => {
-            if (data.ok) {
-                const item = data.data.item;
-                document.getElementById('merchModalTitle').textContent = 'Edit Item';
-                document.getElementById('merchSaveBtn').textContent = 'Update Item';
-                document.getElementById('mId').value = item.id;
-                document.getElementById('mName').value = item.product_name;
-                document.getElementById('mSku').value = item.sku || '';
-                document.getElementById('mCategory').value = item.category || '';
-                document.getElementById('mStock').value = item.stock_level;
-                document.getElementById('mCost').value = item.cost || 0;
-                document.getElementById('mPrice').value = item.price || 0;
-                if (document.getElementById('mStation')) {
-                    document.getElementById('mStation').value = item.station_id;
-                }
-                document.getElementById('merchModal').classList.add('active');
-            } else {
-                alert('Error loading merchandise data');
-            }
-        })
-        .catch(error => console.error('Error:', error));
+    // Find the item in the PHP-rendered merch_inventory array
+    const item = <?php echo json_encode($merch_inventory); ?>.find(item => item.id == id);
+    if (!item) {
+        alert('Item not found');
+        return;
+    }
+
+    // Populate modal with item data
+    document.getElementById('merchModalTitle').textContent = 'Edit Item';
+    document.getElementById('merchSaveBtn').textContent = 'Update Item';
+    document.getElementById('mId').value = item.id;
+    document.getElementById('mName').value = item.product_name;
+    document.getElementById('mSku').value = item.sku || '';
+    document.getElementById('mCategory').value = item.category_name || '';
+    document.getElementById('mStock').value = item.stock_level;
+    document.getElementById('mCost').value = item.cost || 0;
+    document.getElementById('mPrice').value = item.price || 0;
+    if (document.getElementById('mStation')) {
+        document.getElementById('mStation').value = item.station_id;
+    }
+    document.getElementById('merchModal').classList.add('active');
 }
 
 function deleteMerch(id, name) {
@@ -1088,19 +1108,6 @@ function deleteMerch(id, name) {
         form.submit();
     }
 }
-</script>
-
-<script src="../assets/js/data_helper.js"></script>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    DataHelper.populateFuelTypes('fuelSelect', '-- Select Fuel Type --')
-        .then(() => console.log('Fuel types loaded'))
-        .catch(error => {
-            console.error('Failed to load fuel types:', error);
-            alert('Failed to load fuel types. Please refresh.');
-        });
-});
 </script>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

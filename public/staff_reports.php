@@ -16,7 +16,7 @@ $me = current_user();
 $role = role_key($me['role'] ?? 'staff');
 if (!in_array($role, ['staff','manager','admin','superadmin'])) { header("Location: dashboard.php"); exit; }
 
-$station_id = $me['station_id'] ?? 1;
+$station_id = user_station_id();
 $view = $_GET['view'] ?? 'performance';
 
 // Fetch station info
@@ -47,7 +47,7 @@ if ($view === 'performance') {
                 COALESCE(SUM(jo.total_cost), 0) as total_revenue
             FROM users u
             LEFT JOIN job_orders jo ON u.id = jo.user_id AND jo.station_id = ? AND jo.status = 'completed'
-            LEFT JOIN sales s ON u.id = s.cashier_id AND s.station_id = ?
+            LEFT JOIN sales s ON u.id = s.user_id AND s.station_id = ?
             WHERE u.station_id = ? AND u.status = 'active'
                 AND u.role NOT IN ('admin', 'superadmin', 'manager', 'Admin', 'Manager', 'Super Admin')
             GROUP BY u.id, u.username, u.role
@@ -341,11 +341,41 @@ include __DIR__ . '/../partials/header.php';
 
     <!-- Staff Report Content -->
     <?php 
-    // Define variables at the top to avoid undefined variable warnings
+    // Fetch real data for staff metrics
     $today_sales = 0.0;
     $txn_today = 0;
     $active_jobs_count = 0;
     $total_hours_week = 0.0;
+    
+    try {
+        // Today's sales by this staff member
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(total), 0) as total_sales, COUNT(*) as txn_count 
+                               FROM sales 
+                               WHERE user_id = ? AND station_id = ? AND DATE(sale_date) = CURDATE()");
+        $stmt->execute([$me['id'], $station_id]);
+        $sales_today = $stmt->fetch(PDO::FETCH_ASSOC);
+        $today_sales = floatval($sales_today['total_sales'] ?? 0);
+        $txn_today = intval($sales_today['txn_count'] ?? 0);
+        
+        // Active job orders assigned to this staff
+        $stmt = $pdo->prepare("SELECT COUNT(*) as active_count 
+                               FROM job_orders 
+                               WHERE (user_id = ? OR assigned_mechanic_id = ?) 
+                               AND station_id = ? 
+                               AND status NOT IN ('Completed', 'Cancelled', 'finalized')");
+        $stmt->execute([$me['id'], $me['id'], $station_id]);
+        $active_jobs_count = intval($stmt->fetchColumn() ?? 0);
+        
+        // Total hours worked this week
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(hours_worked), 0) as total_hours 
+                               FROM labor_sessions 
+                               WHERE user_id = ? AND station_id = ? 
+                               AND start_time >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+        $stmt->execute([$me['id'], $station_id]);
+        $total_hours_week = floatval($stmt->fetchColumn() ?? 0);
+    } catch (Exception $e) {
+        // Keep defaults if queries fail
+    }
     ?>
     
     <?php if($view === 'shift_summary'): ?>
@@ -367,24 +397,74 @@ include __DIR__ . '/../partials/header.php';
             </thead>
             <tbody>
               <?php
-              // Mock shift summary data
-              $shift_summary = [
-                  ['date' => date('Y-m-d', strtotime('-7 days')), 'shift' => 'Morning', 'transactions' => 45, 'fuel_readings' => 3, 'items_received' => 12],
-                  ['date' => date('Y-m-d', strtotime('-6 days')), 'shift' => 'Afternoon', 'transactions' => 38, 'fuel_readings' => 2, 'items_received' => 8],
-                  ['date' => date('Y-m-d', strtotime('-5 days')), 'shift' => 'Morning', 'transactions' => 52, 'fuel_readings' => 4, 'items_received' => 15],
-                  ['date' => date('Y-m-d', strtotime('-4 days')), 'shift' => 'Evening', 'transactions' => 41, 'fuel_readings' => 1, 'items_received' => 10],
-                  ['date' => date('Y-m-d', strtotime('-3 days')), 'shift' => 'Morning', 'transactions' => 48, 'fuel_readings' => 3, 'items_received' => 18],
-                  ['date' => date('Y-m-d', strtotime('-2 days')), 'shift' => 'Afternoon', 'transactions' => 35, 'fuel_readings' => 2, 'items_received' => 14],
-                  ['date' => date('Y-m-d', strtotime('-1 days')), 'shift' => 'Morning', 'transactions' => 44, 'fuel_readings' => 5, 'items_received' => 20],
-              ];
-              foreach ($shift_summary as $shift) {
-                  echo "<tr>
-                    <td>" . date('M d, Y', strtotime($shift['date'])) . "</td>
-                    <td>" . htmlspecialchars($shift['shift']) . "</td>
-                    <td>" . number_format($shift['transactions']) . "</td>
-                    <td>" . number_format($shift['fuel_readings']) . "</td>
-                    <td>" . number_format($shift['items_received']) . "</td>
-                  </tr>";
+              // Fetch real shift summary data from database
+              try {
+                  // Get data grouped by date and shift for the last 14 days
+                  $sql = "SELECT 
+                            DATE(s.sale_date) as shift_date,
+                            CASE 
+                                WHEN TIME(s.created_at) BETWEEN '06:00:00' AND '14:00:00' THEN 'Morning'
+                                WHEN TIME(s.created_at) BETWEEN '14:00:01' AND '22:00:00' THEN 'Afternoon'
+                                ELSE 'Evening'
+                            END as shift,
+                            COUNT(DISTINCT s.id) as transactions
+                          FROM sales s
+                          WHERE s.user_id = ? AND s.station_id = ? 
+                          AND s.sale_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+                          GROUP BY DATE(s.sale_date), shift
+                          ORDER BY shift_date DESC";
+                  $stmt = $pdo->prepare($sql);
+                  $stmt->execute([$me['id'], $station_id]);
+                  $sales_by_shift = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                  
+                  // Get fuel readings by date
+                  $sql_fuel = "SELECT 
+                                reading_date, shift, COUNT(*) as fuel_count
+                               FROM fuel_daily_readings
+                               WHERE user_id = ? AND station_id = ?
+                               AND reading_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+                               GROUP BY reading_date, shift";
+                  $stmt_fuel = $pdo->prepare($sql_fuel);
+                  $stmt_fuel->execute([$me['id'], $station_id]);
+                  $fuel_readings = [];
+                  while ($row = $stmt_fuel->fetch(PDO::FETCH_ASSOC)) {
+                      $key = $row['reading_date'] . '_' . $row['shift'];
+                      $fuel_readings[$key] = $row['fuel_count'];
+                  }
+                  
+                  // Get received items by date (from receiving_batches or inventory_transactions)
+                  $sql_received = "SELECT 
+                                    DATE(created_at) as receive_date, COUNT(*) as items_count
+                                   FROM receiving_batches
+                                   WHERE received_by = ? AND station_id = ?
+                                   AND created_at >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+                                   GROUP BY DATE(created_at)";
+                  $stmt_received = $pdo->prepare($sql_received);
+                  $stmt_received->execute([$me['id'], $station_id]);
+                  $received_items = [];
+                  while ($row = $stmt_received->fetch(PDO::FETCH_ASSOC)) {
+                      $received_items[$row['receive_date']] = $row['items_count'];
+                  }
+                  
+                  if (empty($sales_by_shift)) {
+                      echo "<tr><td colspan='5' style='text-align: center; padding: 20px; color: #666;'>No shift data available for the last 14 days.</td></tr>";
+                  } else {
+                      foreach ($sales_by_shift as $shift_data) {
+                          $fuel_key = $shift_data['shift_date'] . '_' . $shift_data['shift'];
+                          $fuel_count = $fuel_readings[$fuel_key] ?? 0;
+                          $items_count = $received_items[$shift_data['shift_date']] ?? 0;
+                          
+                          echo "<tr>
+                            <td>" . date('M d, Y', strtotime($shift_data['shift_date'])) . "</td>
+                            <td><span class='badge' style='background: " . ($shift_data['shift'] == 'Morning' ? '#ffc107' : ($shift_data['shift'] == 'Afternoon' ? '#007bff' : '#6c757d')) . "; color: " . ($shift_data['shift'] == 'Morning' ? '#333' : 'white') . "; padding: 4px 8px; border-radius: 4px;'>" . htmlspecialchars($shift_data['shift']) . "</span></td>
+                            <td>" . number_format($shift_data['transactions']) . "</td>
+                            <td>" . number_format($fuel_count) . "</td>
+                            <td>" . number_format($items_count) . "</td>
+                          </tr>";
+                      }
+                  }
+              } catch (Exception $e) {
+                  echo "<tr><td colspan='5' style='text-align: center; padding: 20px; color: #dc3545;'>Error loading shift data: " . htmlspecialchars($e->getMessage()) . "</td></tr>";
               }
               ?>
             </tbody>
@@ -448,33 +528,46 @@ include __DIR__ . '/../partials/header.php';
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Fuel Type</th>
-                <th>Reading</th>
-                <th>Calibration</th>
+                <th>Pump</th>
+                <th>Shift</th>
+                <th>Previous</th>
+                <th>Current</th>
                 <th>Sales (L)</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               <?php
-              // Fetch staff's fuel readings
+              // Fetch staff's fuel readings with pump info
               try {
-                  $stmt = $pdo->prepare("SELECT fr.*, ft.name as fuel_type FROM fuel_daily_readings fr LEFT JOIN fuel_types ft ON fr.fuel_type_id = ft.id WHERE fr.user_id = ? AND fr.station_id = ? ORDER BY fr.reading_date DESC LIMIT 20");
+                  $stmt = $pdo->prepare("SELECT fr.*, fp.pump_number, ft.name as fuel_type 
+                                         FROM fuel_daily_readings fr 
+                                         LEFT JOIN fuel_pumps fp ON fr.pump_id = fp.id 
+                                         LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id
+                                         WHERE fr.user_id = ? AND fr.station_id = ? 
+                                         ORDER BY fr.reading_date DESC, fr.shift DESC 
+                                         LIMIT 20");
                   $stmt->execute([$me['id'], $station_id]);
                   $fuel_readings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                  
+                  if (empty($fuel_readings)) {
+                      echo "<tr><td colspan='7' style='text-align: center; padding: 20px; color: #666;'>No fuel readings found.</td></tr>";
+                  } else {
+                      foreach ($fuel_readings as $reading) {
+                          $status_color = $reading['status'] === 'finalized' ? '#28a745' : ($reading['status'] === 'Verified' ? '#007bff' : '#ffc107');
+                          echo "<tr>
+                            <td>" . date('M d, Y', strtotime($reading['reading_date'])) . "</td>
+                            <td>" . htmlspecialchars($reading['pump_number'] ?? 'Pump ' . $reading['pump_id']) . " <small style='color: #666;'>(" . htmlspecialchars($reading['fuel_type'] ?? 'N/A') . ")</small></td>
+                            <td><span class='badge' style='background: " . ($reading['shift'] == 'Morning' ? '#ffc107' : ($reading['shift'] == 'Afternoon' ? '#007bff' : '#6c757d')) . "; color: " . ($reading['shift'] == 'Morning' ? '#333' : 'white') . "; padding: 4px 8px; border-radius: 4px;'>" . htmlspecialchars($reading['shift']) . "</span></td>
+                            <td>" . number_format($reading['previous_reading'], 2) . "</td>
+                            <td>" . number_format($reading['current_reading'], 2) . "</td>
+                            <td><strong>" . number_format($reading['sales_liters'], 2) . "</strong></td>
+                            <td><span style='color: " . $status_color . "; font-weight: 600;'>" . htmlspecialchars($reading['status'] ?? 'Pending') . "</span></td>
+                          </tr>";
+                      }
+                  }
               } catch (Exception $e) {
-                  $fuel_readings = [];
-              }
-              
-              foreach ($fuel_readings as $reading) {
-                  echo "<tr>
-                    <td>" . date('M d, Y', strtotime($reading['reading_date'])) . "</td>
-                    <td>" . htmlspecialchars($reading['fuel_type']) . "</td>
-                    <td>" . number_format($reading['current_reading'], 2) . "</td>
-                    <td>" . number_format($reading['calibration'], 2) . "</td>
-                    <td>" . number_format($reading['sales_liters'], 2) . "</td>
-                    <td>" . htmlspecialchars($reading['status'] ?? 'Pending') . "</td>
-                  </tr>";
+                  echo "<tr><td colspan='7' style='text-align: center; padding: 20px; color: #dc3545;'>Error loading fuel readings.</td></tr>";
               }
               ?>
             </tbody>
@@ -517,38 +610,10 @@ include __DIR__ . '/../partials/header.php';
           <div class="card-title"><i class="fas fa-comment"></i> Feedback & Ratings</div>
           <div class="muted">Customer feedback and your performance ratings</div>
         </div>
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Customer</th>
-                <th>Rating</th>
-                <th>Feedback</th>
-                <th>Job ID</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php
-              // Mock feedback data
-              $feedback_data = [
-                  ['date' => date('Y-m-d', strtotime('-5 days')), 'customer' => 'Juan Dela Cruz', 'rating' => 5, 'feedback' => 'Excellent service', 'job_id' => '123'],
-                  ['date' => date('Y-m-d', strtotime('-3 days')), 'customer' => 'Maria Santos', 'rating' => 4, 'feedback' => 'Good work', 'job_id' => '124'],
-                  ['date' => date('Y-m-d', strtotime('-1 days')), 'customer' => 'Roberto Reyes', 'rating' => 5, 'feedback' => 'Very satisfied', 'job_id' => '125'],
-              ];
-              
-              foreach ($feedback_data as $feedback) {
-                  echo "<tr>
-                    <td>" . date('M d, Y', strtotime($feedback['date'])) . "</td>
-                    <td>" . htmlspecialchars($feedback['customer']) . "</td>
-                    <td>" . str_repeat('⭐', $feedback['rating']) . "</td>
-                    <td>" . htmlspecialchars($feedback['feedback']) . "</td>
-                    <td>" . htmlspecialchars($feedback['job_id']) . "</td>
-                  </tr>";
-              }
-              ?>
-            </tbody>
-          </table>
+        <div style="padding: 40px; text-align: center;">
+          <i class="fas fa-comment-slash" style="font-size: 48px; color: #ccc; margin-bottom: 16px;"></i>
+          <p style="color: #666; margin-top: 16px;">Customer feedback feature is not yet available.</p>
+          <p style="color: #999; font-size: 12px;">This feature will be implemented in a future update.</p>
         </div>
       </div>
     <?php endif; ?>

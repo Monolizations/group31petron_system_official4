@@ -31,7 +31,7 @@ try {
 
 try {
   // Some dbs use assigned_to instead of user_id
-  $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE station_id = ? AND (user_id = ? OR assigned_to = ?) AND status IN ('Pending','In Progress')");
+  $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE station_id = ? AND (user_id = ? OR assigned_to = ?) AND status IN ('Pending','In Progress','Awaiting Parts')");
   $stmt->execute([$station_id, $me['id'], $me['id']]);
   $my_active_jobs = (int)$stmt->fetchColumn();
 } catch(Exception $e) {}

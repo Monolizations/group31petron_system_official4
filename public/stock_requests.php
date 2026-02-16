@@ -18,8 +18,9 @@ $msg = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     
-    // Only staff can submit requests
-    if ($action === 'submit_request' && in_array($role, ['staff', 'admin', 'manager', 'superadmin'])) {
+    // Only STAFF can submit stock requests per hierarchy (encoding layer)
+    // Manager approves, Admin validates/unlocks
+    if ($action === 'submit_request' && in_array($role, ['staff'])) {
         $req_type = $_POST['type'] ?? '';
         $product = trim($_POST['product_name'] ?? '');
         $qty = (float)($_POST['qty'] ?? 0);
@@ -34,6 +35,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = "✅ Stock request submitted! Awaiting manager review.";
             } catch (Exception $e) {
                 $msg = "❌ Error: " . $e->getMessage();
+            }
+        }
+    }
+    
+    // MANAGER ONLY: Approve/Reject stock requests (per hierarchy - Admin cannot do Manager work)
+    if (in_array($action, ['approve_request', 'reject_request'])) {
+        if ($role !== 'manager') {
+            $msg = "❌ Error: Only managers can approve/reject stock requests.";
+        } else {
+            $request_id = (int)($_POST['request_id'] ?? 0);
+            $new_status = ($action === 'approve_request') ? 'approved' : 'rejected';
+            
+            if ($request_id > 0) {
+                try {
+                    $stmt = $pdo->prepare("UPDATE stock_requests SET status = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?");
+                    $stmt->execute([$new_status, (int)$me['id'], $request_id]);
+                    $msg = "✅ Stock request has been " . $new_status . ".";
+                } catch (Exception $e) {
+                    $msg = "❌ Error: " . $e->getMessage();
+                }
             }
         }
     }
@@ -363,7 +384,7 @@ include __DIR__ . '/../partials/header.php';
           </div>
           
           <div class="sr-actions">
-            <?php if($r['status'] === 'pending' && in_array($role, ['admin', 'manager', 'superadmin'])): ?>
+            <?php if($r['status'] === 'pending' && $role === 'manager'): ?>
               <form method="post">
                 <input type="hidden" name="action" value="approve_request">
                 <input type="hidden" name="request_id" value="<?php echo $r['id']; ?>">

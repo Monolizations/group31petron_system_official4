@@ -1,4 +1,6 @@
 <?php
+global $pdo;
+
 $host = "localhost";
 $dbname = "petron_pos_db_secure";
 $user = "root";

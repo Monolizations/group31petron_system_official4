@@ -2,6 +2,7 @@
 $page_id = 'users';
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/db_connect.php';
+require_once __DIR__ . '/../backend/station_management.php';
 require_login();
 
 $me = current_user();
@@ -87,7 +88,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $hashed = password_hash($password, PASSWORD_DEFAULT);
-            $station_target = ($my_role === 'superadmin' && !empty($_POST['station_id'])) ? $_POST['station_id'] : $my_station_id;
+            
+            // Use StationManager for consistent station assignment
+            try {
+                $station_target = StationManager::getTargetStationForUserCreation(
+                    $me['role'], 
+                    $my_station_id, 
+                    $_POST['station_id'] ?? null
+                );
+                
+                // Log the station assignment attempt
+                StationManager::logStationAssignmentAttempt(
+                    $me['id'], 
+                    $me['role'], 
+                    $my_station_id, 
+                    $station_target, 
+                    true
+                );
+            } catch (Exception $e) {
+                // Log failed attempt
+                StationManager::logStationAssignmentAttempt(
+                    $me['id'], 
+                    $me['role'], 
+                    $my_station_id, 
+                    $_POST['station_id'] ?? null, 
+                    false
+                );
+                throw $e;
+            }
 
             $stmt = $pdo->prepare("INSERT INTO users (name, username, role, email, password, station_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', NOW())");
             $stmt->execute([$name, $username, $role, $email, $hashed, $station_target]);
@@ -195,6 +223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // --- FETCH USERS ---
 $users = [];
+$station_name = '';
 error_log("=== FETCH USERS DEBUG START ===");
 error_log("My Role: " . $my_role);
 error_log("My Station ID: " . var_export($my_station_id, true));
@@ -206,7 +235,7 @@ if ($my_role === 'superadmin') {
     $users = $stmt->fetchAll();
     error_log("Superadmin query returned " . count($users) . " users");
     // Fetch stations for dropdown
-    $stations = $pdo->query("SELECT id, name FROM stations")->fetchAll();
+    $stations = $pdo->query("SELECT id, name FROM stations WHERE status = 'active' ORDER BY name ASC")->fetchAll();
     error_log("Stations fetched: " . count($stations));
 } else {
     error_log("Executing ADMIN/MANAGER query - filter by station_id");
@@ -224,9 +253,17 @@ if ($my_role === 'superadmin') {
     $station_stmt = $pdo->prepare("SELECT name FROM stations WHERE id = ?");
     $station_stmt->execute([$my_station_id]);
     $station_row = $station_stmt->fetch();
-    $station_name = $station_row['name'] ?? null;
+    $station_name = $station_row['name'] ?? get_station_name($my_station_id);
 }
 error_log("=== FETCH USERS DEBUG END ===");
+
+// Get UI configuration for station selection
+try {
+    $station_ui_config = StationManager::getStationUIConfig($my_role, $my_station_id, $station_name);
+} catch (Exception $e) {
+    error_log("StationManager UI config error: " . $e->getMessage());
+    $station_ui_config = ['type' => 'readonly_field', 'value' => 'Unknown Station', 'readonly' => true];
+}
 
 include __DIR__ . '/../partials/header.php';
 ?>
@@ -357,18 +394,27 @@ include __DIR__ . '/../partials/header.php';
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="lbl">Station</label>
-                        <?php if($my_role === 'admin'): ?>
-                            <input type="hidden" name="station_id" value="<?php echo $my_station_id; ?>">
-                            <input type="text" value="<?php echo htmlspecialchars($station_name ?? 'Station ' . $my_station_id); ?>" class="inp full" readonly style="background: #f0f0f0; cursor: not-allowed;">
-                        <?php elseif($my_role === 'superadmin'): ?>
+                        <label class="lbl">Station <span class="required">*</span></label>
+                        <?php if($station_ui_config['type'] === 'dropdown'): ?>
                             <select name="station_id" class="inp full" required>
-                                <option value="">Select station</option>
+                                <option value="">Select Station</option>
                                 <?php foreach($stations as $s): ?>
-                                    <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
+                                    <option value="<?php echo $s['id']; ?>">
+                                        <?php echo htmlspecialchars($s['name']); ?>
+                                    </option>
                                 <?php endforeach; ?>
                             </select>
+                        <?php else: ?>
+                            <input type="text" 
+                                   value="<?php echo htmlspecialchars($station_ui_config['value']); ?>" 
+                                   class="inp full" 
+                                   readonly 
+                                   style="background: #f8f9fa; cursor: not-allowed; color: #495057; border: 1px solid #ced4da;">
+                            <input type="hidden" name="station_id" value="<?php echo $station_ui_config['hidden_input_value']; ?>">
                         <?php endif; ?>
+                        <small class="form-text text-muted">
+                            <i class="fas fa-info-circle"></i> <?php echo $station_ui_config['help_text'] ?? 'Station assignment information'; ?>
+                        </small>
                     </div>
                 </div>
                 

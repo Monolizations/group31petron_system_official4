@@ -2,6 +2,7 @@
 $page_id = 'users';
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
+require_once __DIR__ . '/../backend/station_management.php';
 require_login();
 
 $me = current_user();
@@ -39,7 +40,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($stmt->fetch()) throw new Exception("Username already exists.");
             
             $hashed = password_hash($password, PASSWORD_DEFAULT);
-            $station_target = ($my_role === 'superadmin' && !empty($_POST['station_id'])) ? $_POST['station_id'] : $my_station_id;
+            
+            // Use StationManager for consistent station assignment
+            try {
+                $station_target = StationManager::getTargetStationForUserCreation(
+                    $me['role'], 
+                    $my_station_id, 
+                    $_POST['station_id'] ?? null
+                );
+                
+                // Log the station assignment attempt
+                StationManager::logStationAssignmentAttempt(
+                    $me['id'], 
+                    $me['role'], 
+                    $my_station_id, 
+                    $station_target, 
+                    true
+                );
+            } catch (Exception $e) {
+                // Log failed attempt
+                StationManager::logStationAssignmentAttempt(
+                    $me['id'], 
+                    $me['role'], 
+                    $my_station_id, 
+                    $_POST['station_id'] ?? null, 
+                    false
+                );
+                throw $e;
+            }
             
             $stmt = $pdo->prepare("INSERT INTO users (name, username, role, email, password, station_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', NOW())");
             $stmt->execute([$name, $username, $role, $email, $hashed, $station_target]);
@@ -117,16 +145,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // --- FETCH USERS ---
 $users = [];
+$station_name = '';
 if ($my_role === 'superadmin') {
     $stmt = $pdo->query("SELECT u.*, s.name as station_name FROM users u LEFT JOIN stations s ON u.station_id = s.id ORDER BY u.created_at DESC");
     $users = $stmt->fetchAll();
     // Fetch stations for dropdown
-    $stations = $pdo->query("SELECT id, name FROM stations")->fetchAll();
+    $stations = $pdo->query("SELECT id, name FROM stations WHERE status = 'active' ORDER BY name ASC")->fetchAll();
 } else {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE station_id = ? ORDER BY role, name");
     $stmt->execute([$my_station_id]);
     $users = $stmt->fetchAll();
+    
+    // Get station name for read-only display
+    $station_name = get_station_name($my_station_id);
 }
+
+// Get UI configuration for station selection
+$station_ui_config = StationManager::getStationUIConfig($my_role, $my_station_id, $station_name);
 
 include __DIR__ . '/../partials/header.php';
 ?>
@@ -254,17 +289,34 @@ include __DIR__ . '/../partials/header.php';
                         <input type="email" name="email" class="inp full">
                     </div>
                 </div>
-                <?php if($my_role === 'superadmin'): ?>
+                <?php if($station_ui_config['type'] === 'dropdown'): ?>
+                <div class="form-group mb-3">
+                    <label class="lbl">Station <span class="required">*</span></label>
+                    <select name="station_id" class="inp full" required>
+                        <option value="">Select Station</option>
+                        <?php foreach($stations as $s): ?>
+                            <option value="<?php echo $s['id']; ?>">
+                                <?php echo htmlspecialchars($s['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="form-text text-muted">
+                        <i class="fas fa-info-circle"></i> <?php echo $station_ui_config['help_text']; ?>
+                    </small>
+                </div>
+                <?php else: ?>
                 <div class="form-group mb-3">
                     <label class="lbl">Station</label>
-                    <select name="station_id" class="inp full" required>
-                         <?php foreach($stations as $s): ?>
-                             <option value="<?php echo $s['id']; ?>" <?php echo ($s['id'] == 1250) ? 'selected' : ''; ?>><?php echo htmlspecialchars($s['name']); ?></option>
-                         <?php endforeach; ?>
-                     </select>
-                 </div>
-                 <?php else: ?>
-                 <input type="hidden" name="station_id" value="1250">
+                    <input type="text" 
+                           value="<?php echo htmlspecialchars($station_ui_config['value']); ?>" 
+                           class="inp full" 
+                           readonly 
+                           style="background: #f8f9fa; cursor: not-allowed; color: #495057; border: 1px solid #ced4da;">
+                    <input type="hidden" name="station_id" value="<?php echo $station_ui_config['hidden_input_value']; ?>">
+                    <small class="form-text text-muted">
+                        <i class="fas fa-info-circle"></i> <?php echo $station_ui_config['help_text']; ?>
+                    </small>
+                </div>
                 <?php endif; ?>
                 <div class="form-group mb-3">
                     <label class="lbl">Password</label>

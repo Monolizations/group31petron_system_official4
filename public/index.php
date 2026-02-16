@@ -16,7 +16,7 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['user']) && isset($_SESSION['
     if ($role === 'superadmin') {
         header("Location: dashboard.php");
     } elseif ($role === 'admin') {
-        header("Location: home.php");
+        header("Location: dashboard.php");
     } elseif ($role === 'manager') {
         header("Location: manager_home.php");
     } else {

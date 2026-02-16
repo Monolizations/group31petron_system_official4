@@ -6,7 +6,8 @@ require_login();
 
 $me = current_user();
 $station_id = user_station_id();
-$isAdmin = in_array($me['role'], ['admin', 'superadmin', 'manager']);
+// Credit approval: Admin ONLY per hierarchy (Manager cannot approve credits)
+$isAdmin = in_array($me['role'], ['admin', 'superadmin']);
 $msg = '';
 
 // Ensure sales table has customer_id for tracking

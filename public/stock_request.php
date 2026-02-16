@@ -1,68 +1,64 @@
-
-<?php
-require_once __DIR__ . '/../backend/lib.php';
-require_once __DIR__ . '/../public/db_connect.php';
-require_login();
-
-$user = current_user();
-$station_id = user_station_id();
-$item_id = (int)($_GET['item_id'] ?? 0);
-
-// Get product info if item_id is provided
-$product_info = null;
-if ($item_id > 0) {
-    $stmt = $pdo->prepare("
-        SELECT p.name, p.sku, pc.name as category_name
-        FROM products p
-        LEFT JOIN product_categories pc ON p.category_id = pc.id
-        WHERE p.id = ?
-    ");
-    $stmt->execute([$item_id]);
-    $product_info = $stmt->fetch(PDO::FETCH_ASSOC);
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $qty = (int)$_POST['quantity'];
-    $type = $_POST['type'] ?? 'merch';
-    $product_name = $product_info['name'] ?? '';
-    
-    $stmt = $pdo->prepare("
-        INSERT INTO stock_requests
-        (station_id, requested_by, type, product_name, qty, notes, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())
-    ");
-    $stmt->execute([$station_id, $user['id'], $type, $product_name, $qty, $_POST['notes'] ?? null]);
-    header("Location: inventory.php?view=stock&requested=1");
-    exit;
-}
-?>
-<h3>Request Stock</h3>
-<form method="post">
-    <?php if ($product_info): ?>
-        <div class="card" style="padding:15px; margin-bottom:15px;">
-            <h4><?php echo htmlspecialchars($product_info['name']); ?></h4>
-            <p><strong>SKU:</strong> <?php echo htmlspecialchars($product_info['sku'] ?? ''); ?></p>
-            <p><strong>Category:</strong> <?php echo htmlspecialchars($product_info['category_name'] ?? ''); ?></p>
+<div class="modal fade" id="stockRequestModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-box-plus"></i> Request Stock</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form method="post" id="stockRequestForm">
+                <div class="modal-body">
+                    <?php if ($product_info): ?>
+                        <div style="background: #f8fafc; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid var(--petron-blue);">
+                            <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;"><?php echo htmlspecialchars($product_info['name']); ?></div>
+                            <div style="font-size: 12px; color: #64748b;">
+                                <span><i class="fas fa-barcode"></i> <?php echo htmlspecialchars($product_info['sku'] ?? 'N/A'); ?></span>
+                                <span style="margin-left: 12px;"><i class="fas fa-tag"></i> <?php echo htmlspecialchars($product_info['category_name'] ?? 'Uncategorized'); ?></span>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <div class="form-group">
+                        <label style="font-size: 13px; font-weight: 600; color: #475569;">Request Type</label>
+                        <select name="type" class="form-control" required>
+                            <option value="merch" selected>Merchandise</option>
+                            <option value="fuel">Fuel</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label style="font-size: 13px; font-weight: 600; color: #475569;">Quantity <span style="color: #dc2626;">*</span></label>
+                        <input type="number" name="quantity" class="form-control" required min="1" placeholder="Enter quantity needed">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label style="font-size: 13px; font-weight: 600; color: #475569;">Notes</label>
+                        <textarea name="notes" class="form-control" rows="2" placeholder="Reason for request or special instructions..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Submit Request</button>
+                </div>
+            </form>
         </div>
-    <?php endif; ?>
-    
-    <div class="form-group">
-        <label>Request Type</label>
-        <select name="type" class="form-control" required>
-            <option value="fuel">Fuel</option>
-            <option value="merch" selected>Merchandise</option>
-        </select>
     </div>
-    
-    <div class="form-group">
-        <label>Quantity</label>
-        <input type="number" name="quantity" class="form-control" required>
-    </div>
-    
-    <div class="form-group">
-        <label>Notes</label>
-        <textarea name="notes" class="form-control" rows="3" placeholder="Optional notes..."></textarea>
-    </div>
-    
-    <button class="btn btn-primary mt-2">Submit Request</button>
-</form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var modal = document.getElementById('stockRequestModal');
+    if (modal) {
+        $(modal).modal('show');
+        
+        $(modal).on('hidden.bs.modal', function() {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = 'inventory_list.php';
+            }
+        });
+    }
+});
+</script>

@@ -7,6 +7,7 @@
 
 header('Content-Type: application/json');
 require_once __DIR__ . '/../lib.php';
+require_once __DIR__ . '/../station_management.php';
 require_once __DIR__ . '/../../public/db_connect.php';
 require_login();
 
@@ -168,20 +169,34 @@ try {
                 exit;
             }
             
-            // Determine station_id
-            if ($role === 'superadmin') {
-                // Superadmin can assign to any station
-                if (empty($station_id)) {
-                    echo json_encode(['success' => false, 'error' => 'Station is required']);
-                    exit;
-                }
-            } else {
-                // Admin can only assign to their station
-                $station_id = $my_station_id;
-                if (empty($station_id)) {
-                    echo json_encode(['success' => false, 'error' => 'You must have a station assigned']);
-                    exit;
-                }
+            // Determine station_id using StationManager
+            try {
+                $station_id = StationManager::getTargetStationForUserCreation(
+                    $me['role'],
+                    $my_station_id,
+                    $station_id
+                );
+                
+                // Log the attempt
+                StationManager::logStationAssignmentAttempt(
+                    $me['id'],
+                    $me['role'],
+                    $my_station_id,
+                    $station_id,
+                    true
+                );
+            } catch (Exception $e) {
+                // Log failed attempt
+                StationManager::logStationAssignmentAttempt(
+                    $me['id'],
+                    $me['role'],
+                    $my_station_id,
+                    $_POST['station_id'] ?? null,
+                    false
+                );
+                
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                exit;
             }
             
             // Security: Non-superadmin cannot create admin/superadmin users

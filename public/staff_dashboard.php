@@ -71,7 +71,7 @@ try {
 } catch (Exception $e) {}
 
 try {
-  $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE station_id = ? AND status IN ('Pending','In Progress')");
+  $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE station_id = ? AND status IN ('Pending','In Progress','Awaiting Parts')");
   $stmt->execute([$station_id]);
   $active_jobs_count = (int)$stmt->fetchColumn();
 } catch (Exception $e) {}

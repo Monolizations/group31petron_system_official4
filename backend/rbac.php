@@ -159,7 +159,7 @@ function has_permission($permission, $user_role = null) {
     // Normalize role names
     if ($user_role === 'super admin') $user_role = 'superadmin';
     if ($user_role === 'administrator') $user_role = 'admin';
-    if ($user_role === 'operations_staff') $user_role = 'operations';
+    // operations_staff role removed - all operational roles now use 'staff'
     
     return isset($role_permissions[$user_role]) && 
            in_array($permission, $role_permissions[$user_role]);
@@ -174,7 +174,7 @@ function get_role_permissions($role) {
     $role = strtolower($role);
     if ($role === 'super admin') $role = 'superadmin';
     if ($role === 'administrator') $role = 'admin';
-    if ($role === 'operations_staff') $role = 'operations';
+    // operations_staff role removed - all operational roles now use 'staff'
     
     return $role_permissions[$role] ?? [];
 }
@@ -190,7 +190,7 @@ function can_access_station($station_id, $user = null) {
     $role = strtolower($user['role'] ?? 'staff');
     
     // Normalize role
-    if ($role === 'operations_staff') $role = 'operations';
+    // operations_staff role removed - all operational roles now use 'staff'
     
     // Super admins can access all stations
     if ($role === 'superadmin' || $role === 'super admin') {

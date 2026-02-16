@@ -25,7 +25,7 @@ try {
 // Build Query
 $sql = "SELECT
             s.id as transaction_id,
-            c.name as customer,
+            COALESCE(c.name, s.customer, 'Walk-in') as customer,
             s.payment_method,
             s.created_at,
             s.status,
@@ -152,7 +152,7 @@ include __DIR__ . '/../partials/header.php';
                     <th>Customer</th>
                     <th>Category</th>
                     <th>Product Name</th>
-                    <th>Qty/Liters</th>
+                    <th>Quantity</th>
                     <th>Unit Price</th>
                     <th>Subtotal</th>
                     <th>Payment Type</th>

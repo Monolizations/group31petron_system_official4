@@ -1,5 +1,5 @@
 <?php
-require_once '../db_connect.php';
+require_once __DIR__ . '/../public/db_connect.php';
 header('Content-Type: application/json');
 
 $service_id = $_GET['service_id'] ?? '';

@@ -4,15 +4,16 @@
  * Shows what's missing and helps fix it
  */
 
+require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/db_connect.php';
+require_login();
 
 try {
     echo "<h1>Fuel Product Configuration Debug</h1>\n";
     echo "<style>body { font-family: monospace; padding: 20px; } table { border-collapse: collapse; width: 100%; margin: 20px 0; } th, td { border: 1px solid #ddd; padding: 8px; text-align: left; } th { background: #f0f0f0; }</style>\n";
     
     // Get user's station
-    session_start();
-    $station_id = $_SESSION['station_id'] ?? 1;
+    $station_id = user_station_id();
     echo "<p><strong>Your Station ID:</strong> $station_id</p>\n";
     
     // Check fuel_types

@@ -141,29 +141,274 @@ try {
         $title = "Job Order Reports";
         $subtitle = "Completed service jobs and maintenance";
         $headers = ['Job ID', 'Customer', 'Service', 'Staff', 'Parts Used', 'Cost', 'Time', 'Actions'];
-        
-        $sql = "SELECT 
-                    j.id, 
-                    j.job_order_number,
-                    j.customer_id, 
-                    c.name as customer_name,
-                    sc.name as service_type,
-                    u.name as staff_name,
-                    j.service_description as parts_used,
-                    j.estimated_duration,
-                    j.created_at
-                FROM job_orders j
-                LEFT JOIN customers c ON j.customer_id = c.id
-                LEFT JOIN users u ON j.assigned_mechanic_id = u.id
-                LEFT JOIN service_categories sc ON j.service_category_id = sc.id
-                WHERE j.station_id = ? AND j.status = 'Completed' AND DATE(j.created_at) BETWEEN ? AND ?
-                ORDER BY j.created_at DESC";
+
+                    $sql = "SELECT
+                                j.id,
+                                j.job_order_number,
+                                j.customer_id,
+                                c.name as customer_name,
+                                sc.name as service_type,
+                                u.name as staff_name,
+                                j.service_description as parts_used,
+                                j.estimated_duration,
+                                j.created_at,
+                                j.total_cost
+                            FROM job_orders j
+                            LEFT JOIN customers c ON j.customer_id = c.id
+                            LEFT JOIN users u ON j.assigned_mechanic_id = u.id
+                            LEFT JOIN service_categories sc ON j.service_category_id = sc.id
+                            WHERE j.station_id = ? AND j.status = 'Completed' AND DATE(j.created_at) BETWEEN ? AND ?
+                            ORDER BY j.created_at DESC";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$station_id, $start, $end]);
         $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    // 5. Verification
+    // 5. Profit & Loss Report
+    elseif ($view === 'profit_loss') {
+        $title = "Profit & Loss Statement";
+        $subtitle = "Financial summary - Revenue vs Expenses";
+        $headers = ['Category', 'Description', 'Amount', 'Percentage', 'Actions'];
+
+        // Calculate total sales and expenses
+        $stmt = $pdo->prepare("SELECT SUM(s.total) as total_sales
+                               FROM sales s
+                               WHERE (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $total_sales = $stmt->fetchColumn() ?: 0;
+
+        // Calculate total expenses (fuel costs, service costs, etc.)
+        $stmt = $pdo->prepare("SELECT SUM(s.total) as total_expenses
+                               FROM sales s
+                               WHERE (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $total_expenses = $stmt->fetchColumn() ?: 0;
+
+        // Calculate fuel revenue from fuel sales
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(si.total_amount), 0) as fuel_revenue
+                               FROM sales s
+                               LEFT JOIN sale_items si ON s.id = si.sale_id
+                               LEFT JOIN products p ON si.product_id = p.id
+                               LEFT JOIN product_types pt ON p.type_id = pt.id
+                               WHERE pt.name = 'fuel'
+                               AND (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $fuel_revenue = $stmt->fetchColumn() ?: 0;
+
+        // Calculate service revenue
+        $stmt = $pdo->prepare("SELECT SUM(s.total) as service_revenue
+                               FROM sales s
+                               LEFT JOIN sale_items si ON s.id = si.sale_id
+                               LEFT JOIN products p ON si.product_id = p.id
+                               LEFT JOIN product_types pt ON p.type_id = pt.id
+                               WHERE pt.name = 'service'
+                               AND (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $service_revenue = $stmt->fetchColumn() ?: 0;
+
+        // Calculate merchandise revenue
+        $stmt = $pdo->prepare("SELECT SUM(s.total) as merch_revenue
+                               FROM sales s
+                               LEFT JOIN sale_items si ON s.id = si.sale_id
+                               LEFT JOIN products p ON si.product_id = p.id
+                               LEFT JOIN product_types pt ON p.type_id = pt.id
+                               WHERE pt.name = 'merch'
+                               AND (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $merch_revenue = $stmt->fetchColumn() ?: 0;
+
+        // Calculate total revenue
+        $total_revenue = $fuel_revenue + $service_revenue + $merch_revenue;
+
+        // Calculate net profit/loss
+        $net_profit = $total_revenue - $total_expenses;
+        $net_profit_percent = $total_revenue > 0 ? (($net_profit / $total_revenue) * 100) : 0;
+
+        // Format data for display
+        $data = [
+            [
+                'category' => 'Fuel Revenue',
+                'description' => 'Revenue from fuel sales',
+                'amount' => $fuel_revenue,
+                'percentage' => $total_revenue > 0 ? (($fuel_revenue / $total_revenue) * 100) : 0
+            ],
+            [
+                'category' => 'Service Revenue',
+                'description' => 'Revenue from service jobs',
+                'amount' => $service_revenue,
+                'percentage' => $total_revenue > 0 ? (($service_revenue / $total_revenue) * 100) : 0
+            ],
+            [
+                'category' => 'Merchandise Revenue',
+                'description' => 'Revenue from product sales',
+                'amount' => $merch_revenue,
+                'percentage' => $total_revenue > 0 ? (($merch_revenue / $total_revenue) * 100) : 0
+            ],
+            [
+                'category' => 'Total Revenue',
+                'description' => 'Total gross revenue',
+                'amount' => $total_revenue,
+                'percentage' => 100
+            ],
+            [
+                'category' => 'Total Expenses',
+                'description' => 'Total expenses incurred',
+                'amount' => $total_expenses,
+                'percentage' => $total_sales > 0 ? (($total_expenses / $total_sales) * 100) : 0
+            ],
+            [
+                'category' => 'Net Profit/Loss',
+                'description' => 'Revenue minus expenses',
+                'amount' => $net_profit,
+                'percentage' => $net_profit_percent
+            ]
+        ];
+    }
+
+    // 6. Sales Reports
+    elseif ($view === 'sales_reports') {
+        $title = "Sales Reports";
+        $subtitle = "Detailed sales breakdown by category and product";
+        $headers = ['Date', 'Time', 'Fuel Type', 'Quantity', 'Unit Price', 'Total Amount', 'Customer', 'Actions'];
+
+        $sql = "SELECT
+                    DATE(s.sale_date) as sale_date,
+                    TIME(s.sale_date) as sale_time,
+                    pt.name as fuel_type,
+                    si.quantity,
+                    si.price_per_unit,
+                    si.total_amount,
+                    c.name as customer_name,
+                    u.name as staff_name
+                FROM sales s
+                LEFT JOIN sale_items si ON s.id = si.sale_id
+                LEFT JOIN products p ON si.product_id = p.id
+                LEFT JOIN product_types pt ON p.type_id = pt.id
+                LEFT JOIN customers c ON s.customer_id = c.id
+                LEFT JOIN users u ON s.user_id = u.id
+                WHERE (s.station_id = ? OR s.station_id IS NULL)
+                AND pt.name IN ('fuel', 'merch', 'service')
+                AND s.sale_date BETWEEN ? AND ?
+                ORDER BY s.sale_date DESC, s.id DESC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$station_id, $start, $end]);
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // 7. Financial Reports
+    elseif ($view === 'financial_reports') {
+        $title = "Financial Reports";
+        $subtitle = "Financial performance and trends";
+        $headers = ['Report Type', 'Period', 'Total Revenue', 'Net Profit', 'Operating Expenses', 'Actions'];
+
+        // Get report period information
+        $period_start = date('M j, Y', strtotime($start));
+        $period_end = date('M j, Y', strtotime($end));
+
+        // Calculate fuel sales
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(s.total), 0) as fuel_revenue
+                               FROM sales s
+                               LEFT JOIN sale_items si ON s.id = si.sale_id
+                               LEFT JOIN products p ON si.product_id = p.id
+                               LEFT JOIN product_types pt ON p.type_id = pt.id
+                               WHERE pt.name = 'fuel'
+                               AND (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $fuel_revenue = $stmt->fetchColumn() ?: 0;
+
+        // Calculate merchandise revenue
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(s.total), 0) as merch_revenue
+                               FROM sales s
+                               LEFT JOIN sale_items si ON s.id = si.sale_id
+                               LEFT JOIN products p ON si.product_id = p.id
+                               LEFT JOIN product_types pt ON p.type_id = pt.id
+                               WHERE pt.name = 'merch'
+                               AND (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $merch_revenue = $stmt->fetchColumn() ?: 0;
+
+        // Calculate service revenue
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(s.total), 0) as service_revenue
+                               FROM sales s
+                               LEFT JOIN sale_items si ON s.id = si.sale_id
+                               LEFT JOIN products p ON si.product_id = p.id
+                               LEFT JOIN product_types pt ON p.type_id = pt.id
+                               WHERE pt.name = 'service'
+                               AND (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $service_revenue = $stmt->fetchColumn() ?: 0;
+
+        // Calculate total revenue
+        $total_revenue = $fuel_revenue + $merch_revenue + $service_revenue;
+
+        // Calculate net profit (Revenue - Expenses)
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(s.total), 0) as total_expenses
+                               FROM sales s
+                               WHERE (s.station_id = ? OR s.station_id IS NULL)
+                               AND s.sale_date BETWEEN ? AND ?");
+        $stmt->execute([$station_id, $start, $end]);
+        $total_expenses = $stmt->fetchColumn() ?: 0;
+
+        $net_profit = $total_revenue - $total_expenses;
+
+        // Operating expenses (simplified - all sales except fuel, merch, service)
+        $other_expenses = $total_expenses - $total_revenue;
+
+        $data = [
+            [
+                'type' => 'Fuel Sales',
+                'period' => $period_start . ' - ' . $period_end,
+                'revenue' => $fuel_revenue,
+                'profit' => 0,
+                'expenses' => 0
+            ],
+            [
+                'type' => 'Merchandise Sales',
+                'period' => $period_start . ' - ' . $period_end,
+                'revenue' => $merch_revenue,
+                'profit' => 0,
+                'expenses' => 0
+            ],
+            [
+                'type' => 'Service Revenue',
+                'period' => $period_start . ' - ' . $period_end,
+                'revenue' => $service_revenue,
+                'profit' => 0,
+                'expenses' => 0
+            ],
+            [
+                'type' => 'Gross Revenue',
+                'period' => $period_start . ' - ' . $period_end,
+                'revenue' => $total_revenue,
+                'profit' => 0,
+                'expenses' => 0
+            ],
+            [
+                'type' => 'Total Expenses',
+                'period' => $period_start . ' - ' . $period_end,
+                'revenue' => 0,
+                'profit' => 0,
+                'expenses' => $total_expenses
+            ],
+            [
+                'type' => 'Net Profit',
+                'period' => $period_start . ' - ' . $period_end,
+                'revenue' => $total_revenue,
+                'profit' => $net_profit,
+                'expenses' => $total_expenses
+            ]
+        ];
+    }
+
+    // 8. Verification
     elseif ($view === 'verification') {
         $title = "System Verification";
         $subtitle = "Review system activity logs and transaction approvals";
@@ -300,6 +545,41 @@ include __DIR__ . '/../partials/header.php';
                                     <button class="btn small ghost" title="View Job"><i class="fas fa-eye"></i></button>
                                 </td>
 
+                            <?php elseif ($view === 'profit_loss'): ?>
+                                <td><?php echo htmlspecialchars($row['category']); ?></td>
+                                <td><?php echo htmlspecialchars($row['description']); ?></td>
+                                <td>
+                                    <?php if ($row['category'] === 'Net Profit/Loss'): ?>
+                                        <strong style="color: <?php echo $row['amount'] >= 0 ? '#28a745' : '#dc3545'; ?>">
+                                            ₱<?php echo number_format($row['amount'], 2); ?>
+                                        </strong>
+                                    <?php else: ?>
+                                        ₱<?php echo number_format($row['amount'], 2); ?>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo number_format($row['percentage'], 1); ?>%</td>
+                                <td></td>
+
+                            <?php elseif ($view === 'sales_reports'): ?>
+                                <td><?php echo date('M d, Y', strtotime($row['sale_date'])); ?></td>
+                                <td><?php echo $row['sale_time']; ?></td>
+                                <td><span class="badge bg-<?php echo strtolower($row['fuel_type']); ?>"><?php echo htmlspecialchars($row['fuel_type']); ?></span></td>
+                                <td><?php echo number_format($row['quantity'], 2); ?></td>
+                                <td>₱<?php echo number_format($row['total_amount'] / $row['quantity'], 2); ?></td>
+                                <td>₱<?php echo number_format($row['total_amount'], 2); ?></td>
+                                <td><?php echo htmlspecialchars($row['customer_name'] ?? '-'); ?></td>
+                                <td>
+                                    <button class="btn small ghost" title="View Sale"><i class="fas fa-eye"></i></button>
+                                </td>
+
+                            <?php elseif ($view === 'financial_reports'): ?>
+                                <td><strong><?php echo htmlspecialchars($row['type']); ?></strong></td>
+                                <td><?php echo htmlspecialchars($row['period']); ?></td>
+                                <td style="color: green;">₱<?php echo number_format($row['revenue'], 2); ?></td>
+                                <td style="color: <?php echo $row['profit'] >= 0 ? 'green' : 'red'; ?>;">₱<?php echo number_format($row['profit'], 2); ?></td>
+                                <td>₱<?php echo number_format($row['expenses'], 2); ?></td>
+                                <td></td>
+
                             <?php elseif ($view === 'verification'): ?>
                                 <td><?php echo htmlspecialchars($row['action']); ?></td>
                                 <td><?php echo htmlspecialchars($row['module']); ?></td>
@@ -401,6 +681,42 @@ function exportTableToCSV(filename) {
     .sales-reports-container {
         margin-bottom: 60px !important; /* Account for fixed footer */
     }
+
+    /* Report table enhancements */
+    .report-table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.85em;
+        padding: 12px 8px;
+        border-bottom: 2px solid #e2e8f0;
+    }
+
+    .report-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .report-table tr:hover td {
+        background-color: #f8fafc;
+    }
+
+    /* Badge styles */
+    .badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        color: white;
+        font-weight: 500;
+    }
+
+    .bg-fuel { background: #007bff; }
+    .bg-merch { background: #28a745; }
+    .bg-service { background: #17a2b8; }
+    .bg-primary { background: #007bff; }
+    .bg-warning { background: #ffc107; color: #333; }
+    .bg-success { background: #28a745; }
+    .bg-danger { background: #dc3545; }
 </style>
 
 <!-- INLINE FOOTER - GUARANTEED TO DISPLAY -->

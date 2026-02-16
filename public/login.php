@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($role === 'superadmin') {
                     header("Location: dashboard.php");
                 } elseif ($role === 'admin') {
-                    header("Location: home.php");
+                    header("Location: dashboard.php");
                 } elseif ($role === 'manager') {
                     header("Location: manager_home.php");
                 } else {

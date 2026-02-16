@@ -1,3 +1,5 @@
+console.log('=== APP.JS LOADED ===');
+console.log('Current URL:', window.location.href);
 
 const $ = (q, el=document)=>el.querySelector(q);
 const $$ = (q, el=document)=>Array.from(el.querySelectorAll(q));
@@ -13,6 +15,13 @@ function fmtL(n){
 }
 
 async function api(url, opts={}){
+  // Block backend/inventory.php calls on PHP-rendered inventory page
+  const isPHPInventory = document.querySelector('.page-head[data-rendering="php"]');
+  if (isPHPInventory && url.includes('backend/inventory.php')) {
+    console.warn('BLOCKED: API call to backend/inventory.php on PHP-rendered inventory page');
+    return null;
+  }
+
   const res = await fetch(url, {
     headers: {'Content-Type':'application/json'},
     credentials: 'same-origin',
@@ -637,7 +646,7 @@ async function initPOS(){
 async function initInventory(){
   // Check if required elements exist (page might not have inventory UI)
   if (!$('#fuelInv') && !$('#merchInv')) return;
-  
+
   let products = await api('../backend/inventory.php', {method:'GET'});
   const invTabs = $$('[data-invtab]');
   const fuelInv = $('#fuelInv');
@@ -1238,7 +1247,10 @@ async function initCustomers(){
   try{
     if(page === 'dashboard') await initDashboard();
     if(page === 'pos') await initPOS();
-    if(page === 'inventory') await initInventory();
+    // Only call initInventory if page is NOT PHP-rendered
+    if(page === 'inventory' && !document.querySelector('.page-head[data-rendering="php"]')) {
+      await initInventory();
+    }
     if(page === 'joborder') await initJobOrder().catch(()=>{});
     if(page === 'customers') await initCustomers();
   }catch(err){

@@ -5,12 +5,15 @@
  * Provides automatic stock updates and transaction logging for all fuel movements
  * 
  * Transaction Types:
- * - pump_reading: Staff records shift reading
+ * - pump_reading: Staff records shift reading (deducted at verification time)
  * - delivery_finalized: Manager finalizes delivery
  * - adjustment_approved: Manager approves adjustment
  * - pos_sale: Fuel sold at POS
  * - reconciliation_sync: Reconciliation synced to POS
  * - manual_adjustment: Direct inventory change
+ *
+ * LINKAGE: fuel_types.name must match products.name for fuel products.
+ * The JOIN uses: products.name = fuel_types.name AND products.type_id = (fuel product_type)
  */
 
 /**
@@ -58,32 +61,33 @@ function recordStockMovement($pdo, $station_id, $fuel_type_id, $quantity, $trans
             ];
         }
 
-        // Get or create inventory record for this fuel type
+        // Look up the matching product by name (fuel_types.name == products.name)
+        // where products.type_id points to the 'fuel' product_type
         $stmt = $pdo->prepare("
-            SELECT si.id as inventory_id, si.stock_level, si.closing_stock, si.closing_date, si.closing_shift
-            FROM station_inventory si
-            INNER JOIN products p ON si.product_id = p.id
-            WHERE si.station_id = ? AND p.type_id = ?
+            SELECT p.id 
+            FROM products p 
+            WHERE p.name = ? AND p.type_id = (SELECT id FROM product_types WHERE name = 'fuel')
         ");
-        $stmt->execute([$station_id, $fuel_type_id]);
+        $stmt->execute([$fuel_type['name']]);
+        $product_id = $stmt->fetchColumn();
+
+        if (!$product_id) {
+            return [
+                'success' => false,
+                'message' => 'Fuel product not configured in products table for: ' . $fuel_type['name']
+            ];
+        }
+
+        // Get or create inventory record for this fuel product at this station
+        $stmt = $pdo->prepare("
+            SELECT si.id as inventory_id, si.stock_level
+            FROM station_inventory si
+            WHERE si.station_id = ? AND si.product_id = ?
+        ");
+        $stmt->execute([$station_id, $product_id]);
         $inventory = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if (!$inventory) {
-            // Create product entry first if not exists
-            $stmt = $pdo->prepare("
-                SELECT p.id FROM products p 
-                WHERE p.name = ? AND p.type_id = ?
-            ");
-            $stmt->execute([$fuel_type['name'], $fuel_type_id]);
-            $product_id = $stmt->fetchColumn();
-            
-            if (!$product_id) {
-                return [
-                    'success' => false,
-                    'message' => 'Fuel product not configured in products table'
-                ];
-            }
-            
             // Create inventory record
             $stmt = $pdo->prepare("
                 INSERT INTO station_inventory (station_id, product_id, stock_level, unit, status)
@@ -130,11 +134,9 @@ function recordStockMovement($pdo, $station_id, $fuel_type_id, $quantity, $trans
                 (station_id, product_id, transaction_type, quantity, reference_type, reference_id, notes, created_by, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ");
-            
-            // Get product_id for this fuel type
             $stmt->execute([
                 $station_id,
-                $pdo->query("SELECT p.id FROM products p WHERE p.name = '{$fuel_type['name']}' AND p.type_id = {$fuel_type_id}")->fetchColumn(),
+                $product_id,
                 $transaction_type,
                 $quantity,
                 $reference_type,
@@ -163,7 +165,7 @@ function recordStockMovement($pdo, $station_id, $fuel_type_id, $quantity, $trans
                 $pdo,
                 $user_id,
                 $action,
-                "{$action}: {$fuel_type['name']} {$quantity_text} L. Stock: {$stock_before}L → {$stock_after}L" . 
+                "{$action}: {$fuel_type['name']} {$quantity_text} L. Stock: {$stock_before}L -> {$stock_after}L" . 
                 ($notes ? ". Notes: {$notes}" : ''),
                 'fuel_management'
             );
@@ -223,29 +225,31 @@ function recordDailyClosingStock($pdo, $station_id, $fuel_type_id, $closing_stoc
         // Get fuel type name
         $stmt = $pdo->prepare("SELECT name FROM fuel_types WHERE id = ?");
         $stmt->execute([$fuel_type_id]);
-        $fuel_type = $stmt->fetchColumn();
+        $fuel_type_name = $stmt->fetchColumn();
         
-        if (!$fuel_type) {
+        if (!$fuel_type_name) {
             return [
                 'success' => false,
                 'message' => 'Fuel type not found'
             ];
         }
         
-        // Get inventory record
+        // Get inventory record by matching product name to fuel type name
         $stmt = $pdo->prepare("
             SELECT si.id as inventory_id
             FROM station_inventory si
             INNER JOIN products p ON si.product_id = p.id
-            WHERE si.station_id = ? AND p.type_id = ?
+            WHERE si.station_id = ? 
+              AND p.name = ? 
+              AND p.type_id = (SELECT id FROM product_types WHERE name = 'fuel')
         ");
-        $stmt->execute([$station_id, $fuel_type_id]);
+        $stmt->execute([$station_id, $fuel_type_name]);
         $inventory = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if (!$inventory) {
             return [
                 'success' => false,
-                'message' => 'Inventory record not found for this fuel type'
+                'message' => 'Inventory record not found for fuel type: ' . $fuel_type_name
             ];
         }
         
@@ -264,7 +268,7 @@ function recordDailyClosingStock($pdo, $station_id, $fuel_type_id, $closing_stoc
             $pdo,
             $user_id,
             'Record Daily Closing Stock',
-            "Recorded closing stock for {$fuel_type} ({$shift} shift): {$closing_stock}L on {$closing_date}",
+            "Recorded closing stock for {$fuel_type_name} ({$shift} shift): {$closing_stock}L on {$closing_date}",
             'fuel_management'
         );
         
@@ -301,16 +305,31 @@ function recordDailyClosingStock($pdo, $station_id, $fuel_type_id, $closing_stoc
  */
 function getOpeningStockForDay($pdo, $station_id, $fuel_type_id, $date) {
     try {
+        // Get fuel type name first
+        $stmt = $pdo->prepare("SELECT name FROM fuel_types WHERE id = ?");
+        $stmt->execute([$fuel_type_id]);
+        $fuel_type_name = $stmt->fetchColumn();
+        
+        if (!$fuel_type_name) {
+            return [
+                'opening_stock' => 0,
+                'error' => 'Fuel type not found'
+            ];
+        }
+        
         // Get previous day's closing stock
         $previous_day = date('Y-m-d', strtotime($date . ' -1 day'));
         
         $stmt = $pdo->prepare("
-            SELECT closing_stock, closing_shift
+            SELECT si.closing_stock, si.closing_shift
             FROM station_inventory si
             INNER JOIN products p ON si.product_id = p.id
-            WHERE si.station_id = ? AND p.type_id = ? AND si.closing_date = ?
+            WHERE si.station_id = ? 
+              AND p.name = ? 
+              AND p.type_id = (SELECT id FROM product_types WHERE name = 'fuel')
+              AND si.closing_date = ?
         ");
-        $stmt->execute([$station_id, $fuel_type_id, $previous_day]);
+        $stmt->execute([$station_id, $fuel_type_name, $previous_day]);
         $previous_closing = $stmt->fetch(PDO::FETCH_ASSOC);
         
         $previous_day_closing = $previous_closing ? (float)$previous_closing['closing_stock'] : 0.0;
@@ -321,12 +340,12 @@ function getOpeningStockForDay($pdo, $station_id, $fuel_type_id, $date) {
             SELECT COALESCE(SUM(delivery_liters), 0) as total_deliveries
             FROM fuel_deliveries
             WHERE station_id = ? 
-                AND fuel_type = (SELECT name FROM fuel_types WHERE id = ?)
+                AND fuel_type = ?
                 AND delivery_date = ? 
                 AND supplier = 'Petron Corporation'
                 AND status = 'Finalized'
         ");
-        $stmt->execute([$station_id, $fuel_type_id, $date]);
+        $stmt->execute([$station_id, $fuel_type_name, $date]);
         $finalized_deliveries = (float)$stmt->fetchColumn();
         
         // Calculate opening stock

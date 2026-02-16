@@ -1,9 +1,10 @@
 <?php
+require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/db_connect.php';
-session_start();
+require_login();
 
-$me = $_SESSION['user'] ?? null;
-$station_id = $_SESSION['station_id'] ?? 1;
+$me = current_user();
+$station_id = user_station_id();
 
 if (!$me) {
     echo "Not logged in. Please login first.";

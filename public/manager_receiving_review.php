@@ -54,10 +54,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 $stmt_items->execute([$batch_id]);
                 
-                log_activity($pdo, $me['id'], 'Receiving Batch Received', "Batch {$batch['batch_number']} received by {$me['name']}", $_SERVER['REMOTE_ADDR']);
-                
-                $pdo->commit();
-                $msg = "✅ Batch {$batch['batch_number']} received successfully! Ready for stock confirmation.";
+                    log_activity($pdo, $me['id'], 'Receiving Batch Received', "Batch {$batch['batch_number']} received by {$me['name']}", $_SERVER['REMOTE_ADDR']);
+                    
+                    $pdo->commit();
+                    
+                    // Auto-redirect to stock confirmation page
+                    header("Location: admin_stock_confirmation.php?batch={$batch_id}&from=receiving");
+                    exit;
             }
         } catch (Exception $e) {
             $pdo->rollBack();

@@ -191,10 +191,11 @@ class JobOrderOperations {
         try {
             $this->pdo->beginTransaction();
             
-            // RBAC: Manager, Admin, or Super Admin
+            // RBAC: ONLY Manager can approve job orders per hierarchy
+            // Admin should NOT do Manager work - Admin only has unlock capability
             $role = role_key($this->user['role'] ?? '');
-            if (!in_array($role, ['manager', 'admin', 'superadmin'])) {
-                throw new Exception('Manager or admin privileges required for job order approval');
+            if ($role !== 'manager') {
+                throw new Exception('Manager privileges required for job order approval. Admin cannot override manager decisions.');
             }
             
             $job = $this->getJobOrderDetails($job_id);
@@ -211,36 +212,35 @@ class JobOrderOperations {
             }
             
              if ($action === 'approve') {
-                 // APPROVAL: Move directly to In Progress (day-to-day manager operation)
-                 $stmt = $this->pdo->prepare("
-                     UPDATE job_orders
-                     SET status = 'In Progress',
-                         reviewed_by = ?,
-                         reviewed_at = NOW(),
-                         started_at = NOW(),
-                         staff_editable = 0,
-                         manager_remarks = ?
-                     WHERE id = ?
-                 ");
-                 $stmt->execute([$this->user['id'], $remarks, $job_id]);
+                  // APPROVAL: Move directly to In Progress (day-to-day manager operation)
+                  $stmt = $this->pdo->prepare("
+                      UPDATE job_orders
+                      SET status = 'In Progress',
+                          reviewed_by = ?,
+                          reviewed_at = NOW(),
+                          started_at = NOW(),
+                          admin_remarks = ?
+                      WHERE id = ?
+                  ");
+                  $stmt->execute([$this->user['id'], $remarks, $job_id]);
+                  
+                  log_activity(
+                      $this->pdo,
+                      $this->user['id'],
+                      'Job Order Approved',
+                      sprintf('Job %s approved and started by manager. Total: ₱%.2f', $job['job_order_number'], $job['estimated_labor_cost'] + $job['estimated_parts_cost'])
+                  );
+                  
+                  $message = 'Job order approved and started!';
                  
-                 log_activity(
-                     $this->pdo,
-                     $this->user['id'],
-                     'Job Order Approved',
-                     sprintf('Job %s approved and started by manager. Total: ₱%.2f', $job['job_order_number'], $job['estimated_labor_cost'] + $job['estimated_parts_cost'])
-                 );
-                 
-                 $message = 'Job order approved and started!';
-                
             } elseif ($action === 'reject') {
-                // REJECTION: Return to pending
+                // REJECTION: Return to pending - use reviewed_by/reviewed_at for tracking
                 $stmt = $this->pdo->prepare("
                     UPDATE job_orders
                     SET status = 'Rejected',
-                        rejected_by = ?,
-                        rejected_at = NOW(),
-                        manager_remarks = ?
+                        reviewed_by = ?,
+                        reviewed_at = NOW(),
+                        admin_remarks = ?
                     WHERE id = ?
                 ");
                 $stmt->execute([$this->user['id'], $remarks, $job_id]);
@@ -533,30 +533,52 @@ class JobOrderOperations {
          try {
              $this->pdo->beginTransaction();
              
-             $job = $this->getJobOrderDetails($job_id);
+             $job = $this->getJobOrderDetails($job_id, true); // Bypass station filter for status updates
              if (!$job) {
                  throw new Exception('Job order not found');
              }
              
              // Validate status is in enum
-             $valid_statuses = ['Pending', 'Reviewed', 'In Progress', 'Completed', 'Verified', 'finalized', 'Cancelled', 'Rejected'];
+             $valid_statuses = ['Pending', 'Reviewed', 'In Progress', 'Awaiting Parts', 'Completed', 'Verified', 'finalized', 'Cancelled', 'Rejected'];
              if (!in_array($status, $valid_statuses)) {
                  throw new Exception('Invalid status: ' . $status);
              }
              
-             // Simple status update
-             $stmt = $this->pdo->prepare("
-                 UPDATE job_orders
-                 SET status = ?,
-                     updated_at = NOW()
-                 WHERE id = ?
-             ");
-             $stmt->execute([$status, $job_id]);
+             // Role-based status restrictions
+             $user_role = $this->user['role'] ?? 'staff';
+             if ($user_role === 'staff') {
+                 $staff_allowed_statuses = ['In Progress', 'Awaiting Parts'];
+                 if (!in_array($status, $staff_allowed_statuses)) {
+                     throw new Exception('Staff users can only set status to "In Progress" or "Awaiting Parts". Status "' . $status . '" requires manager privileges.');
+                 }
+             }
+             
+            // Prepare notes update
+            $current_notes = $job['notes'] ?? '';
+            $timestamp = date('Y-m-d H:i:s');
+            $user_name = $this->user['name'] ?? $this->user['username'] ?? 'Unknown';
+            
+            $status_note = "\n[{$timestamp}] Status changed to '{$status}' by {$user_name}";
+            if (!empty($notes)) {
+                $status_note .= ": " . $notes;
+            }
+            
+            $updated_notes = trim($current_notes . $status_note);
+            
+            // Update status and append notes
+            $stmt = $this->pdo->prepare("
+                UPDATE job_orders
+                SET status = ?,
+                    notes = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmt->execute([$status, $updated_notes, $job_id]);
              
              // Log the status change
              log_activity(
                  $this->pdo,
-                 $this->user['id'],
+                 $this->user['user_id'] ?? $this->user['id'] ?? 0,
                  'Job Status Updated',
                  sprintf('Job %s status changed to %s. Notes: %s', $job['job_order_number'], $status, $notes ?: 'None')
              );
@@ -823,21 +845,40 @@ class JobOrderOperations {
     /**
      * Get Job Order Details
      */
-    private function getJobOrderDetails($job_id) {
-        $stmt = $this->pdo->prepare("
-            SELECT jo.*, 
-                   c.name as customer_name,
-                   m.full_name as mechanic_name,
-                   sc.name as service_category_name,
-                   u.name as assigned_by_name
-            FROM job_orders jo
-            LEFT JOIN customers c ON c.id = jo.customer_id
-            LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
-            LEFT JOIN service_categories sc ON sc.id = jo.service_category_id
-            LEFT JOIN users u ON u.id = jo.assigned_by
-            WHERE jo.id = ? AND jo.station_id = ?
-        ");
-        $stmt->execute([$job_id, $this->station_id]);
+    private function getJobOrderDetails($job_id, $bypass_station_filter = false) {
+        if ($bypass_station_filter) {
+            // For status updates - allow cross-station operations for authorized users
+            $stmt = $this->pdo->prepare("
+                SELECT jo.*, 
+                       c.name as customer_name,
+                       m.full_name as mechanic_name,
+                       sc.name as service_category_name,
+                       u.name as assigned_by_name
+                FROM job_orders jo
+                LEFT JOIN customers c ON c.id = jo.customer_id
+                LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
+                LEFT JOIN service_categories sc ON sc.id = jo.service_category_id
+                LEFT JOIN users u ON u.id = jo.assigned_by
+                WHERE jo.id = ?
+            ");
+            $stmt->execute([$job_id]);
+        } else {
+            // Regular operation - filter by station for security
+            $stmt = $this->pdo->prepare("
+                SELECT jo.*, 
+                       c.name as customer_name,
+                       m.full_name as mechanic_name,
+                       sc.name as service_category_name,
+                       u.name as assigned_by_name
+                FROM job_orders jo
+                LEFT JOIN customers c ON c.id = jo.customer_id
+                LEFT JOIN mechanics m ON m.id = jo.assigned_mechanic_id
+                LEFT JOIN service_categories sc ON sc.id = jo.service_category_id
+                LEFT JOIN users u ON u.id = jo.assigned_by
+                WHERE jo.id = ? AND jo.station_id = ?
+            ");
+            $stmt->execute([$job_id, $this->station_id]);
+        }
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     

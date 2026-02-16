@@ -34,7 +34,7 @@ $verified = false;
 $error = '';
 $msg = '';
 $active_tab = $_GET['tab'] ?? 'dashboard';
-$station_id = $me['station_id'] ?? 0;
+$station_id = user_station_id();
 
 // Check if already verified in this session
 if (isset($_SESSION['approvals_verified']) && $_SESSION['approvals_verified'] && (time() - $_SESSION['approvals_verified_time'] < 600)) {

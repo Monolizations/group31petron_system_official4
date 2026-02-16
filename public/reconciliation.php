@@ -12,11 +12,8 @@ if (!has_role_at_least('admin')) {
     die("Access Denied");
 }
 
-// REDIRECT ADMINS TO NEW FINALIZATION PAGE
-if (in_array($role, ['admin', 'superadmin'])) {
-    header("Location: fuel_reconciliation_finalize.php");
-    exit;
-}
+// Don't redirect - let admins see the reconciliation report page
+// They can navigate to fuel_reconciliation_finalize.php from the sidebar if needed
 
 // Get filter parameters
 $date_range = $_GET['date_range'] ?? '';
@@ -124,12 +121,19 @@ $total_variance = 0;
 if ($start_date && $end_date) {
     try {
         // Get fuel deliveries (inflow) data
-        $stmt = $pdo->prepare("SELECT station_id, fuel_type, SUM(volume) as total_inflow FROM fuel_deliveries WHERE delivery_date BETWEEN ? AND ? GROUP BY station_id, fuel_type");
+        $stmt = $pdo->prepare("SELECT station_id, fuel_type, SUM(delivery_liters) as total_inflow FROM fuel_deliveries WHERE delivery_date BETWEEN ? AND ? GROUP BY station_id, fuel_type");
         $stmt->execute([$start_date, $end_date]);
         $inflow_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Get fuel daily readings (outflow) data
-        $stmt = $pdo->prepare("SELECT dr.station_id, fs.fuel_type, SUM(dr.closing_volume - dr.opening_volume) as total_outflow FROM fuel_daily_readings dr JOIN fuel_stations fs ON dr.fuel_station_id = fs.id WHERE dr.reading_date BETWEEN ? AND ? GROUP BY dr.station_id, fs.fuel_type");
+        // Get fuel daily readings (outflow) data - join with fuel_pumps and fuel_types
+        $stmt = $pdo->prepare("
+            SELECT dr.station_id, ft.name as fuel_type, SUM(dr.sales_liters) as total_outflow 
+            FROM fuel_daily_readings dr 
+            JOIN fuel_pumps fp ON dr.pump_id = fp.id 
+            JOIN fuel_types ft ON fp.fuel_type_id = ft.id 
+            WHERE dr.reading_date BETWEEN ? AND ? AND (dr.status = 'Verified' OR dr.status IS NULL OR dr.status = '') 
+            GROUP BY dr.station_id, ft.name
+        ");
         $stmt->execute([$start_date, $end_date]);
         $outflow_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
@@ -776,6 +780,100 @@ function setupStationSelector() {
             updateStationSelector();
         });
     });
+}
+
+function updateStationSelector() {
+    const selected = document.querySelectorAll('.multiselect-option.selected');
+    const selector = document.getElementById('stationSelector');
+    if (selected.length === 0) {
+        selector.value = '';
+    } else if (selected.length === 1) {
+        selector.value = selected[0].textContent.trim();
+    } else {
+        selector.value = selected.length + ' stations selected';
+    }
+}
+
+function applyFilters() {
+    const dateRange = document.getElementById('dateRange').value;
+    const selectedStations = document.querySelectorAll('.multiselect-option.selected');
+    let stationIds = [];
+    selectedStations.forEach(opt => {
+        if (opt.dataset.value !== 'all') {
+            stationIds.push(opt.dataset.value);
+        }
+    });
+    
+    let url = 'reconciliation.php?';
+    if (dateRange) url += 'date_range=' + encodeURIComponent(dateRange) + '&';
+    if (stationIds.length > 0) url += 'stations=' + stationIds.join(',') + '&';
+    
+    window.location.href = url;
+}
+
+function clearFilters() {
+    window.location.href = 'reconciliation.php';
+}
+
+function toggleSelectAll() {
+    const selectAll = document.getElementById('selectAll');
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    checkboxes.forEach(cb => cb.checked = selectAll.checked);
+}
+
+function showVarianceDetails(date, station, fuelType) {
+    document.getElementById('varianceModalTitle').textContent = 'Variance Details - ' + fuelType;
+    document.getElementById('varianceModal').style.display = 'block';
+    // Would typically load details via AJAX here
+}
+
+function closeVarianceModal() {
+    document.getElementById('varianceModal').style.display = 'none';
+}
+
+function adjustInventory() {
+    alert('Inventory adjustment would open here');
+    closeVarianceModal();
+}
+
+function showToast(message, type) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.style.background = type === 'error' ? '#dc2626' : '#16a34a';
+    toast.style.display = 'block';
+    setTimeout(() => {
+        toast.style.display = 'none';
+    }, 3000);
+}
+
+function markReconciled() {
+    const selected = document.querySelectorAll('.row-checkbox:checked');
+    if (selected.length === 0) {
+        showToast('Please select at least one record to mark as reconciled', 'error');
+        return;
+    }
+    
+    // Open finalization page in new tab
+    window.open('fuel_reconciliation_finalize.php', '_blank');
+}
+
+function exportReport(format) {
+    showToast('Export to ' + format.toUpperCase() + ' functionality coming soon', 'error');
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordModal').style.display = 'none';
+}
+
+function verifyManagerPassword() {
+    const password = document.getElementById('managerPassword').value;
+    if (!password) {
+        showToast('Please enter your password', 'error');
+        return;
+    }
+    // Would typically verify via AJAX here
+    closePasswordModal();
+    showToast('Password verified successfully', 'success');
 }
 </script>
 

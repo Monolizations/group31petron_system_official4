@@ -2,7 +2,6 @@
 $page_id = 'pos';
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
-require_once __DIR__ . '/../backend/fuel_pos_sync.php';
 require_login();
 
 $me = current_user();
@@ -179,150 +178,122 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
-    // STAFF ACTION: Create Transaction
+    // STAFF ACTION: Create Multi-Item Transaction
     else {
          $customer_name = $_POST['customer_name'] ?? 'Walk-in';
-         $product_id = (int)($_POST['product_id'] ?? 0);
-         $quantity = (int)($_POST['quantity'] ?? 1);
-         $price = (float)($_POST['price'] ?? 0);
-         $product_name = '';
-         $product_unit = '';
-         $product_type = $_POST['product_type'] ?? '';
+         
+         // Parse items from JSON
+         $items_raw = $_POST['items'] ?? '[]';
+         if (is_string($items_raw)) {
+             $items = json_decode($items_raw, true) ?? [];
+         } else {
+             $items = $items_raw;
+         }
+         
          $payment_type = $_POST['payment_type'] ?? 'Cash';
          $gcash_ref_number = trim($_POST['gcash_ref_number'] ?? '');
          $discount = (float)($_POST['discount'] ?? 0);
-         $pump_id = !empty($_POST['pump_id']) ? (int)$_POST['pump_id'] : null;
-         $nozzle_id = !empty($_POST['nozzle_id']) ? (int)$_POST['nozzle_id'] : null;
          
-         // Validation
-         if ($product_id <= 0) {
-             $msg = "❌ Error: Please select a valid product.";
-         } elseif ($quantity <= 0) {
-             $msg = "❌ Error: Quantity must be greater than 0.";
-         } elseif ($price < 0) {
-             $msg = "❌ Error: Invalid price.";
-         } else {
-             // Get product details and type
-             try {
-                 $stmt = $pdo->prepare("SELECT p.name, pt.name as type_name, p.type_id, si.unit FROM products p INNER JOIN product_types pt ON p.type_id = pt.id INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? WHERE p.id = ?");
-                 $stmt->execute([$station_id, $product_id]);
-                 $product = $stmt->fetch(PDO::FETCH_ASSOC);
-                 
-                 if (!$product) {
-                     $msg = "❌ Error: Product not found.";
-                 } else {
-                     $product_name = $product['name'];
-                     $product_unit = $product['unit'] ?? '';
-                     
-                     // Validate pump and nozzle for fuel products
-                     if ($product['type_name'] === 'fuel') {
-                         if (empty($pump_id)) {
-                             $msg = "❌ Error: Pump selection is required for fuel transactions.";
-                         } elseif (empty($nozzle_id)) {
-                             $msg = "❌ Error: Nozzle selection is required for fuel transactions.";
-                         }
-                         
-                         // Validate pump exists and belongs to this station
-                         if (!$msg) {
-                             $stmt = $pdo->prepare("SELECT id FROM fuel_pumps WHERE id = ? AND station_id = ? AND status = 'Active'");
-                             $stmt->execute([$pump_id, $station_id]);
-                             if (!$stmt->fetch()) {
-                                 $msg = "❌ Error: Invalid pump selection.";
-                             }
-                         }
-                         
-                         // Validate nozzle exists and belongs to the pump
-                         if (!$msg) {
-                             $stmt = $pdo->prepare("SELECT id FROM nozzles WHERE id = ? AND pump_id = ? AND status = 'active'");
-                             $stmt->execute([$nozzle_id, $pump_id]);
-                             if (!$stmt->fetch()) {
-                                 $msg = "❌ Error: Invalid nozzle selection.";
-                             }
-                         }
-                     }
-                     
-                     // Check stock availability
-                     if (!$msg) {
-                         $stmt = $pdo->prepare("SELECT stock_level FROM station_inventory WHERE product_id = ? AND station_id = ?");
-                         $stmt->execute([$product_id, $station_id]);
-                         $stock = $stmt->fetchColumn();
-                         
-                         if ($stock === null || $stock === false) {
-                             $msg = "❌ Error: Product not in inventory.";
-                         } elseif ($stock < $quantity) {
-                             $msg = "❌ Error: Insufficient stock. Available: {$stock} {$product_unit}. Requested: {$quantity} {$product_unit}.";
-                         }
-                     }
-                     
-                     if (!$msg) {
-                         // Proceed with transaction
-                         $subtotal = $quantity * $price;
-                         $total = $subtotal - $discount;
-                         
-                         // Validation: GCash requires reference number
-                         if ($payment_type === 'GCash' && empty($gcash_ref_number)) {
-                             $msg = "❌ Error: GCash reference number is required for GCash payments.";
-                         } else {
-                             try {
-                                 $pdo->beginTransaction();
-                                 
-                                 // Insert Sale - Status is 'Pending' for Staff, 'Completed' for Admin
-                                 $initial_status = $isAdmin ? 'Completed' : 'Pending';
-                                 $sale_id = uniqid('SALE-');
-                                 $is_locked = $isAdmin ? 1 : 0;
-                                 
-                                 // Add pump_id column if it doesn't exist
-                                 try {
-                                     $pdo->exec("ALTER TABLE sales ADD COLUMN pump_id INT NULL");
-                                 } catch (PDOException $e) {
-                                     // Column already exists, ignore
-                                 }
-                                 
-                                 $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, sale_date, sale_time, payment_method, total, status, pump_id, created_at) VALUES (?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, NOW())");
-                                 $stmt->execute([$sale_id, $station_id, $me['id'], $payment_type, $total, $initial_status, $pump_id]);
-                                 $last_sale_id = $sale_id;
-                                 
-                                 // Add name column if it doesn't exist (non-transaction operation)
-                                 try {
-                                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN name VARCHAR(255) NULL AFTER product_id");
-                                 } catch (PDOException $e) {
-                                     // Column already exists, ignore
-                                 }
-                                 
-                                 // Add pump_id and nozzle_id columns if they don't exist
-                                 try {
-                                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN pump_id INT NULL");
-                                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN nozzle_id INT NULL");
-                                 } catch (PDOException $e) {
-                                     // Columns already exist, ignore
-                                 }
-                                 
-                                 // Insert Item with actual product_id, name, pump_id, and nozzle_id
-                                 $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, name, pump_id, nozzle_id, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                                 $stmtItem->execute([$sale_id, $product_id, $product_name, $pump_id, $nozzle_id, $quantity, $price, $subtotal]);
-                                 
-                                 // Deduct inventory stock immediately (as per requirement)
-                                 $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
-                                 $stmtStock->execute([$quantity, $product_id, $station_id]);
-                                 
-                                 $pdo->commit();
-
-                                $msg = "✅ Transaction completed successfully. Stock deducted immediately.";
-                            } catch (Exception $e) {
-                                // Only rollback if transaction is active
-                                if ($pdo->inTransaction()) {
-                                    $pdo->rollBack();
-                                }
-                                $msg = "❌ Error: " . $e->getMessage();
-                            }
-                        }
+         if (empty($items)) {
+             $msg = "❌ Error: Please add at least one item to the transaction.";
+         } elseif (empty($customer_name)) {
+             $msg = "❌ Error: Customer name is required.";
+         } elseif (empty($payment_type)) {
+             $msg = "❌ Error: Payment type is required.";
+          } else {
+              try {
+                  $pdo->beginTransaction();
+                  
+                  $total = 0;
+                  $item_details = [];
+                  $validation_error = '';
+                  
+                   // Validate and process each item
+                   foreach ($items as $item) {
+                       if ($validation_error) break; // Exit loop if error found
+                       
+                       $product_id = (int)($item['product_id'] ?? 0);
+                       $quantity = (int)($item['quantity'] ?? 0);
+                       
+                       if ($product_id <= 0 || $quantity <= 0) {
+                           $validation_error = "❌ Error: Invalid product or quantity.";
+                           break;
+                       }
+                       
+                       // Get product details
+                       $stmt = $pdo->prepare("SELECT p.id as product_id, p.name, pt.name as type_name, si.unit, p.price, p.type_id FROM products p INNER JOIN product_types pt ON p.type_id = pt.id INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? WHERE p.id = ?");
+                       $stmt->execute([$station_id, $product_id]);
+                       $product = $stmt->fetch(PDO::FETCH_ASSOC);
+                       
+                       if (!$product) {
+                           $validation_error = "❌ Error: Product not found (ID: $product_id)";
+                           break;
+                       }
+                       
+                       // Check stock availability
+                       $stmt = $pdo->prepare("SELECT stock_level FROM station_inventory WHERE product_id = ? AND station_id = ?");
+                       $stmt->execute([$product_id, $station_id]);
+                       $stock = $stmt->fetchColumn();
+                       
+                       if ($stock === null || $stock === false || $stock < $quantity) {
+                           $validation_error = "❌ Error: Insufficient stock for {$product['name']}. Available: {$stock} {$product['unit']}. Requested: {$quantity} {$product['unit']}.";
+                           break;
+                       }
+                       
+                       $item_price = $product['price'];
+                       $item_total = $quantity * $item_price;
+                       $total += $item_total;
+                       
+                       $item_details[] = [
+                           'product_id' => $product['product_id'],
+                           'name' => $product['name'],
+                           'type_name' => $product['type_name'],
+                           'quantity' => $quantity,
+                           'price' => $item_price,
+                           'unit_price' => $item_price,
+                           'total' => $item_total,
+                           'unit' => $product['unit']
+                       ];
                     }
-                }
-            } catch (Exception $e) {
-                $msg = "❌ Error: " . $e->getMessage();
-            }
-        }
-    }
+                   
+                   // Apply discount to total
+                   $final_total = $total - $discount;
+                   
+                   if ($validation_error) {
+                       $msg = $validation_error;
+                       $pdo->rollBack();
+                   } elseif ($payment_type === 'GCash' && empty($gcash_ref_number)) {
+                       $msg = "❌ Error: GCash reference number is required for GCash payments.";
+                       $pdo->rollBack();
+                   } else {
+                        // Insert Sale
+                        $sale_id = uniqid('SALE-');
+                        $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, customer, sale_date, sale_time, payment_method, total, gcash_ref_number, status, created_at) VALUES (?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, 'Completed', NOW())");
+                        $stmt->execute([$sale_id, $station_id, $me['id'], $customer_name, $payment_type, $final_total, $gcash_ref_number]);
+                       $last_sale_id = $sale_id;
+                       
+                        // Insert each item and deduct stock
+                        foreach ($item_details as $item) {
+                            // Insert Item
+                            $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, name, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?)");
+                            $stmtItem->execute([$sale_id, $item['product_id'], $item['name'], $item['quantity'], $item['unit_price'], $item['total']]);
+                           
+                           // Deduct inventory stock immediately
+                           $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
+                           $stmtStock->execute([$item['quantity'], $item['product_id'], $station_id]);
+                       }
+                       
+                       $pdo->commit();
+                       $msg = "✅ Multi-item transaction completed successfully. Stock deducted immediately.";
+                   }
+               } catch (Exception $e) {
+                   if ($pdo->inTransaction()) {
+                       $pdo->rollBack();
+                   }
+                   $msg = "❌ Error: " . $e->getMessage();
+               }
+          }
+      }
 }
 
 // Fetch customers for autocomplete
@@ -331,9 +302,8 @@ try {
     $customers = $pdo->query("SELECT name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
 } catch(Exception $e){}
 
-// Load inventory and fuel pricing for POS dropdown
+// Load merchandise inventory for POS dropdown
 $inventory = [];
-$fuelPricing = [];
 try {
     // Load merchandise products from inventory
     $stmt = $pdo->prepare("
@@ -347,71 +317,30 @@ try {
     $stmt->execute([$station_id]);
     $merchProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Load fuel products with current pricing
-    $stmt = $pdo->prepare("
-        SELECT p.id, p.name, p.type_id, p.price, p.cost, p.sku, si.stock_level, si.unit, si.status as inventory_status,
-               fp.price_per_liter as price
-        FROM products p
-        INNER JOIN product_types pt ON p.type_id = pt.id
-        INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? AND si.status = 'active'
-        LEFT JOIN fuel_pricing fp ON fp.fuel_type_id = p.type_id AND fp.station_id = ? AND fp.is_active = 1
-        WHERE pt.name = 'fuel'
-        ORDER BY p.name
-    ");
-    $stmt->execute([$station_id, $station_id]);
-    $fuelProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Fallback to products.price if fuel_pricing not available
-    foreach ($fuelProducts as &$fp) {
-        if (!$fp['price'] && $fp['price'] > 0) {
-            $fp['price'] = $fp['price'] ?? $fp['price'];
-        }
-    }
-    
     $inventory = [
-        'fuel' => $fuelProducts,
         'merch' => $merchProducts
     ];
-    
-    // Load all fuel pricing for display
-    $stmt = $pdo->prepare("
-        SELECT fp.*, ft.name as fuel_name
-        FROM fuel_pricing fp
-        INNER JOIN fuel_types ft ON fp.fuel_type_id = ft.id
-        WHERE fp.station_id = ? AND fp.is_active = 1
-        ORDER BY ft.name
-     ");
-     $stmt->execute([$station_id]);
-     $fuelPricing = $stmt->fetchAll(PDO::FETCH_ASSOC);
-     
-     // Load sync status for each fuel type
-     $fuelSyncStatus = [];
-     foreach ($fuelProducts as $fuel) {
-         $syncStatus = getLastSyncStatus($pdo, $station_id, $fuel['type_id']);
-         $fuelSyncStatus[$fuel['id']] = $syncStatus;
-     }
      
 } catch (Exception $e) {
-     $inventory = ['fuel' => [], 'merch' => []];
-     $fuelPricing = [];
-     $fuelSyncStatus = [];
+     $inventory = ['merch' => []];
 }
 
-// Fetch Pending Transactions for Admin
-$pending_transactions = [];
+// Fetch Recent Completed Transactions for Admin Review
+$recent_transactions = [];
 if ($isAdmin) {
     try {
-        // Get pending sales with staff name and item summary
+        // Get recent completed sales with staff name and item summary
         $sql = "SELECT s.*, u.name as staff_name,
                 (SELECT GROUP_CONCAT(CONCAT(name, ' (', qty, ')') SEPARATOR ', ') FROM sale_items WHERE sale_id = s.id) as items_summary,
                 (SELECT SUM(qty) FROM sale_items WHERE sale_id = s.id) as total_qty
                 FROM sales s
                 LEFT JOIN users u ON s.user_id = u.id
-                WHERE s.status = 'Pending' AND s.station_id = ? AND s.is_locked = 0
-                ORDER BY s.created_at DESC";
+                WHERE s.status = 'Completed' AND s.station_id = ? AND DATE(s.created_at) = CURDATE()
+                ORDER BY s.created_at DESC
+                LIMIT 20";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$station_id]);
-        $pending_transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $recent_transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Exception $e) {}
 }
 
@@ -438,8 +367,8 @@ include __DIR__ . '/../partials/header.php';
 
 <div class="page-head">
     <div>
-        <h1 class="h1"><?php echo $isAdmin ? 'Transaction Review' : 'New Transaction'; ?></h1>
-        <div class="sub"><?php echo $isAdmin ? 'Validate and approve staff entries' : 'Create a new point of sale transaction'; ?></div>
+        <h1 class="h1"><?php echo $isAdmin ? 'Transaction Overview' : 'New Transaction'; ?></h1>
+        <div class="sub"><?php echo $isAdmin ? 'Monitor recent completed transactions' : 'Create a new point of sale transaction'; ?></div>
     </div>
 </div>
 
@@ -473,10 +402,10 @@ include __DIR__ . '/../partials/header.php';
 <?php endif; ?>
 
 <?php if ($isAdmin): ?>
-<!-- ADMIN VIEW: Pending Transactions Table -->
+<!-- ADMIN VIEW: Recent Transactions Table -->
 <div class="card" style="padding: 0;">
     <div style="padding: 20px; border-bottom: 1px solid #e5e7eb;">
-        <h3 style="margin: 0; color: #003d7a;">Pending Transactions</h3>
+        <h3 style="margin: 0; color: #003d7a;">Today's Completed Transactions</h3>
     </div>
     <div class="table-wrap">
         <table class="table">
@@ -490,14 +419,14 @@ include __DIR__ . '/../partials/header.php';
                     <th>Payment</th>
                     <th>Staff Encoder</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th>Time</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (empty($pending_transactions)): ?>
-                    <tr><td colspan="9" style="text-align:center; padding:30px; color:#666;">No pending transactions to review.</td></tr>
+                <?php if (empty($recent_transactions)): ?>
+                    <tr><td colspan="9" style="text-align:center; padding:30px; color:#666;">No transactions completed today.</td></tr>
                 <?php else: ?>
-                    <?php foreach($pending_transactions as $t): ?>
+                    <?php foreach($recent_transactions as $t): ?>
                     <tr>
                         <td>#<?php echo htmlspecialchars($t['id']); ?></td>
                         <td><b><?php echo htmlspecialchars($t['customer']); ?></b></td>
@@ -506,20 +435,11 @@ include __DIR__ . '/../partials/header.php';
                         <td style="font-weight:bold; color:var(--petron-blue);">₱<?php echo number_format($t['total'], 2); ?></td>
                         <td><span class="badge"><?php echo htmlspecialchars($t['payment_method']); ?></span></td>
                         <td><?php echo htmlspecialchars($t['staff_name']); ?></td>
-                        <td><span class="badge" style="background:#fff3cd; color:#856404;">Pending</span></td>
+                        <td><span class="badge" style="background:#d1fae5; color:#065f46;">Completed</span></td>
                         <td>
                             <div style="display:flex; gap:5px;">
                                 <button class="btn small ghost" onclick="viewTransaction(<?php echo htmlspecialchars(json_encode($t)); ?>)" title="View Details">👁️</button>
-                                <form method="post" style="display:inline;">
-                                    <input type="hidden" name="sale_id" value="<?php echo $t['id']; ?>">
-                                    <input type="hidden" name="action" value="approve">
-                                    <button type="submit" class="btn small primary" title="Approve">✅</button>
-                                </form>
-                                <form method="post" style="display:inline;" onsubmit="return confirm('Reject this transaction?');">
-                                    <input type="hidden" name="sale_id" value="<?php echo $t['id']; ?>">
-                                    <input type="hidden" name="action" value="reject">
-                                    <button type="submit" class="btn small danger" title="Reject">❌</button>
-                                </form>
+                                <span style="font-size:11px; color:#666;"><?php echo date('g:i A', strtotime($t['created_at'])); ?></span>
                             </div>
                         </td>
                     </tr>
@@ -662,75 +582,66 @@ function closeModal(id) {
 
 
 <?php else: ?>
-<!-- STAFF VIEW: Encoding Form -->
-<div class="card" style="padding: 20px; max-width: 900px; margin: 0 auto;">
+<!-- STAFF VIEW: Multi-Item POS Form -->
+<div class="card" style="padding: 20px; max-width: 1200px; margin: 0 auto;">
     <form method="post" id="posForm">
-        <div class="grid-2" style="gap: 30px;">
-            <!-- Left Column -->
-            <div>
-                <div class="form-group mb-3">
-                    <label class="lbl">Customer Name</label>
-                    <input type="text" name="customer_name" list="customerList" class="inp full" placeholder="Walk-in" required>
-                    <datalist id="customerList">
-                        <?php foreach($customers as $c): ?>
-                            <option value="<?php echo htmlspecialchars($c); ?>">
-                        <?php endforeach; ?>
-                    </datalist>
+        <!-- Customer Information -->
+        <div class="form-group mb-3">
+            <label class="lbl">Customer Name</label>
+            <input type="text" name="customer_name" list="customerList" class="inp full" placeholder="Walk-in" required>
+            <datalist id="customerList">
+                <?php foreach($customers as $c): ?>
+                    <option value="<?php echo htmlspecialchars($c); ?>">
+                <?php endforeach; ?>
+            </datalist>
+        </div>
+        
+        <!-- Transaction Items Section -->
+        <div class="card" style="padding: 20px; margin: 20px 0; background: #f8f9fa;">
+            <h3 style="margin: 0 0 20px 0; color: #003d7a;">Transaction Items</h3>
+            
+            <!-- Add New Item Section -->
+            <div style="display: grid; grid-template-columns: 1fr 2fr 1fr auto; gap: 15px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px dashed #ccc;">
+                <div>
+                    <div class="form-group mb-3">
+                        <label class="lbl">Type</label>
+                        <select id="add_product_type" class="inp full" onchange="loadProductsMulti()">
+                            <option value="">Select Type</option>
+                            <option value="merch">Merchandise</option>
+                        </select>
+                    </div>
                 </div>
-                
-                <div class="form-group mb-3">
-                    <label class="lbl">Product Type</label>
-                    <select name="product_type" id="product_type" class="inp full" required onchange="loadProducts()">
-                        <option value="">Select Type</option>
-                        <option value="fuel">Fuel</option>
-                        <option value="merch">Merchandise</option>
-                    </select>
+                <div>
+                    <div class="form-group mb-3">
+                        <label class="lbl">Product</label>
+                        <select name="new_product_id" id="add_product_id" class="inp full" onchange="updateProductInfoMulti()">
+                            <option value="">Select Product</option>
+                        </select>
+                        <small class="muted" id="add_stock_info"></small>
+                    </div>
                 </div>
-                
-                <div class="form-group mb-3">
-                     <label class="lbl">Product</label>
-                     <select name="product_id" id="product_id" class="inp full" required onchange="updatePrice()">
-                         <option value="">Select Product</option>
-                     </select>
-                     <small class="muted" id="stock_info">Select a product type first</small>
-                 </div>
-                 
-                 <!-- Fuel-specific: Pump Selection -->
-                 <div class="form-group mb-3" id="pump_group" style="display: none;">
-                     <label class="lbl">Fuel Pump <span style="color: red;">*</span></label>
-                     <select name="pump_id" id="pump_id" class="inp full" onchange="loadNozzles()">
-                         <option value="">Select Pump</option>
-                     </select>
-                     <small class="muted" id="pump_info">Select fuel product first</small>
-                 </div>
-                 
-                 <!-- Fuel-specific: Nozzle Selection -->
-                 <div class="form-group mb-3" id="nozzle_group" style="display: none;">
-                     <label class="lbl">Nozzle <span style="color: red;">*</span></label>
-                     <select name="nozzle_id" id="nozzle_id" class="inp full">
-                         <option value="">Select Nozzle</option>
-                     </select>
-                     <small class="muted" id="nozzle_info">Select pump first</small>
-                 </div>
-                 
-                 <div class="form-group mb-3">
-                     <label class="lbl">Quantity/Liters</label>
-                     <input type="number" name="quantity" id="quantity" class="inp full" value="1" min="1" required oninput="calcTotal()">
-                 </div>
+                <div>
+                    <div class="form-group mb-3">
+                        <label class="lbl">Quantity</label>
+                        <input type="number" id="add_quantity" class="inp full" min="1" value="1">
+                    </div>
+                </div>
+                <div style="display: flex; align-items: flex-end;">
+                    <button type="button" onclick="addItemMulti()" class="btn primary">
+                        <i class="fas fa-plus"></i> Add
+                    </button>
+                </div>
             </div>
             
-            <!-- Right Column -->
+            <!-- Items List Container -->
+            <div id="items-container">
+                <!-- Dynamic items will be rendered here by JavaScript -->
+            </div>
+        </div>
+        
+        <!-- Payment & Total Section -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
             <div>
-                <div class="form-group mb-3">
-                    <label class="lbl">Price (₱)</label>
-                    <input type="number" name="price" id="price" class="inp full" step="0.01" placeholder="0.00" readonly required style="background: #f0f0f0;">
-                </div>
-                
-                <div class="form-group mb-3">
-                    <label class="lbl">Unit</label>
-                    <input type="text" id="unit_display" class="inp full" readonly style="background: #f0f0f0;">
-                </div>
-                
                 <div class="form-group mb-3">
                     <label class="lbl">Payment Type</label>
                     <select name="payment_type" id="payment_method_pos" class="inp full" onchange="toggleGcashRef()">
@@ -746,22 +657,31 @@ function closeModal(id) {
                     <input type="text" name="gcash_ref_number" id="gcash_ref_number" class="inp full" placeholder="e.g., 1234567890">
                     <small class="muted">Required for GCash payments</small>
                 </div>
-                
+            </div>
+            
+            <div>
                 <div class="form-group mb-3">
                     <label class="lbl">Discount</label>
-                    <input type="number" name="discount" class="inp full" step="0.01" value="0" oninput="calcTotal()">
+                    <input type="number" name="discount" id="discount" class="inp full" step="0.01" value="0" oninput="calculateGrandTotal()">
                 </div>
                 
-                <div class="total-display" style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; text-align: right;">
-                    <div style="font-size: 0.9em; color: #666;">Total Amount</div>
+                <div class="total-display" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: right;">
+                    <div style="font-size: 0.9em; color: #666;">Total Items</div>
+                    <div style="font-size: 1.5em; font-weight: bold; color: var(--petron-blue);" id="total_items">0</div>
+                    <div style="font-size: 0.9em; color: #666; margin-top: 10px;">Discount</div>
+                    <div style="font-size: 0.9em; color: #666;" id="discount_display">- ₱0.00</div>
+                    <div style="font-size: 0.9em; color: #666; margin-top: 10px;">Grand Total</div>
                     <div style="font-size: 2em; font-weight: bold; color: var(--petron-blue);" id="displayTotal">₱0.00</div>
                 </div>
             </div>
         </div>
         
+        <!-- Hidden field for items JSON -->
+        <input type="hidden" name="items" id="items_json">
+        
         <div class="actions" style="margin-top: 30px; display: flex; gap: 10px; justify-content: flex-end;">
-            <button id="btnClear" type="button" class="btn ghost" onclick="window.location.reload()">Cancel</button>
-            <button id="btnPay" type="submit" class="btn primary" onclick="return validatePayment();">Save Transaction</button>
+            <button type="button" class="btn ghost" onclick="clearForm()">Clear All</button>
+            <button type="submit" class="btn primary" onclick="return validateMultiPayment();">Save Transaction</button>
         </div>
     </form>
 </div>
@@ -787,190 +707,348 @@ function closeModal(id) {
 </div>
 <?php endif; ?>
 
+<style>
+    /* Multi-Item POS Styles */
+    .item-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        margin-bottom: 10px;
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .item-info {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+    .item-name {
+        font-weight: 600;
+        color: #003d7a;
+    }
+    .item-stock {
+        font-size: 12px;
+        color: #6c757d;
+    }
+    .item-controls {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+    .item-qty {
+        width: 70px;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    .item-price {
+        width: 100px;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f0f0f0;
+        color: #666;
+    }
+    .item-subtotal {
+        font-weight: 600;
+        color: #002F6C;
+        font-size: 14px;
+    }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; }
+    .inp.full { width: 100%; }
+    .mb-3 { margin-bottom: 1rem; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+
 <script>
-// Product data loaded from PHP
+// Multi-Item POS JavaScript
 const inventoryData = <?php echo json_encode($inventory); ?>;
-const fuelSyncStatus = <?php echo json_encode($fuelSyncStatus); ?>;
+let items = [];
+let itemIdCounter = 0;
 
-function loadProducts() {
-      const type = document.getElementById('product_type').value;
-      const productSelect = document.getElementById('product_id');
-      const stockInfo = document.getElementById('stock_info');
-      
-      productSelect.innerHTML = '<option value="">Select Product</option>';
-      
-      if (type && inventoryData[type]) {
-          inventoryData[type].forEach(product => {
-              const option = document.createElement('option');
-              option.value = product.id;
-              
-              const stockLevel = parseFloat(product.stock_level) || 0;
-              const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
-              const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.unit || 'pc'})`;
-              
-              option.textContent = `${product.name}${stockText}`;
-              option.dataset.price = product.price || 0;
-              option.dataset.stock = stockLevel;
-              option.dataset.unit = product.unit || '';
-              option.dataset.fuelTypeId = product.type_id || ''; // For fuel product fuel_type_id
-              option.style = stockClass;
-              
-              productSelect.appendChild(option);
-          });
-          
-          // Show sync status for fuel products if available
-          let statusText = `Found ${inventoryData[type].length} products`;
-          if (type === 'fuel') {
-              const syncWarnings = [];
-              inventoryData[type].forEach(product => {
-                  if (fuelSyncStatus[product.id]) {
-                      const syncStatus = fuelSyncStatus[product.id];
-                      if (!syncStatus.in_sync || (syncStatus.hours_since_sync > 24)) {
-                          const hoursText = syncStatus.hours_since_sync ? ` (${syncStatus.hours_since_sync}h ago)` : '(never synced)';
-                          syncWarnings.push(`⚠ ${product.name} out of sync${hoursText}`);
-                      }
-                  }
-              });
-              if (syncWarnings.length > 0) {
-                  statusText += ' | ' + syncWarnings.join(' | ');
-              }
-          }
-          stockInfo.textContent = statusText;
-      } else {
-          stockInfo.textContent = 'Select a product type first';
-      }
-      
-      updatePrice();
- }
+// Load products based on type selection for multi-item
+function loadProductsMulti() {
+    const typeSelect = document.getElementById('add_product_type');
+    const productSelect = document.getElementById('add_product_id');
+    const stockInfo = document.getElementById('add_stock_info');
+    const type = typeSelect.value;
+    
+    productSelect.innerHTML = '<option value="">Select Product</option>';
+    
+    if (type && inventoryData[type]) {
+        inventoryData[type].forEach(product => {
+            const option = document.createElement('option');
+            option.value = product.id;
+            
+            const stockLevel = parseFloat(product.stock_level) || 0;
+            const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
+            const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.unit || 'pc'})`;
+            
+            option.textContent = `${product.name}${stockText}`;
+            option.dataset.price = product.price || 0;
+            option.dataset.stock = stockLevel;
+            option.dataset.unit = product.unit || '';
+            option.style = stockClass;
+            
+            productSelect.appendChild(option);
+        });
+        
+        stockInfo.textContent = `${inventoryData[type].length} products available`;
+    } else {
+        stockInfo.textContent = 'Select a product type first';
+    }
+}
 
-function updatePrice() {
-     const productSelect = document.getElementById('product_id');
-     const priceInput = document.getElementById('price');
-     const unitInput = document.getElementById('unit_display');
-     const qtyInput = document.getElementById('quantity');
-     const productType = document.getElementById('product_type').value;
-     
-     const selectedOption = productSelect.options[productSelect.selectedIndex];
-     
-     if (selectedOption && selectedOption.value) {
-         priceInput.value = selectedOption.dataset.price || 0;
-         unitInput.value = selectedOption.dataset.unit || '';
-         calcTotal();
-         
-         // If fuel product, load pumps
-         if (productType === 'fuel') {
-             loadPumps(selectedOption.dataset.fuelTypeId);
-         } else {
-             // Hide pump/nozzle for non-fuel products
-             document.getElementById('pump_group').style.display = 'none';
-             document.getElementById('nozzle_group').style.display = 'none';
-         }
-     } else {
-         priceInput.value = '';
-         unitInput.value = '';
-         document.getElementById('displayTotal').innerText = '₱0.00';
-         document.getElementById('pump_group').style.display = 'none';
-         document.getElementById('nozzle_group').style.display = 'none';
-     }
- }
+// Update product info (no fuel logic needed)
+function updateProductInfoMulti() {
+    // For merchandise products, no additional actions needed
+    // This function is kept for future extensibility
+}
 
- async function loadPumps(fuelTypeId) {
-     const pumpSelect = document.getElementById('pump_id');
-     const pumpGroup = document.getElementById('pump_group');
-     const pumpInfo = document.getElementById('pump_info');
-     
-     // Reset nozzle selection when pump changes
-     document.getElementById('nozzle_id').innerHTML = '<option value="">Select Nozzle</option>';
-     document.getElementById('nozzle_group').style.display = 'none';
-     
-     if (!fuelTypeId) {
-         pumpGroup.style.display = 'none';
-         pumpInfo.textContent = 'Select fuel product first';
-         return;
-     }
-     
-     try {
-         const response = await fetch(`../backend/api/pumps.php?action=get_by_fuel_type&fuel_type_id=${fuelTypeId}`);
-         const data = await response.json();
-         
-         if (data.success) {
-             pumpSelect.innerHTML = '<option value="">Select Pump</option>';
-             
-             if (data.data.length === 0) {
-                 pumpInfo.textContent = '⚠️ No active pumps available for this fuel type';
-                 pumpSelect.disabled = true;
-             } else {
-                 data.data.forEach(pump => {
-                     const option = document.createElement('option');
-                     option.value = pump.id;
-                     option.textContent = `Pump ${pump.pump_number}`;
-                     pumpSelect.appendChild(option);
-                 });
-                 pumpInfo.textContent = `Found ${data.data.length} active pump(s)`;
-                 pumpSelect.disabled = false;
-             }
-             
-             pumpGroup.style.display = 'block';
-         } else {
-             pumpInfo.textContent = '❌ Error loading pumps: ' + (data.error || 'Unknown error');
-             pumpSelect.disabled = true;
-         }
-     } catch (error) {
-         pumpInfo.textContent = '❌ Error: ' + error.message;
-         pumpSelect.disabled = true;
-     }
- }
+// Add item to cart
+function addItemMulti() {
+    const typeSelect = document.getElementById('add_product_type');
+    const productSelect = document.getElementById('add_product_id');
+    const quantityInput = document.getElementById('add_quantity');
+    const selectedOption = productSelect.options[productSelect.selectedIndex];
+    const type = typeSelect.value;
+    
+    // Validation
+    if (!type) {
+        alert('Please select a product type first.');
+        return;
+    }
+    
+    if (!selectedOption || !selectedOption.value) {
+        alert('Please select a product first.');
+        return;
+    }
+    
+    const quantity = parseInt(quantityInput.value) || 0;
+    if (quantity <= 0) {
+        alert('Quantity must be greater than 0.');
+        return;
+    }
+    
+    const stockLevel = parseFloat(selectedOption.dataset.stock) || 0;
+    if (stockLevel <= 0) {
+        alert('This product is out of stock. Please select a different product.');
+        return;
+    }
+    
+    if (quantity > stockLevel) {
+        alert(`Insufficient stock! Available: ${stockLevel} ${selectedOption.dataset.unit || 'pc'}`);
+        return;
+    }
+    
+    // Check if item already exists in cart
+    const existingItemIndex = items.findIndex(item => item.product_id === parseInt(selectedOption.value));
+    if (existingItemIndex !== -1) {
+        // Update existing item quantity
+        const newQuantity = items[existingItemIndex].quantity + quantity;
+        if (newQuantity > stockLevel) {
+            alert(`Cannot add ${quantity} more. Total would exceed available stock (${stockLevel} ${selectedOption.dataset.unit || 'pc'})`);
+            return;
+        }
+        items[existingItemIndex].quantity = newQuantity;
+    } else {
+        // Add new item
+        const newItem = {
+            id: ++itemIdCounter,
+            product_id: parseInt(selectedOption.value),
+            name: selectedOption.textContent.split(' (')[0].trim(),
+            price: parseFloat(selectedOption.dataset.price) || 0,
+            unit: selectedOption.dataset.unit || '',
+            stock_level: stockLevel,
+            quantity: quantity,
+            type: 'merch'
+        };
+        items.push(newItem);
+    }
+    
+    // Reset form
+    document.getElementById('add_product_type').value = '';
+    document.getElementById('add_product_id').innerHTML = '<option value="">Select Product</option>';
+    document.getElementById('add_quantity').value = '1';
+    document.getElementById('add_stock_info').textContent = '';
+    
+    renderItems();
+    calculateGrandTotal();
+}
 
- async function loadNozzles() {
-     const pumpId = document.getElementById('pump_id').value;
-     const nozzleSelect = document.getElementById('nozzle_id');
-     const nozzleGroup = document.getElementById('nozzle_group');
-     const nozzleInfo = document.getElementById('nozzle_info');
-     
-     if (!pumpId) {
-         nozzleGroup.style.display = 'none';
-         nozzleInfo.textContent = 'Select pump first';
-         return;
-     }
-     
-     try {
-         const response = await fetch(`../backend/api/nozzles.php?action=get_by_pump&pump_id=${pumpId}`);
-         const data = await response.json();
-         
-         if (data.success) {
-             nozzleSelect.innerHTML = '<option value="">Select Nozzle</option>';
-             
-             if (data.data.length === 0) {
-                 nozzleInfo.textContent = '⚠️ No active nozzles available for this pump';
-                 nozzleSelect.disabled = true;
-             } else {
-                 data.data.forEach(nozzle => {
-                     const option = document.createElement('option');
-                     option.value = nozzle.id;
-                     option.textContent = `Nozzle ${nozzle.nozzle_number}`;
-                     nozzleSelect.appendChild(option);
-                 });
-                 nozzleInfo.textContent = `Found ${data.data.length} active nozzle(s)`;
-                 nozzleSelect.disabled = false;
-             }
-             
-             nozzleGroup.style.display = 'block';
-         } else {
-             nozzleInfo.textContent = '❌ Error loading nozzles: ' + (data.error || 'Unknown error');
-             nozzleSelect.disabled = true;
-         }
-     } catch (error) {
-         nozzleInfo.textContent = '❌ Error: ' + error.message;
-         nozzleSelect.disabled = true;
-     }
- }
+// Render items in the cart
+function renderItems() {
+    const container = document.getElementById('items-container');
+    
+    if (items.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No items added yet. Select products and click "Add" to build your transaction.</p>';
+        document.getElementById('total_items').textContent = '0';
+        return;
+    }
+    
+    container.innerHTML = '';
+    let grandTotal = 0;
+    
+    items.forEach((item, index) => {
+        const subtotal = item.quantity * item.price;
+        grandTotal += subtotal;
+        
+        const html = `
+            <div class="item-row" data-index="${index}">
+                <div class="item-info">
+                    <span class="item-name">${item.name}</span>
+                    <span class="item-stock">${item.stock_level} ${item.unit} available</span>
+                </div>
+                <div class="item-controls">
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <label style="font-size: 12px;">Qty:</label>
+                        <input type="number" value="${item.quantity}" 
+                               onchange="updateItem(${index}, 'quantity', this.value)"
+                               min="1" max="${item.stock_level}" class="item-qty">
+                    </div>
+                    <input type="number" value="${item.price.toFixed(2)}" 
+                           readonly
+                           class="item-price">
+                    <span class="item-subtotal">₱${subtotal.toFixed(2)}</span>
+                    <button type="button" onclick="removeItem(${index})" class="btn small danger">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+        container.innerHTML += html;
+    });
+    
+    document.getElementById('total_items').textContent = items.length;
+    calculateGrandTotal();
+}
 
-function calcTotal() {
-    const qty = parseFloat(document.getElementById('quantity').value) || 0;
-    const price = parseFloat(document.getElementById('price').value) || 0;
-    const discount = parseFloat(document.querySelector('[name=discount]').value) || 0;
-    const total = (qty * price) - discount;
-    document.getElementById('displayTotal').innerText = '₱' + total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+// Update item quantity
+function updateItem(index, field, value) {
+    const item = items[index];
+    
+    if (field === 'quantity') {
+        const newQty = parseInt(value) || 1;
+        
+        if (newQty > item.stock_level) {
+            alert(`Insufficient stock! Available: ${item.stock_level} ${item.unit}. Requested: ${newQty} ${item.unit}.`);
+            renderItems(); // Reset to previous value
+            return;
+        }
+        
+        if (newQty <= 0) {
+            removeItem(index);
+            return;
+        }
+        
+        item.quantity = newQty;
+    }
+    
+    renderItems();
+}
+
+// Remove item from cart
+function removeItem(index) {
+    items.splice(index, 1);
+    renderItems();
+}
+
+// Clear all items
+function clearForm() {
+    if (items.length > 0 && !confirm('Are you sure you want to clear all items?')) {
+        return;
+    }
+    items = [];
+    renderItems();
+    document.getElementById('add_product_type').value = '';
+    document.getElementById('add_product_id').innerHTML = '<option value="">Select Product</option>';
+    document.getElementById('add_stock_info').textContent = '';
+    calculateGrandTotal();
+}
+
+// Calculate grand total
+function calculateGrandTotal() {
+    const discount = parseFloat(document.getElementById('discount').value) || 0;
+    let itemsTotal = 0;
+    
+    items.forEach(item => {
+        itemsTotal += item.quantity * item.price;
+    });
+    
+    const grandTotal = itemsTotal - discount;
+    
+    document.getElementById('discount_display').textContent = `- ₱${discount.toFixed(2)}`;
+    document.getElementById('displayTotal').textContent = `₱${grandTotal.toFixed(2)}`;
+}
+
+// Toggle GCash reference field
+function toggleGcashRef() {
+    const paymentType = document.getElementById('payment_method_pos').value;
+    const gcashRefField = document.getElementById('gcash_ref_field');
+    const gcashRefInput = document.getElementById('gcash_ref_number');
+    
+    if (paymentType === 'GCash') {
+        gcashRefField.style.display = 'block';
+        gcashRefInput.required = true;
+    } else {
+        gcashRefField.style.display = 'none';
+        gcashRefInput.required = false;
+        gcashRefInput.value = '';
+    }
+}
+
+// Validate multi-item payment
+function validateMultiPayment() {
+    // Get form elements
+    const customerName = document.querySelector('input[name="customer_name"]').value.trim();
+    const paymentType = document.getElementById('payment_method_pos').value;
+    const gcashRefInput = document.getElementById('gcash_ref_number');
+    
+    // Validate customer name
+    if (!customerName) {
+        alert('Customer name is required. Please enter a customer name or "Walk-in".');
+        return false;
+    }
+    
+    // Validate items
+    if (items.length === 0) {
+        alert('Please add at least one item to the transaction.');
+        return false;
+    }
+    
+    // Validate payment type
+    if (!paymentType) {
+        alert('Payment method is required. Please select Cash or GCash.');
+        return false;
+    }
+    
+    // Validate GCash reference if GCash is selected
+    if (paymentType === 'GCash') {
+        if (!gcashRefInput.value.trim()) {
+            alert('GCash reference number is required for GCash payments.');
+            return false;
+        }
+        
+        // Validate GCash reference format (at least 5 characters, alphanumeric)
+        const gcashRef = gcashRefInput.value.trim();
+        if (gcashRef.length < 5) {
+            alert('GCash reference number must be at least 5 characters long.');
+            return false;
+        }
+        
+        if (!/^[a-zA-Z0-9]+$/.test(gcashRef)) {
+            alert('GCash reference number must contain only letters and numbers.');
+            return false;
+        }
+    }
+    
+    // Set items JSON for form submission
+    document.getElementById('items_json').value = JSON.stringify(items);
+    
+    return true;
 }
 
 function openUnlockModal(saleId, customerName) {
@@ -994,147 +1072,6 @@ function openUnlockModal(saleId, customerName) {
     }
 }
 
-function toggleGcashRef() {
-    const paymentType = document.getElementById('payment_method_pos').value;
-    const gcashRefField = document.getElementById('gcash_ref_field');
-    const gcashRefInput = document.getElementById('gcash_ref_number');
-    
-    if (paymentType === 'GCash') {
-        gcashRefField.style.display = 'block';
-        gcashRefInput.required = true;
-    } else {
-        gcashRefField.style.display = 'none';
-        gcashRefInput.required = false;
-        gcashRefInput.value = '';
-    }
-}
-
-function showErrorDialog(message) {
-    const modal = document.createElement('div');
-    modal.className = 'modal show';
-    modal.innerHTML = `
-        <div class="modal-content" style="max-width: 400px;">
-            <div class="modal-header">
-                <h3 class="modal-title">⚠️ Validation Error</h3>
-                <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <p style="color: #666; margin: 0;">${message}</p>
-            </div>
-            <div class="modal-footer">
-                <button class="btn primary" onclick="this.closest('.modal').remove()">OK</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function validatePayment() {
-    // Get form elements
-    const customerName = document.querySelector('input[name="customer_name"]').value.trim();
-    const productType = document.getElementById('product_type').value;
-    const productId = document.getElementById('product_id').value;
-    const quantity = document.getElementById('quantity').value;
-    const price = document.getElementById('price').value;
-    const paymentType = document.getElementById('payment_method_pos').value;
-    const gcashRefInput = document.getElementById('gcash_ref_number');
-    
-    // Validate customer name
-    if (!customerName) {
-        showErrorDialog('Customer name is required. Please enter a customer name or "Walk-in".');
-        return false;
-    }
-    
-    // Validate product type
-    if (!productType) {
-        showErrorDialog('Product type is required. Please select Fuel or Merchandise.');
-        return false;
-    }
-    
-    // Validate product
-    if (!productId) {
-        showErrorDialog('Product is required. Please select a product from the dropdown.');
-        return false;
-    }
-    
-    // Validate stock availability
-    const productSelect = document.getElementById('product_id');
-    const selectedOption = productSelect.options[productSelect.selectedIndex];
-    if (selectedOption) {
-        const availableStock = parseFloat(selectedOption.dataset.stock) || 0;
-        const requestedQty = parseFloat(quantity) || 0;
-        
-        // All products in dropdown are guaranteed to have stock > 0 (INNER JOIN from station_inventory)
-        if (requestedQty > availableStock) {
-            showErrorDialog(`Insufficient stock! Available: ${availableStock} ${selectedOption.dataset.unit}. Requested: ${requestedQty} ${selectedOption.dataset.unit}.`);
-            return false;
-        }
-    }
-    
-    // Validate quantity
-    if (!quantity || parseFloat(quantity) <= 0) {
-        showErrorDialog('Quantity must be greater than 0.');
-        return false;
-    }
-    
-    // Validate price
-    if (!price || parseFloat(price) < 0) {
-        showErrorDialog('Price must be a valid amount (0 or greater).');
-        return false;
-    }
-    
-    // Validate payment type
-    if (!paymentType) {
-        showErrorDialog('Payment method is required. Please select Cash or GCash.');
-        return false;
-    }
-    
-     // Validate GCash reference if GCash is selected
-     if (paymentType === 'GCash') {
-         if (!gcashRefInput.value.trim()) {
-             showErrorDialog('GCash reference number is required for GCash payments.');
-             return false;
-         }
-         
-         // Validate GCash reference format (at least 5 characters, alphanumeric)
-         const gcashRef = gcashRefInput.value.trim();
-         if (gcashRef.length < 5) {
-             showErrorDialog('GCash reference number must be at least 5 characters long.');
-             return false;
-         }
-         
-         if (!/^[a-zA-Z0-9]+$/.test(gcashRef)) {
-             showErrorDialog('GCash reference number must contain only letters and numbers.');
-             return false;
-         }
-     }
-     
-     // Validate pump and nozzle for fuel products
-     if (productType === 'fuel') {
-         const pumpId = document.getElementById('pump_id').value;
-         const nozzleId = document.getElementById('nozzle_id').value;
-         
-         if (!pumpId) {
-             showErrorDialog('Pump selection is required for fuel transactions.');
-             return false;
-         }
-         
-         if (!nozzleId) {
-             showErrorDialog('Nozzle selection is required for fuel transactions.');
-             return false;
-         }
-     }
-     
-     return true;
- }
-
 </script>
-
-<style>
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; }
-    .inp.full { width: 100%; }
-    .mb-3 { margin-bottom: 1rem; }
-    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
-</style>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>

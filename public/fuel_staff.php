@@ -73,10 +73,10 @@ $msg = '';
 
 // Determine role and access level
 // Staff can record, Manager can verify/approve, Admin/Superadmin can finalize and override
-$userRole = $me['role'] ?? '';
+$userRole = strtolower(trim($me['role'] ?? ''));
 $isAdmin = in_array($userRole, ['admin', 'superadmin']);
 $isManager = in_array($userRole, ['manager', 'admin', 'superadmin']);
-$isStaff = in_array($userRole, ['staff', 'operations_staff', 'admin', 'superadmin']);
+$isStaff = in_array($userRole, ['staff', 'admin', 'superadmin']);
 $isSuper = $userRole === 'superadmin';
 
 // Superadmin can view any station
@@ -99,8 +99,7 @@ try {
         station_id INT NOT NULL,
         pump_number VARCHAR(50) NOT NULL,
         fuel_type_id INT,
-        status VARCHAR(20) DEFAULT 'active',
-        calibration_value DECIMAL(10, 6)
+        status VARCHAR(20) DEFAULT 'active'
     )");
     
     // Create fuel_daily_readings table
@@ -112,7 +111,6 @@ try {
         shift VARCHAR(50),
         previous_reading DECIMAL(10,2),
         current_reading DECIMAL(10,2),
-        calibration DECIMAL(10,2),
         sales_liters DECIMAL(10,2),
         user_id INT,
         notes TEXT,
@@ -183,43 +181,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $shift = $_POST['shift'];
             $previous_reading = (float)$_POST['previous_reading'];
             $current_reading = (float)$_POST['current_reading'];
-            $calibration = (float)($_POST['calibration'] ?? 0);
             $notes = $_POST['notes'] ?? '';
             
             // Calculate sales liters
-            $sales_liters = $current_reading - $previous_reading - $calibration;
+            $sales_liters = $current_reading - $previous_reading;
             
             if ($pump_id && $reading_date && $shift) {
                 try {
-                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, calibration, sales_liters, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
-                    $stmt->execute([$station_id, $pump_id, $reading_date, $shift, $previous_reading, $current_reading, $calibration, $sales_liters, $me['id'], $notes]);
+                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, sales_liters, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
+                    $stmt->execute([$station_id, $pump_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $me['id'], $notes]);
                     
-                    // Get pump details for stock update
-                    $stmtPump = $pdo->prepare("SELECT fuel_type_id FROM fuel_pumps WHERE id = ?");
-                    $stmtPump->execute([$pump_id]);
-                    $pump = $stmtPump->fetch(PDO::FETCH_ASSOC);
-                    
-                    // Update inventory in real-time
-                    if ($pump && $pump['fuel_type_id']) {
-                        $stock_result = recordStockMovement(
-                            $pdo, 
-                            $station_id, 
-                            $pump['fuel_type_id'], 
-                            -$sales_liters,  // Deduct stock
-                            'pump_reading', 
-                            'fuel_daily_readings', 
-                            $pdo->lastInsertId(), 
-                            $me['id'],
-                            "Shift: $shift, Pump: $pump_id"
-                        );
-                        
-                        if (!$stock_result['success']) {
-                            $msg .= " ⚠️ Warning: " . $stock_result['message'];
-                        }
-                    }
+                    // NOTE: Stock deduction is NOT done here. It happens at verification
+                    // time (verify_reading action) so rejected readings don't affect inventory.
                     
                     log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$pump_id ($shift shift)", 'fuel_management');
-                    $msg = "✅ Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters";
+                    $msg = "Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters. Awaiting manager verification.";
                 } catch (PDOException $e) {
                     if ($e->errorInfo[1] == 1062) { // Duplicate entry
                         $msg = "❌ Error: Reading already recorded for this pump, date, and shift.";
@@ -304,10 +280,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $stmt->execute([$status, $notes, $id]);
                 
                 if ($stmt->rowCount() > 0) {
+                    // Deduct stock from inventory when reading is verified
+                    if ($status === 'Verified') {
+                        $stmtReading = $pdo->prepare("SELECT pump_id, sales_liters, shift FROM fuel_daily_readings WHERE id = ?");
+                        $stmtReading->execute([$id]);
+                        $reading = $stmtReading->fetch(PDO::FETCH_ASSOC);
+                        
+                        if ($reading) {
+                            $stmtPump = $pdo->prepare("SELECT fuel_type_id FROM fuel_pumps WHERE id = ?");
+                            $stmtPump->execute([$reading['pump_id']]);
+                            $pump = $stmtPump->fetch(PDO::FETCH_ASSOC);
+                            
+                            if ($pump && $pump['fuel_type_id']) {
+                                $stock_result = recordStockMovement(
+                                    $pdo,
+                                    $station_id,
+                                    $pump['fuel_type_id'],
+                                    -$reading['sales_liters'],
+                                    'pump_reading',
+                                    'fuel_daily_readings',
+                                    $id,
+                                    $me['id'],
+                                    "Verified reading #{$id}, Shift: {$reading['shift']}, Pump: {$reading['pump_id']}"
+                                );
+                                
+                                if (!$stock_result['success']) {
+                                    $msg .= " Warning: " . $stock_result['message'];
+                                }
+                            }
+                        }
+                    }
+                    // Rejected readings simply don't deduct stock (no reversal needed
+                    // since stock is only deducted upon verification)
+                    
                     log_activity($pdo, $me['id'], 'Verify Reading', "Verified pump reading #$id as $status", 'fuel_management');
-                    $msg = "✅ Pump reading #$id has been $status.";
+                    $msg = "Pump reading #$id has been $status.";
                 } else {
-                    $msg = "❌ Error: Reading not found.";
+                    $msg = "Error: Reading not found.";
                 }
             } catch (PDOException $e) {
                 $msg = "❌ Error: " . $e->getMessage();
@@ -388,48 +397,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 if ($stmt->rowCount() > 0) {
                     // If adjustment is approved, update inventory in real-time
                     if ($status === 'Approved' || $status === 'approved') {
-                        // Get adjustment details
-                        $stmtAdj = $pdo->prepare("SELECT fuel_type_id, liters FROM fuel_adjustments WHERE id = ?");
+                        // Get adjustment details — fuel_type (string) and liters
+                        $stmtAdj = $pdo->prepare("SELECT fuel_type, fuel_type_id, adjustment_type, liters FROM fuel_adjustments WHERE id = ?");
                         $stmtAdj->execute([$id]);
                         $adjustment = $stmtAdj->fetch(PDO::FETCH_ASSOC);
                         
                         if ($adjustment) {
-                            // Determine if it's an addition or deduction based on adjustment type
-                            $stmtAdjType = $pdo->prepare("SELECT adjustment_type FROM fuel_adjustments WHERE id = ?");
-                            $stmtAdjType->execute([$id]);
-                            $adj_type_info = $stmtAdjType->fetch(PDO::FETCH_ASSOC);
-                            $adjustment_type = $adj_type_info['adjustment_type'] ?? '';
+                            // Resolve fuel_type_id: use column if set, otherwise look up from fuel_type name
+                            $adj_fuel_type_id = $adjustment['fuel_type_id'];
+                            if (!$adj_fuel_type_id && $adjustment['fuel_type']) {
+                                $stmtFt = $pdo->prepare("SELECT id FROM fuel_types WHERE name = ?");
+                                $stmtFt->execute([$adjustment['fuel_type']]);
+                                $adj_fuel_type_id = $stmtFt->fetchColumn();
+                            }
                             
-                            // Determine transaction type (addition or deduction)
-                            $is_deduction = in_array(strtolower($adjustment_type), ['loss', 'consumption', 'theft']);
-                            $quantity = $is_deduction ? -$adjustment['liters'] : $adjustment['liters'];
-                            
-                            // Update inventory in real-time
-                            $stock_result = recordStockMovement(
-                                $pdo,
-                                $station_id,
-                                $adjustment['fuel_type_id'],
-                                $quantity,
-                                'adjustment_approved',
-                                'fuel_adjustments',
-                                $id,
-                                $me['id'],
-                                "Adjustment #$id approved: $adjustment_type"
-                            );
-                            
-                            if (!$stock_result['success']) {
-                                $msg .= " ⚠️ Warning: " . $stock_result['message'];
+                            if ($adj_fuel_type_id) {
+                                $adjustment_type = $adjustment['adjustment_type'] ?? '';
+                                
+                                // Determine transaction type (addition or deduction)
+                                $is_deduction = in_array(strtolower($adjustment_type), ['loss', 'consumption', 'theft']);
+                                $quantity = $is_deduction ? -$adjustment['liters'] : $adjustment['liters'];
+                                
+                                // Update inventory in real-time
+                                $stock_result = recordStockMovement(
+                                    $pdo,
+                                    $station_id,
+                                    $adj_fuel_type_id,
+                                    $quantity,
+                                    'adjustment_approved',
+                                    'fuel_adjustments',
+                                    $id,
+                                    $me['id'],
+                                    "Adjustment #$id approved: $adjustment_type"
+                                );
+                                
+                                if (!$stock_result['success']) {
+                                    $msg .= " Warning: " . $stock_result['message'];
+                                }
                             }
                         }
                     }
                     
                     log_activity($pdo, $me['id'], 'Approve Adjustment', "Approved adjustment #$id as $status", 'fuel_management');
-                    $msg = "✅ Adjustment #$id has been $status.";
+                    $msg = "Adjustment #$id has been $status.";
                 } else {
-                    $msg = "❌ Error: Adjustment not found.";
+                    $msg = "Error: Adjustment not found.";
                 }
             } catch (PDOException $e) {
                 $msg = "❌ Error: " . $e->getMessage();
+            }
+        }
+    
+    // MANAGER: Run Reconciliation
+    } elseif ($action === 'investigate_variance') {
+        if (!$isManager) {
+            $msg = "❌ Error: Only managers can investigate variances.";
+        } else {
+            $id = $_POST['id'];
+            $status = $_POST['status'] ?? '';
+            $notes = $_POST['notes'] ?? '';
+            $root_cause = $_POST['root_cause'] ?? '';
+            $corrective_actions = $_POST['corrective_actions'] ?? '';
+            
+            if (!$id || !in_array($status, ['Under Investigation', 'Resolved'])) {
+                $msg = "❌ Error: Invalid parameters provided.";
+            } elseif (!$notes) {
+                $msg = "❌ Error: Investigation notes are required.";
+            } else {
+                try {
+                    // Build investigation notes
+                    $investigation_notes = "[Investigation by " . $me['name'] . "]\n";
+                    $investigation_notes .= "Status: $status\n";
+                    if ($root_cause) {
+                        $investigation_notes .= "Root Cause: $root_cause\n";
+                    }
+                    $investigation_notes .= "Notes: $notes\n";
+                    if ($corrective_actions) {
+                        $investigation_notes .= "Corrective Actions: $corrective_actions\n";
+                    }
+                    $investigation_notes .= "Date: " . date('Y-m-d H:i:s') . "\n";
+                    
+                    $stmt = $pdo->prepare("UPDATE fuel_variance_reports SET status = ?, investigated_by = ?, resolution_notes = ?, updated_at = NOW() WHERE id = ?");
+                    $stmt->execute([$status, $me['id'], $investigation_notes, $id]);
+                    
+                    if ($stmt->rowCount() > 0) {
+                        log_activity($pdo, $me['id'], 'Variance Investigation', "Updated variance #$id to $status" . ($root_cause ? " (Root Cause: $root_cause)" : ''), 'fuel_management');
+                        $msg = "✅ Variance report #$id has been updated to $status.";
+                    } else {
+                        $msg = "❌ Error: Variance report not found.";
+                    }
+                } catch (PDOException $e) {
+                    $msg = "❌ Error: " . $e->getMessage();
+                }
             }
         }
     
@@ -500,6 +559,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
     
+    // MANAGER: Approve Reconciliation (changes status from Pending to Approved)
+    } elseif ($action === 'approve_reconciliation') {
+        if (!$isManager) {
+            $msg = "❌ Error: Only managers can approve reconciliations.";
+        } else {
+            $recon_id = (int)($_POST['recon_id'] ?? 0);
+            $manager_notes = trim($_POST['manager_notes'] ?? '');
+            
+            if ($recon_id) {
+                try {
+                    // Check if reconciliation exists and is in Pending status
+                    $stmt = $pdo->prepare("SELECT * FROM fuel_reconciliation WHERE id = ? AND station_id = ?");
+                    $stmt->execute([$recon_id, $station_id]);
+                    $recon = $stmt->fetch();
+                    
+                    if (!$recon) {
+                        $msg = "❌ Error: Reconciliation record not found.";
+                    } elseif ($recon['status'] !== 'Pending') {
+                        $msg = "❌ Error: Only Pending reconciliations can be approved.";
+                    } else {
+                        // Update status to Approved
+                        $stmt = $pdo->prepare("UPDATE fuel_reconciliation SET status = 'approved', manager_notes = ?, approved_by = ?, approved_at = NOW() WHERE id = ?");
+                        $stmt->execute([$manager_notes, $me['id'], $recon_id]);
+                        
+                        log_activity($pdo, $me['id'], 'Approve Reconciliation', "Approved reconciliation #{$recon_id} for {$recon['fuel_type']} on {$recon['reconciliation_date']}", 'fuel_management');
+                        $msg = "✅ Reconciliation approved! Admin can now finalize it.";
+                    }
+                } catch (Exception $e) {
+                    $msg = "❌ Error: " . $e->getMessage();
+                }
+            } else {
+                $msg = "❌ Error: Invalid reconciliation ID.";
+            }
+        }
+    
     // ===== PUMP MANAGEMENT (Admin/Superadmin only) =====
     
     // ADD PUMP
@@ -538,42 +632,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
          if (!$isAdmin) {
              $msg = "❌ Error: Only admins can manage pumps.";
          } else {
-             $pump_id = $_POST['pump_id'] ?? '';
-             $status = $_POST['status'] ?? 'active';
-             $calibration_value = trim($_POST['calibration_value'] ?? '');
-             
-             if ($pump_id) {
-                 try {
-                     // Check if pump exists
-                     $stmt = $pdo->prepare("SELECT pump_number FROM fuel_pumps WHERE id = ? AND station_id = ?");
-                     $stmt->execute([$pump_id, $station_id]);
-                     $pump = $stmt->fetch();
-                     
-                     if (!$pump) {
-                         $msg = "❌ Error: Pump not found.";
-                     } else {
-                         // Validate calibration_value if provided
-                         $calibration_to_store = null;
-                         if ($calibration_value !== '') {
-                             if (!is_numeric($calibration_value)) {
-                                 $msg = "❌ Error: Calibration value must be a number.";
-                             } else {
-                                 $calibration_to_store = $calibration_value;
-                             }
-                         }
-                         
-                         if (!isset($msg)) {
-                             // Update pump status and optional calibration_value
-                             $stmt = $pdo->prepare("UPDATE fuel_pumps SET status = ?, calibration_value = ? WHERE id = ?");
-                             $stmt->execute([$status, $calibration_to_store, $pump_id]);
-                             
-                             $log_msg = "Updated Pump " . $pump['pump_number'] . " - Status: $status";
-                             if ($calibration_to_store !== null) {
-                                 $log_msg .= ", Calibration: $calibration_to_store";
-                             }
-                             log_activity($pdo, $me['id'], 'Edit Pump', $log_msg, 'fuel_management');
-                             $msg = "✅ Pump " . $pump['pump_number'] . " updated successfully.";
-                         }
+              $pump_id = $_POST['pump_id'] ?? '';
+              $status = $_POST['status'] ?? 'active';
+              
+              if ($pump_id) {
+                  try {
+                      // Check if pump exists
+                      $stmt = $pdo->prepare("SELECT pump_number FROM fuel_pumps WHERE id = ? AND station_id = ?");
+                      $stmt->execute([$pump_id, $station_id]);
+                      $pump = $stmt->fetch();
+                      
+                      if (!$pump) {
+                          $msg = "❌ Error: Pump not found.";
+                      } else {
+                              // Update pump status
+                              $stmt = $pdo->prepare("UPDATE fuel_pumps SET status = ? WHERE id = ?");
+                              $stmt->execute([$status, $pump_id]);
+                              
+                              $log_msg = "Updated Pump " . $pump['pump_number'] . " - Status: $status";
+                              log_activity($pdo, $me['id'], 'Edit Pump', $log_msg, 'fuel_management');
+                              $msg = "✅ Pump " . $pump['pump_number'] . " updated successfully.";
                      }
                  } catch (PDOException $e) {
                      $msg = "❌ Error: " . $e->getMessage();
@@ -657,7 +735,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                             if ($stmt->rowCount() === 0) {
                                 $msg = "❌ Error: Invalid fuel type selected.";
                             } else {
-                                // Insert nozzle (NO calibration_value)
+                                // Insert nozzle
                                 $stmt = $pdo->prepare("INSERT INTO nozzles (pump_id, nozzle_number, fuel_type_id, status) VALUES (?, ?, ?, ?)");
                                 $stmt->execute([$pump_id, $nozzle_number, $fuel_type_id, $status]);
                                 
@@ -712,7 +790,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         if (!$fuelType) {
                             $msg = "❌ Error: Invalid fuel type selected.";
                         } else {
-                            // Update nozzle (NO calibration_value, NO last_calibrated_date)
+                            // Update nozzle
                             $stmt = $pdo->prepare("UPDATE nozzles SET nozzle_number = ?, fuel_type_id = ?, status = ?, notes = ? WHERE id = ?");
                             $stmt->execute([$nozzle_number, $fuel_type_id, $status, $notes, $nozzle_id]);
                             
@@ -759,7 +837,7 @@ if ($station_id) {
         $fuel_stations = $stmt->fetchAll();
         
          // Fetch fuel pumps with fuel type info (for Manage Pumps tab)
-         $stmt = $pdo->prepare("SELECT fp.id, fp.station_id, fp.pump_number, fp.fuel_type_id, fp.status, fp.calibration_value, ft.name as fuel_type_name FROM fuel_pumps fp LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE fp.station_id = ? ORDER BY fp.pump_number");
+         $stmt = $pdo->prepare("SELECT fp.id, fp.station_id, fp.pump_number, fp.fuel_type_id, fp.status, ft.name as fuel_type_name FROM fuel_pumps fp LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE fp.station_id = ? ORDER BY fp.pump_number");
          $stmt->execute([$station_id]);
          $fuel_pumps = $stmt->fetchAll();
         
@@ -864,263 +942,45 @@ require_once __DIR__ . '/../partials/header.php';
 ?>
 
 <style>
-.staff-card {
-    background: white;
-    border-radius: 10px;
-    padding: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-}
-.input-form {
-    background: #f8f9fa;
-    padding: 20px;
-    border-radius: 8px;
-    border-left: 4px solid #007bff;
-}
-.my-entries {
-    max-height: 300px;
-    overflow-y: auto;
-}
-.status-badge {
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
-}
-.status-pending { background: #fff3cd; color: #856404; }
-.status-verified { background: #d4edda; color: #155724; }
-.shift-badge {
-    padding: 3px 8px;
-    border-radius: 15px;
-    font-size: 11px;
-    font-weight: 600;
-}
-.shift-morning { background: #e3f2fd; color: #0d47a1; }
-.shift-afternoon { background: #fff3e0; color: #e65100; }
-.shift-evening { background: #f3e5f5; color: #4a148c; }
-
-/* Tab styling */
-.tabs {
-    display: flex;
-    gap: 5px;
-    margin-bottom: 20px;
-}
-.tab {
-    padding: 10px 20px;
-    border: none;
-    background: #f8f9fa;
-    color: #6c757d;
-    cursor: pointer;
-    border-radius: 5px 5px 0 0;
-    transition: all 0.3s ease;
-}
-.tab:hover {
-    background: #e9ecef;
-    color: #495057;
-}
-.tab.active {
-    background: #003d7a;
-    color: white;
-}
-.panel {
-    display: block;
-}
-.panel.hidden {
-    display: none !important;
-}
-
-/* Form field styling improvements */
-.form-control[readonly] {
-    cursor: not-allowed;
-    color: #495057;
-}
-.form-control[readonly]:focus {
-    border-color: #ced4da;
-    box-shadow: none;
-}
-
-/* Loading animation */
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-.fa-spin {
-    animation: spin 1s linear infinite;
-}
-
-/* My Entries Tab Styles */
-.entry-card {
-    background: white;
-    border-radius: 12px;
-    padding: 25px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-    border: 1px solid #e9ecef;
-}
-.entry-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12);
-}
-.entry-icon {
-    width: 60px;
-    height: 60px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    margin-bottom: 15px;
-}
-.entry-icon.blue { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-.entry-icon.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
-.entry-icon.orange { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; }
-
-.entry-count {
-    font-size: 36px;
-    font-weight: 700;
-    color: #2d3748;
-    margin-bottom: 5px;
-}
-.entry-label {
-    font-size: 14px;
-    color: #718096;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 10px;
-}
-.entry-pending {
-    font-size: 12px;
-    color: #e53e3e;
-    background: #fed7d7;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-weight: 600;
-}
-
-/* Timeline Styles */
-.timeline {
-    position: relative;
-    padding-left: 30px;
-}
-.timeline::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-    border-radius: 2px;
-}
-.timeline-item {
-    position: relative;
-    margin-bottom: 20px;
-    animation: slideIn 0.3s ease;
-}
-@keyframes slideIn {
-    from {
-        opacity: 0;
-        transform: translateX(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
-}
-.timeline-item::before {
-    content: '';
-    position: absolute;
-    left: -38px;
-    top: 5px;
-    width: 16px;
-    height: 16px;
-    background: white;
-    border: 3px solid #667eea;
-    border-radius: 50%;
-    z-index: 1;
-}
-.timeline-content {
-    background: white;
-    padding: 15px 20px;
-    border-radius: 10px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    border-left: 4px solid #667eea;
-}
-.timeline-content.reading { border-left-color: #667eea; }
-.timeline-content.delivery { border-left-color: #38ef7d; }
-.timeline-content.adjustment { border-left-color: #f5576c; }
-
-.timeline-details {
-    font-size: 15px;
-    font-weight: 600;
-    color: #2d3748;
-    margin-bottom: 8px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.timeline-type {
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-.timeline-type.reading { background: #e0e7ff; color: #4c51bf; }
-.timeline-type.delivery { background: #d1fae5; color: #276749; }
-.timeline-type.adjustment { background: #fed7e2; color: #9b2c2c; }
-
-.timeline-status {
-    margin-left: auto;
-    padding: 4px 10px;
-    border-radius: 15px;
-    font-size: 11px;
-    font-weight: 600;
-}
-.timeline-status.pending { background: #feebc8; color: #744210; }
-.timeline-status.verified { background: #c6f6d5; color: #44337a; }
-.timeline-status.finalized { background: #c6f6d5; color: #44337a; }
-.timeline-status.pending { background: #feebc8; color: #744210; }
-
-.timeline-date {
-    font-size: 13px;
-    color: #718096;
-    margin-top: 5px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-}
-
-/* Empty state */
-.empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: #718096;
-}
-.empty-state-icon {
-    font-size: 64px;
-    color: #cbd5e0;
-    margin-bottom: 20px;
-}
-.empty-state-text {
-    font-size: 18px;
-    font-weight: 600;
-    color: #4a5568;
-    margin-bottom: 10px;
-}
-.empty-state-subtext {
-    font-size: 14px;
-    color: #718096;
-}
+.fuel-badge { display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600; }
+.fuel-badge.pending { background:#fff3cd;color:#856404; }
+.fuel-badge.verified, .fuel-badge.approved { background:rgba(0,51,102,.08);color:var(--blue); }
+.fuel-badge.encoded { background:#e3f2fd;color:#0d47a1; }
+.fuel-badge.finalized { background:var(--blue);color:#fff; }
+.fuel-badge.rejected { background:rgba(227,0,31,.08);color:var(--danger); }
+.fuel-badge.open { background:rgba(227,0,31,.08);color:var(--danger); }
+.fuel-badge.investigating { background:#fff3cd;color:#856404; }
+.fuel-badge.resolved { background:rgba(0,51,102,.08);color:var(--blue); }
+.fuel-badge.loss { background:rgba(227,0,31,.08);color:var(--danger); }
+.fuel-badge.gain { background:rgba(0,51,102,.08);color:var(--blue); }
+.fuel-badge.morning { background:#e3f2fd;color:#0d47a1; }
+.fuel-badge.afternoon { background:#fff3e0;color:#e65100; }
+.fuel-badge.evening { background:#f3e5f5;color:#4a148c; }
+.variance-positive { color:var(--blue);font-weight:700; }
+.variance-negative { color:var(--danger);font-weight:700; }
+.workflow-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;padding:16px; }
+.workflow-link { display:block;padding:16px;background:#fff;border:1px solid var(--line);border-radius:14px;text-decoration:none;color:inherit;border-left:4px solid var(--blue);transition:all .2s; }
+.workflow-link:hover { box-shadow:var(--shadow);transform:translateY(-1px); }
+.workflow-link .wf-icon { font-size:18px;color:var(--blue);margin-bottom:6px; }
+.workflow-link strong { display:block;font-size:14px;margin-bottom:4px; }
+.workflow-link small { color:var(--muted);display:block;margin-bottom:8px;font-size:12px; }
+.workflow-link .wf-count { background:#fff3cd;color:#856404;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600; }
+.filter-bar { display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding:0 16px 12px; }
+.filter-bar .filter-group { display:flex;flex-direction:column;gap:4px; }
+.filter-bar label { font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em; }
+.form-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 16px 14px; }
+@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.fa-spin { animation:spin 1s linear infinite; }
+.nozzle-item { background:#fff;padding:12px;border-radius:6px;border-left:3px solid var(--blue);display:flex;justify-content:space-between;align-items:center; }
+.pump-card { border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:14px; }
+.pump-header { display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:12px; }
+.nozzle-wrap { background:rgba(0,0,0,.02);padding:14px;border-radius:6px; }
 </style>
 
-<div class="page">
-  <div class="page-head" style="background: linear-gradient(135deg, #003d7a 0%, #002d5c 100%); color: white; padding: 30px; border-radius: 8px; margin-bottom: 30px;">
+  <div class="page-head" data-rendering="php">
     <div>
-      <h1 style="color: white; margin: 0 0 10px 0; font-size: 32px;"><i class="fas fa-tint"></i> Fuel Management</h1>
-      <div style="color: rgba(255,255,255,0.9); font-size: 16px;">
+      <h1 class="h1">Fuel Management</h1>
+      <div class="sub">
         <?php 
         if ($isStaff && !$isManager) {
             echo "Encode daily readings, deliveries, and adjustments";
@@ -1136,7 +996,7 @@ require_once __DIR__ . '/../partials/header.php';
       <?php if($isSuper): ?>
         <form method="get" style="display:inline-flex; align-items:center; gap:10px;">
             <label for="station_filter" class="sub">Viewing Station:</label>
-            <select name="station" id="station_filter" onchange="this.form.submit()" class="inp">
+            <select name="station" id="station_filter" onchange="this.form.submit()" class="select" style="width:auto;min-width:200px;">
                 <option value="">-- Select a Station --</option>
                 <?php foreach($stations as $id => $name): ?>
                     <option value="<?php echo $id; ?>" <?php echo $station_id == $id ? 'selected' : ''; ?>><?php echo htmlspecialchars($name); ?></option>
@@ -1144,95 +1004,83 @@ require_once __DIR__ . '/../partials/header.php';
             </select>
         </form>
       <?php endif; ?>
-      <button class="btn dark" onclick="window.location.href='fuel_reports.php'">
-        <i class="fas fa-chart-bar"></i> Reports
-      </button>
-      <button class="btn" onclick="window.location.href='activity_log.php?module=fuel_management'">
-        <i class="fas fa-history"></i> Audit Trail
-      </button>
     </div>
   </div>
 
   <!-- WORKFLOW NAVIGATION SECTION (Manager/Admin only) -->
   <?php if($isManager): ?>
-  <div class="card" style="padding: 15px; margin-top: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px;">
-    <h3 style="margin: 0 0 15px 0; font-size: 18px;">⚙️ Fuel Workflow Management</h3>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px;">
+  <section class="card" style="margin-top:18px">
+    <div class="card-head">
+      <div class="card-title">Manager Workflows</div>
+    </div>
+    <div class="workflow-grid">
       
       <!-- Manager: Verify Deliveries -->
-      <a href="fuel_delivery_verify.php<?php echo $isSuper ? '?station=' . htmlspecialchars($station_id) : ''; ?>" 
-         style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #28a745; transition: all 0.3s;">
-        <strong style="font-size: 16px;">🚛 Verify Deliveries</strong><br>
+      <div class="workflow-link" style="cursor: default; pointer-events: none; opacity: 0.7;">
+        <div class="wf-icon"><i class="fas fa-truck"></i></div>
+        <strong>Verify Deliveries</strong>
         <small>Review and verify recorded fuel deliveries</small>
-        <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
-          <?php 
-            try {
-              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Encoded'");
-              $stmt->execute([$station_id]);
-              $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
-              echo "<span style='background: rgba(255,255,255,0.3); padding: 2px 6px; border-radius: 3px;'>" . intval($count) . " pending</span>";
-            } catch (Exception $e) {}
-          ?>
-        </div>
-      </a>
+        <?php
+          try {
+            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Encoded'");
+            $stmt->execute([$station_id]);
+            $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+            echo "<span class='wf-count'>" . intval($count) . " pending</span>";
+          } catch (Exception $e) {}
+        ?>
+      </div>
       
       <!-- Admin: Finalize Deliveries -->
       <?php if($isAdmin): ?>
-      <a href="fuel_delivery_finalize.php<?php echo $isSuper ? '?station=' . htmlspecialchars($station_id) : ''; ?>" 
-         style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #007bff; transition: all 0.3s;">
-        <strong style="font-size: 16px;">🔒 Finalize Deliveries</strong><br>
+      <div class="workflow-link" style="cursor: default; pointer-events: none; opacity: 0.7; border-left-color:#0d47a1;">
+        <div class="wf-icon"><i class="fas fa-lock"></i></div>
+        <strong>Finalize Deliveries</strong>
         <small>Complete verified deliveries & update stock</small>
-        <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
-          <?php 
-            try {
-              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Verified'");
-              $stmt->execute([$station_id]);
-              $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
-              echo "<span style='background: rgba(255,255,255,0.3); padding: 2px 6px; border-radius: 3px;'>" . intval($count) . " awaiting</span>";
-            } catch (Exception $e) {}
-          ?>
-        </div>
-      </a>
+        <?php
+          try {
+            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Verified'");
+            $stmt->execute([$station_id]);
+            $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+            echo "<span class='wf-count'>" . intval($count) . " awaiting</span>";
+          } catch (Exception $e) {}
+        ?>
+      </div>
       <?php endif; ?>
       
       <!-- Manager: Shift-End Processing -->
-      <a href="fuel_shift_processing.php<?php echo $isSuper ? '?station=' . htmlspecialchars($station_id) : ''; ?>" 
-         style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #ffc107; transition: all 0.3s;">
-        <strong style="font-size: 16px;">⏱️ Shift-End Processing</strong><br>
+      <div class="workflow-link" style="cursor: default; pointer-events: none; opacity: 0.7; border-left-color:#e6a817;">
+        <div class="wf-icon"><i class="fas fa-clock"></i></div>
+        <strong>Shift-End Processing</strong>
         <small>Approve pump readings & deduct sales</small>
-        <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
-          <?php 
-            try {
-              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending'");
-              $stmt->execute([$station_id]);
-              $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
-              echo "<span style='background: rgba(255,255,255,0.3); padding: 2px 6px; border-radius: 3px;'>" . intval($count) . " readings</span>";
-            } catch (Exception $e) {}
-          ?>
-        </div>
-      </a>
+        <?php
+          try {
+            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending'");
+            $stmt->execute([$station_id]);
+            $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+            echo "<span class='wf-count'>" . intval($count) . " readings</span>";
+          } catch (Exception $e) {}
+        ?>
+      </div>
       
-      <!-- View Audit Trail -->
-      <a href="activity_logs.php?page=fuel_management<?php echo $isSuper ? '&station=' . htmlspecialchars($station_id) : ''; ?>" 
-         style="display: block; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 6px; color: white; text-decoration: none; border-left: 4px solid #dc3545; transition: all 0.3s;">
-        <strong style="font-size: 16px;">📋 Audit Trail</strong><br>
+      <!-- Audit Trail -->
+      <div class="workflow-link" style="cursor: default; pointer-events: none; opacity: 0.7; border-left-color:var(--muted);">
+        <div class="wf-icon"><i class="fas fa-clipboard-list"></i></div>
+        <strong>Audit Trail</strong>
         <small>View complete transaction history</small>
-      </a>
+      </div>
       
     </div>
-  </div>
+  </section>
   <?php endif; ?>
 
-  <?php if($msg): ?>
-    <div class="card" style="padding:10px; margin-top:10px; background:#e6f4ea; color:green;">
-      <?php echo $msg; ?>
-    </div>
-  <?php endif; ?>
+  <?php if($msg): ?><div class="card" style="padding:10px; margin-top:10px; background:#e6f4ea; color:green;"><?php echo $msg; ?></div><?php endif; ?>
 
   <?php if($isSuper && !$station_id): ?>
-    <div class="card" style="padding:20px; text-align:center; margin-top:20px;">
-        <h2 class="h2">Please select a station</h2>
-        <div class="sub">Select a station from the dropdown above to manage its fuel operations.</div>
+    <div class="card" style="padding:40px; text-align:center; margin-top:20px;">
+        <div class="empty">
+          <div class="empty-ico"><i class="fas fa-gas-pump"></i></div>
+          <div class="muted">Select a station from the dropdown above to manage its fuel operations.</div>
+        </div>
     </div>
   
   <?php else: ?>
@@ -1295,1456 +1143,1608 @@ require_once __DIR__ . '/../partials/header.php';
   </div>
 
   <!-- Tabs (role-based visibility) -->
-  <div class="tabs" style="margin-top:16px">
+  <div class="tabs pills">
     <!-- Staff Tabs -->
-    <button class="tab <?php echo !isset($_GET['tab']) || $_GET['tab'] === 'pump' ? 'active' : ''; ?>" data-tab="pump">Pump Readings</button>
-    <button class="tab <?php echo $_GET['tab'] === 'delivery' ? 'active' : ''; ?>" data-tab="delivery">Deliveries</button>
-    <button class="tab <?php echo $_GET['tab'] === 'adjustment' ? 'active' : ''; ?>" data-tab="adjustment">Adjustments</button>
-    <button class="tab <?php echo $_GET['tab'] === 'myentries' ? 'active' : ''; ?>" data-tab="myentries">My Entries</button>
+    <button class="tab active" data-fueltab="pump"><i class="fas fa-gas-pump"></i> Pump Readings</button>
+    <button class="tab" data-fueltab="delivery"><i class="fas fa-truck"></i> Deliveries</button>
+    <button class="tab" data-fueltab="adjustment"><i class="fas fa-exchange-alt"></i> Adjustments</button>
+    <button class="tab" data-fueltab="myentries"><i class="fas fa-clipboard-list"></i> My Entries</button>
     
     <!-- Manager/Admin Tabs -->
     <?php if($isManager): ?>
-    <button class="tab <?php echo $_GET['tab'] === 'operations' ? 'active' : ''; ?>" data-tab="operations">Operations</button>
-    <button class="tab <?php echo $_GET['tab'] === 'reconciliation' ? 'active' : ''; ?>" data-tab="reconciliation">Reconciliation</button>
-    <button class="tab <?php echo $_GET['tab'] === 'variances' ? 'active' : ''; ?>" data-tab="variances">Variances</button>
-    <button class="tab <?php echo $_GET['tab'] === 'history' ? 'active' : ''; ?>" data-tab="history">History</button>
+    <button class="tab" data-fueltab="operations"><i class="fas fa-cogs"></i> Operations</button>
+    <button class="tab" data-fueltab="reconciliation"><i class="fas fa-calculator"></i> Reconciliation</button>
+    <button class="tab" data-fueltab="variances"><i class="fas fa-exclamation-triangle"></i> Variances</button>
+    <button class="tab" data-fueltab="history"><i class="fas fa-history"></i> History</button>
     <?php if($isAdmin): ?>
-    <button class="tab <?php echo $_GET['tab'] === 'manage_pumps' ? 'active' : ''; ?>" data-tab="manage_pumps">Manage Pumps</button>
+    <button class="tab" data-fueltab="manage_pumps"><i class="fas fa-sliders-h"></i> Manage Pumps</button>
     <?php endif; ?>
     <?php endif; ?>
   </div>
 
   <!-- TAB 1: PUMP READINGS -->
-  <section class="panel" id="tab-pump">
-    <div class="row">
-      <div class="col-md-6">
-        <div class="staff-card">
-          <h4><i class="fas fa-gas-pump text-blue"></i> Record Daily Pump Reading</h4>
-          <div class="muted">Encode present, previous, and calibration readings</div>
-          
-          <form method="post" class="input-form" style="margin-top:20px;">
-            <input type="hidden" name="action" value="record_pump_reading">
-            
-            <div class="mb-3">
-              <label class="form-label">Select Pump *</label>
-              <select name="pump_id" id="pump_id" class="form-control" required>
-                <option value="">-- Choose Pump --</option>
-                <?php foreach($fuel_stations as $pump): ?>
-                  <option value="<?php echo $pump['id']; ?>">
-                    Pump <?php echo htmlspecialchars($pump['pump_number']); ?> - <?php echo htmlspecialchars($pump['fuel_type']); ?>
-                  </option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-            
-            <div class="row">
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Reading Date *</label>
-                  <input type="date" name="reading_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
-                </div>
-              </div>
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Shift *</label>
-                  <select name="shift" id="shift_delivery" class="form-control" required>
-                    <option value="">-- Select Shift --</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            
-            <div class="row">
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Previous Reading (L) * <span class="text-muted small">(Auto-fetched)</span></label>
-                  <div class="input-group">
-                    <input type="number" step="0.01" name="previous_reading" id="previous_reading" class="form-control" placeholder="0.00" required readonly style="background: #e9ecef;">
-                    <span class="input-group-text"><i class="fas fa-sync-alt" id="syncIcon" style="display:none;"></i></span>
-                  </div>
-                  <small class="text-muted">Auto-populated from database when pump is selected</small>
-                </div>
-              </div>
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Current Reading (L) *</label>
-                  <input type="number" step="0.01" name="current_reading" class="form-control" placeholder="0.00" required>
-                </div>
-              </div>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Calibration Adjustment (L)</label>
-              <input type="number" step="0.01" name="calibration" class="form-control" placeholder="0.00">
-              <small class="text-muted">Enter positive for addition, negative for deduction</small>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Sales Liters (Auto-calculated)</label>
-              <input type="text" id="salesCalc" class="form-control" readonly style="background:#e9ecef;">
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Notes</label>
-              <textarea name="notes" class="form-control" rows="2" placeholder="Any observations..."></textarea>
-            </div>
-            
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px; margin-top: 30px;">
-              <button type="submit" style="
-                width: 100%;
-                padding: 16px;
-                font-size: 18px;
-                font-weight: 600;
-                background: white;
-                color: #667eea;
-                border: none;
-                border-radius: 6px;
-                cursor: pointer;
-                transition: all 0.3s;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-              " 
-              onmouseover="this.style.transform='scale(1.05)';this.style.boxShadow='0 6px 20px rgba(0,0,0,0.3)';"
-              onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 4px 15px rgba(0,0,0,0.2)';">
-                <i class="fas fa-check-circle"></i> SUBMIT PUMP READING
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-      
-      <div class="col-md-6">
-        <div class="staff-card">
-          <h5><i class="fas fa-history"></i> Recent Pump Readings</h5>
-          <div class="my-entries">
-            <?php if(empty($my_readings)): ?>
-              <div class="text-center py-4 text-muted">
-                <i class="fas fa-gas-pump fa-2x mb-3"></i><br>
-                No pump readings recorded yet
-              </div>
-            <?php else: ?>
-              <table class="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Pump</th>
-                    <th>Sales (L)</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach($my_readings as $reading): ?>
-                  <tr>
-                    <td><?php echo date('m/d', strtotime($reading['reading_date'])); ?></td>
-                    <td><?php echo htmlspecialchars($reading['pump_number'] ?? 'N/A'); ?></td>
-                    <td><b><?php echo number_format($reading['sales_liters'], 1); ?></b></td>
-                    <td>
-                      <span class="status-badge status-<?php echo strtolower($reading['status']); ?>">
-                        <?php echo $reading['status']; ?>
-                      </span>
-                    </td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            <?php endif; ?>
-          </div>
-        </div>
-      </div>
+  <section class="card" id="tab-pump">
+    <div class="card-head">
+      <div class="card-title">Record Daily Pump Reading</div>
     </div>
-  </section>
-
-  <!-- TAB 2: FUEL DELIVERIES -->
-  <section class="panel hidden" id="tab-delivery">
-    <div class="row">
-      <div class="col-md-6">
-        <div class="staff-card">
-          <h4><i class="fas fa-truck text-green"></i> Log Fuel Delivery</h4>
-          <div class="muted">Record tanker deliveries from suppliers</div>
-          
-          <form method="post" class="input-form" style="margin-top:20px;">
-            <input type="hidden" name="action" value="record_delivery">
-            
-            <div class="mb-3">
-              <label class="form-label">Delivery Date *</label>
-              <input type="date" name="delivery_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Fuel Type *</label>
-              <select name="fuel_type" id="fuel_type_delivery" class="form-control" required>
-                <option value="">-- Select Fuel Type --</option>
-              </select>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Supplier *</label>
-              <input type="text" name="supplier" class="form-control" placeholder="e.g., Petron, Shell, Caltex" required>
-            </div>
-            
-            <div class="row">
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Invoice Number</label>
-                  <input type="text" name="invoice_no" class="form-control" placeholder="Optional">
-                </div>
-              </div>
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Tanker Number</label>
-                  <input type="text" name="tanker_number" class="form-control" placeholder="e.g., ABC-123">
-                </div>
-              </div>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Delivery Liters *</label>
-              <input type="number" step="0.01" name="delivery_liters" class="form-control" placeholder="0.00" required>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Notes</label>
-              <textarea name="notes" class="form-control" rows="2" placeholder="Delivery conditions, quality notes..."></textarea>
-            </div>
-            
-            <button type="submit" class="btn btn-success w-100">
-              <i class="fas fa-truck-loading"></i> Log Delivery
-            </button>
-          </form>
-        </div>
-      </div>
-      
-      <div class="col-md-6">
-        <div class="staff-card">
-          <h5><i class="fas fa-history"></i> Recent Deliveries</h5>
-          <div class="my-entries">
-            <?php if(empty($my_deliveries)): ?>
-              <div class="text-center py-4 text-muted">
-                <i class="fas fa-truck fa-2x mb-3"></i><br>
-                No deliveries logged yet
-              </div>
-            <?php else: ?>
-              <table class="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Fuel</th>
-                    <th>Liters</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach($my_deliveries as $delivery): ?>
-                  <tr>
-                    <td><?php echo date('m/d', strtotime($delivery['delivery_date'])); ?></td>
-                    <td><?php echo htmlspecialchars($delivery['fuel_type']); ?></td>
-                    <td><b><?php echo number_format($delivery['delivery_liters'], 0); ?> L</b></td>
-                    <td>
-                      <span class="status-badge status-<?php echo strtolower($delivery['status']); ?>">
-                        <?php echo $delivery['status']; ?>
-                      </span>
-                    </td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            <?php endif; ?>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- TAB 3: ADJUSTMENTS -->
-  <section class="panel hidden" id="tab-adjustment">
-    <div class="row">
-      <div class="col-md-6">
-        <div class="staff-card">
-          <h4><i class="fas fa-exchange-alt text-amber"></i> Record Adjustment</h4>
-          <div class="muted">Log losses, transfers, consumption, or other adjustments</div>
-          
-          <form method="post" class="input-form" style="margin-top:20px;">
-            <input type="hidden" name="action" value="record_adjustment">
-            
-            <div class="mb-3">
-              <label class="form-label">Adjustment Date *</label>
-              <input type="date" name="adjustment_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
-            </div>
-            
-            <div class="row">
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Fuel Type *</label>
-                  <select name="fuel_type" id="fuel_type_adjustment" class="form-control" required>
-                    <option value="">-- Select Fuel --</option>
-                  </select>
-                </div>
-              </div>
-              <div class="col-md-6">
-                <div class="mb-3">
-                  <label class="form-label">Adjustment Type *</label>
-                  <select name="adjustment_type" id="adjustment_type_fuel" class="form-control" required>
-                    <option value="">-- Select Type --</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Liters *</label>
-              <input type="number" step="0.01" name="liters" class="form-control" placeholder="0.00" required>
-              <small class="text-muted">Use negative (-) for losses, positive (+) for gains</small>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Reason *</label>
-              <input type="text" name="reason" class="form-control" placeholder="e.g., Spillage, Equipment test, Temperature correction" required>
-            </div>
-            
-            <div class="mb-3">
-              <label class="form-label">Details/Notes</label>
-              <textarea name="notes" class="form-control" rows="2" placeholder="Additional information..."></textarea>
-            </div>
-            
-            <button type="submit" class="btn btn-warning w-100">
-              <i class="fas fa-edit"></i> Submit Adjustment
-            </button>
-          </form>
-        </div>
-      </div>
-      
-      <div class="col-md-6">
-        <div class="staff-card">
-          <h5><i class="fas fa-history"></i> Recent Adjustments</h5>
-          <div class="my-entries">
-            <?php if(empty($my_adjustments)): ?>
-              <div class="text-center py-4 text-muted">
-                <i class="fas fa-exchange-alt fa-2x mb-3"></i><br>
-                No adjustments recorded yet
-              </div>
-            <?php else: ?>
-              <table class="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th>Liters</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach($my_adjustments as $adj): ?>
-                  <tr>
-                    <td><?php echo date('m/d', strtotime($adj['adjustment_date'])); ?></td>
-                    <td><?php echo htmlspecialchars($adj['adjustment_type']); ?></td>
-                    <td class="<?php echo $adj['liters'] < 0 ? 'text-danger' : 'text-success'; ?>">
-                      <b><?php echo ($adj['liters'] > 0 ? '+' : '') . number_format($adj['liters'], 1); ?> L</b>
-                    </td>
-                    <td>
-                      <span class="status-badge status-<?php echo strtolower($adj['status']); ?>">
-                        <?php echo $adj['status']; ?>
-                      </span>
-                    </td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            <?php endif; ?>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-   <!-- TAB 4: ALL MY ENTRIES -->
-    <section class="panel hidden" id="tab-myentries">
-     <div class="staff-card">
-      <h4><i class="fas fa-clipboard-list"></i> All My Entries</h4>
-      <div class="muted">Complete history of all your fuel entries</div>
-
-      <div class="row mt-4">
-        <div class="col-md-4">
-          <div class="entry-card text-center">
-            <div class="entry-icon blue">
-              <i class="fas fa-gas-pump"></i>
-            </div>
-            <div class="entry-count"><?php echo count($my_readings); ?></div>
-            <div class="entry-label">Pump Readings</div>
-            <div class="entry-pending">
-              <?php
-                $pending_readings = array_filter($my_readings, function($r) {
-                  return $r['status'] == 'Pending';
-                });
-                echo count($pending_readings) . ' Pending';
-              ?>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="entry-card text-center">
-            <div class="entry-icon green">
-              <i class="fas fa-truck"></i>
-            </div>
-            <div class="entry-count"><?php echo count($my_deliveries); ?></div>
-            <div class="entry-label">Deliveries</div>
-            <div class="entry-pending">
-              <?php
-                $pending_del = array_filter($my_deliveries, function($d) {
-                  return $d['status'] == 'Encoded' || $d['status'] == 'Pending';
-                });
-                echo count($pending_del) . ' Pending';
-              ?>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="entry-card text-center">
-            <div class="entry-icon orange">
-              <i class="fas fa-exchange-alt"></i>
-            </div>
-            <div class="entry-count"><?php echo count($my_adjustments); ?></div>
-            <div class="entry-label">Adjustments</div>
-            <div class="entry-pending">
-              <?php
-                $pending_adj = array_filter($my_adjustments, function($a) {
-                  return $a['status'] == 'Pending';
-                });
-                echo count($pending_adj) . ' Pending';
-              ?>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="mt-4">
-        <h6><i class="fas fa-history"></i> Activity Timeline</h6>
-        <div style="max-height: 400px; overflow-y: auto; padding-right: 10px;">
-          <?php
-          // Get combined activity
-          try {
-            $sql = "SELECT 'Reading' as type, reading_date as date, CONCAT('Pump Reading: ', sales_liters, 'L') as details, status FROM fuel_daily_readings WHERE user_id = ? AND station_id = ?
-                    UNION ALL
-                    SELECT 'Delivery' as type, delivery_date as date, CONCAT('Delivery: ', delivery_liters, 'L ', fuel_type) as details, status FROM fuel_deliveries WHERE received_by = ? AND station_id = ?
-                    UNION ALL
-                    SELECT 'Adjustment' as type, adjustment_date as date, CONCAT(adjustment_type, ': ', liters, 'L ', fuel_type) as details, status FROM fuel_adjustments WHERE user_id = ? AND station_id = ?
-                    ORDER BY date DESC LIMIT 30";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([$me['id'], $station_id, $me['id'], $station_id, $me['id'], $station_id]);
-            $all_entries = $stmt->fetchAll();
-
-            if (empty($all_entries)) {
-              echo '<div class="empty-state">
-                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
-                <div class="empty-state-text">No entries found</div>
-                <div class="empty-state-subtext">Start recording pump readings, deliveries, and adjustments</div>
-              </div>';
-            } else {
-              echo '<div class="timeline">';
-              foreach($all_entries as $entry) {
-                $type_class = strtolower($entry['type']);
-                $status_class = strtolower($entry['status']);
-                echo '
-                <div class="timeline-item">
-                  <div class="timeline-content '.$type_class.'">
-                    <div class="timeline-details">
-                      <span class="timeline-type '.$type_class.'">
-                        <i class="fas '.($type_class == 'reading' ? 'fa-gas-pump' : ($type_class == 'delivery' ? 'fa-truck' : 'fa-exchange-alt')).'"></i>
-                        '.$entry['type'].'
-                      </span>
-                      <span class="timeline-status '.$status_class.'">'.$entry['status'].'</span>
-                    </div>
-                    <div class="timeline-date">
-                      <i class="fas fa-clock"></i>
-                      '.date('M d, Y - g:i A', strtotime($entry['date'])).'
-                    </div>
-                  </div>
-                </div>';
-              }
-              echo '</div>';
-            }
-          } catch (Exception $e) {
-            echo '<div class="alert alert-danger">Error loading timeline: '.htmlspecialchars($e->getMessage()).'</div>';
-          }
-          ?>
-        </div>
-      </div>
-    </div>
-   </section>
-
-   <!-- TAB 5: OPERATIONS (Manager/Admin only) -->
-   <?php if($isManager): ?>
-   <section class="panel hidden" id="tab-operations">
-    <div class="fuel-card">
-      <div class="row">
-        <div class="col-md-8">
-          <h4>Daily Operations</h4>
-          <div class="muted">Verify and approve daily fuel readings, deliveries, and adjustments</div>
-        </div>
-      </div>
-
-      <!-- Filters -->
-      <div class="row" style="margin-top:20px;">
-        <div class="col-md-3">
-          <label>Date</label>
-          <input type="date" id="filterDate" class="form-control" value="<?php echo htmlspecialchars($filter_date); ?>" onchange="applyFilters()">
-        </div>
-        <div class="col-md-3">
-          <label>Shift</label>
-          <select id="filterShift" class="form-control" onchange="applyFilters()">
-            <option value="">All Shifts</option>
-            <option value="Morning">Morning</option>
-            <option value="Afternoon">Afternoon</option>
-            <option value="Evening">Evening</option>
+    <div class="sub" style="padding:0 16px 4px;">Encode present and previous readings per pump</div>
+    
+    <form method="post">
+      <input type="hidden" name="action" value="record_pump_reading">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Select Pump *</label>
+          <select name="pump_id" id="pump_id" class="select" required>
+            <option value="">-- Choose Pump --</option>
+            <?php foreach($fuel_stations as $pump): ?>
+              <option value="<?php echo $pump['id']; ?>">
+                Pump <?php echo htmlspecialchars($pump['pump_number']); ?> - <?php echo htmlspecialchars($pump['fuel_type']); ?>
+              </option>
+            <?php endforeach; ?>
           </select>
         </div>
-        <div class="col-md-3">
-          <label>Status</label>
-          <select id="filterStatus" class="form-control" onchange="applyFilters()">
-            <option value="">All Status</option>
-            <option value="Pending" <?php echo $filter_status == 'Pending' ? 'selected' : ''; ?>>Pending</option>
-            <option value="Verified" <?php echo $filter_status == 'Verified' ? 'selected' : ''; ?>>Verified</option>
-            <option value="Finalized" <?php echo $filter_status == 'Finalized' ? 'selected' : ''; ?>>Finalized</option>
+        <div>
+          <label class="pay-label">Reading Date *</label>
+          <input type="date" name="reading_date" class="input" value="<?php echo date('Y-m-d'); ?>" required>
+        </div>
+        <div>
+          <label class="pay-label">Shift *</label>
+          <select name="shift" id="shift_delivery" class="select" required>
+            <option value="">-- Select Shift --</option>
           </select>
         </div>
-        <div class="col-md-3">
-          <label>&nbsp;</label>
-          <button class="btn form-control" onclick="resetFilters()">Reset Filters</button>
+        <div>
+          <label class="pay-label">Previous Reading (L) *</label>
+          <input type="number" step="0.01" name="previous_reading" id="previous_reading" class="input" placeholder="0.00" required readonly style="opacity:.7;cursor:not-allowed;">
+          <span id="syncIcon" style="display:none;"><i class="fas fa-sync-alt fa-spin"></i></span>
+        </div>
+        <div>
+          <label class="pay-label">Current Reading (L) *</label>
+          <input type="number" step="0.01" name="current_reading" class="input" placeholder="0.00" required>
         </div>
       </div>
+      <div class="pay-section" style="padding:0 16px 10px;">
+        <label class="pay-label">Calculated Sales</label>
+        <input class="input" id="salesCalc" readonly disabled placeholder="Auto-calculated">
+      </div>
+      <div class="pay-section" style="padding:0 16px 10px;">
+        <label class="pay-label">Notes (optional)</label>
+        <input class="input" name="notes" placeholder="Any observations...">
+      </div>
+      <div class="modal-actions" style="padding:12px 16px;">
+        <div></div>
+        <button type="submit" class="btn primary"><i class="fas fa-check-circle"></i> Submit Pump Reading</button>
+      </div>
+    </form>
+  </section>
 
-      <!-- Readings Table -->
-      <h5 style="margin-top: 30px;">Pump Readings</h5>
-      <div class="table-wrap" style="margin-top:20px;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Pump</th>
-              <th>Shift</th>
-              <th>Previous</th>
-              <th>Current</th>
-              <th>Sales (L)</th>
-              <th>Staff</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+  <!-- Daily Pump Readings -->
+  <section class="card" id="tab-pump-readings" style="margin-top:14px">
+    <div class="card-head">
+      <div class="card-title">Daily Pump Readings</div>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Record daily pump meter readings per shift</div>
+
+    <!-- Filters -->
+    <div class="filter-bar">
+      <div class="filter-group">
+        <label>Date</label>
+        <input type="date" id="pumpFilterDate" class="input" style="width:160px;" value="<?php echo htmlspecialchars($filter_date); ?>" onchange="applyPumpFilters()">
+      </div>
+      <div class="filter-group">
+        <label>Shift</label>
+        <select id="pumpFilterShift" class="select" style="width:140px;" onchange="applyPumpFilters()">
+          <option value="">All Shifts</option>
+          <option value="Morning" <?php echo $filter_shift == 'Morning' ? 'selected' : ''; ?>>Morning</option>
+          <option value="Afternoon" <?php echo $filter_shift == 'Afternoon' ? 'selected' : ''; ?>>Afternoon</option>
+          <option value="Evening" <?php echo $filter_shift == 'Evening' ? 'selected' : ''; ?>>Evening</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Status</label>
+        <select id="pumpFilterStatus" class="select" style="width:140px;" onchange="applyPumpFilters()">
+          <option value="">All Status</option>
+          <option value="Pending" <?php echo $filter_status == 'Pending' ? 'selected' : ''; ?>>Pending</option>
+          <option value="Verified" <?php echo $filter_status == 'Verified' ? 'selected' : ''; ?>>Verified</option>
+          <option value="Finalized" <?php echo $filter_status == 'Finalized' ? 'selected' : ''; ?>>Finalized</option>
+        </select>
+      </div>
+      <div class="filter-group" style="justify-content:flex-end;">
+        <label>&nbsp;</label>
+        <button class="btn ghost small" onclick="resetPumpFilters()"><i class="fas fa-undo"></i> Reset</button>
+      </div>
+    </div>
+
+    <!-- Readings Table -->
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Pump</th>
+            <th>Shift</th>
+            <th>Previous</th>
+            <th>Current</th>
+            <th>Sales (L)</th>
+            <th>Staff</th>
+            <th>Status</th>
+            <th class="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if(empty($daily_readings)): ?>
+          <tr>
+            <td colspan="9" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-gas-pump"></i></div>
+                <div class="muted">No pump readings found</div>
+              </div>
+            </td>
+          </tr>
+          <?php else: ?>
             <?php foreach($daily_readings as $reading): ?>
             <tr>
               <td><?php echo date('M d, Y', strtotime($reading['reading_date'])); ?></td>
               <td>
-                <b><?php echo htmlspecialchars($reading['pump_number']); ?></b><br>
-                <small><?php echo htmlspecialchars($reading['fuel_type']); ?></small>
+                <b><?php echo htmlspecialchars($reading['pump_number'] ?? 'N/A'); ?></b><br>
+                <small class="muted"><?php echo htmlspecialchars($reading['fuel_type'] ?? ''); ?></small>
               </td>
               <td>
-                <span class="shift-badge shift-<?php echo strtolower($reading['shift']); ?>">
+                <span class="fuel-badge <?php echo strtolower($reading['shift']); ?>">
                   <?php echo $reading['shift']; ?>
                 </span>
               </td>
-              <td><?php echo number_format($reading['previous_reading'], 2); ?></td>
-              <td><?php echo number_format($reading['current_reading'], 2); ?></td>
-              <td><b><?php echo number_format($reading['sales_liters'], 2); ?> L</b></td>
-              <td><?php echo htmlspecialchars($reading['user_name']); ?></td>
+              <td><?php echo number_format($reading['previous_reading'] ?? 0, 2); ?></td>
+              <td><?php echo number_format($reading['current_reading'] ?? 0, 2); ?></td>
+              <td><b><?php echo number_format($reading['sales_liters'] ?? 0, 2); ?> L</b></td>
+              <td><?php echo htmlspecialchars($reading['user_name'] ?? 'Unknown'); ?></td>
               <td>
-                <span class="status-badge status-<?php echo strtolower($reading['status']); ?>">
+                <span class="fuel-badge <?php echo strtolower($reading['status']); ?>">
                   <?php echo $reading['status']; ?>
                 </span>
               </td>
-              <td>
-                <?php if($reading['status'] == 'Pending'): ?>
-                  <button class="btn small green" onclick="openVerifyReadingModal(<?php echo $reading['id']; ?>)">
-                    <i class="fas fa-check"></i> Verify
-                  </button>
-                <?php endif; ?>
-                <button class="btn small" onclick="viewReadingDetails(<?php echo $reading['id']; ?>)">
-                  <i class="fas fa-eye"></i>
-                </button>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-            <?php if(empty($daily_readings)): ?>
-            <tr>
-              <td colspan="9" style="text-align:center; padding:30px;">
-                <div class="empty">
-                  <div class="empty-ico"><i class="fas fa-gas-pump"></i></div>
-                  <div class="muted">No pump readings found</div>
-                </div>
-              </td>
-            </tr>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Deliveries Table -->
-      <h5 style="margin-top: 40px;">Fuel Deliveries</h5>
-      <div class="table-wrap" style="margin-top:20px;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Fuel Type</th>
-              <th>Supplier</th>
-              <th>Liters</th>
-              <th>Tanker</th>
-              <th>Received By</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach($deliveries as $delivery): ?>
-            <tr>
-              <td><?php echo date('M d, Y', strtotime($delivery['delivery_date'])); ?></td>
-              <td><b><?php echo htmlspecialchars($delivery['fuel_type']); ?></b></td>
-              <td><?php echo htmlspecialchars($delivery['supplier']); ?></td>
-              <td><b><?php echo number_format($delivery['delivery_liters'], 2); ?> L</b></td>
-              <td><?php echo htmlspecialchars($delivery['tanker_number']); ?></td>
-              <td><?php echo htmlspecialchars($delivery['receiver_name']); ?></td>
-              <td>
-                <span class="status-badge status-<?php echo strtolower($delivery['status']); ?>">
-                  <?php echo $delivery['status']; ?>
-                </span>
-              </td>
-              <td>
-                <?php if($delivery['status'] == 'Encoded'): ?>
-                  <button class="btn small green" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>)">
-                    <i class="fas fa-check"></i> Verify
-                  </button>
-                <?php endif; ?>
-                <button class="btn small" onclick="viewDeliveryDetails(<?php echo $delivery['id']; ?>)">
-                  <i class="fas fa-eye"></i>
-                </button>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Adjustments Table -->
-      <h5 style="margin-top: 40px;">Fuel Adjustments</h5>
-      <div class="table-wrap" style="margin-top:20px;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Fuel Type</th>
-              <th>Type</th>
-              <th>Liters</th>
-              <th>Reason</th>
-              <th>Staff</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach($adjustments as $adj): ?>
-            <tr>
-              <td><?php echo date('M d, Y', strtotime($adj['adjustment_date'])); ?></td>
-              <td><?php echo htmlspecialchars($adj['fuel_type']); ?></td>
-              <td>
-                <span class="badge <?php echo $adj['adjustment_type'] == 'Loss' ? 'danger' : 'info'; ?>">
-                  <?php echo $adj['adjustment_type']; ?>
-                </span>
-              </td>
-              <td class="<?php echo $adj['adjustment_type'] == 'Loss' ? 'variance-negative' : 'variance-positive'; ?>">
-                <?php echo ($adj['adjustment_type'] == 'Loss' ? '-' : '+') . number_format($adj['liters'], 2); ?> L
-              </td>
-              <td><?php echo htmlspecialchars($adj['reason']); ?></td>
-              <td><?php echo htmlspecialchars($adj['user_name']); ?></td>
-              <td>
-                <span class="status-badge status-<?php echo strtolower($adj['status']); ?>">
-                  <?php echo $adj['status']; ?>
-                </span>
-              </td>
-              <td>
-                <?php if($adj['status'] == 'Pending'): ?>
-                  <button class="btn small green" onclick="openApproveAdjustmentModal(<?php echo $adj['id']; ?>)">
+              <td class="right">
+                <?php if($reading['status'] == 'Pending' && $isManager): ?>
+                  <button class="btn ghost small" style="color:var(--blue);" onclick="openVerifyReadingModal(<?php echo $reading['id']; ?>, '<?php echo htmlspecialchars($reading['reading_date']); ?>', '<?php echo htmlspecialchars(addslashes($reading['pump_number'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['shift']); ?>', '<?php echo $reading['previous_reading']; ?>', '<?php echo $reading['current_reading']; ?>', '<?php echo $reading['sales_liters']; ?>', '<?php echo htmlspecialchars(addslashes($reading['user_name'] ?? '')); ?>')">
                     <i class="fas fa-check"></i> Approve
                   </button>
                 <?php endif; ?>
-                <button class="btn small" onclick="viewAdjustmentDetails(<?php echo $adj['id']; ?>)">
-                  <i class="fas fa-eye"></i>
-                </button>
               </td>
             </tr>
             <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 2: FUEL DELIVERIES -->
+  <section class="card hidden" id="tab-delivery">
+    <div class="card-head">
+      <div class="card-title">Log Fuel Delivery</div>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Record tanker deliveries from suppliers</div>
+    
+    <form method="post">
+      <input type="hidden" name="action" value="record_delivery">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Delivery Date *</label>
+          <input type="date" name="delivery_date" class="input" value="<?php echo date('Y-m-d'); ?>" required>
+        </div>
+        <div>
+          <label class="pay-label">Fuel Type *</label>
+          <select name="fuel_type" id="fuel_type_delivery" class="select" required>
+            <option value="">-- Select Fuel Type --</option>
+          </select>
+        </div>
+        <div>
+          <label class="pay-label">Supplier *</label>
+          <input type="text" name="supplier" class="input" placeholder="e.g., Petron, Shell, Caltex" required>
+        </div>
+        <div>
+          <label class="pay-label">Delivery Liters *</label>
+          <input type="number" step="0.01" name="delivery_liters" class="input" placeholder="0.00" required>
+        </div>
+        <div>
+          <label class="pay-label">Invoice Number</label>
+          <input type="text" name="invoice_no" class="input" placeholder="Optional">
+        </div>
+        <div>
+          <label class="pay-label">Tanker Number</label>
+          <input type="text" name="tanker_number" class="input" placeholder="e.g., ABC-123">
+        </div>
+      </div>
+      <div class="pay-section" style="padding:0 16px 10px;">
+        <label class="pay-label">Notes (optional)</label>
+        <input class="input" name="notes" placeholder="Delivery conditions, quality notes...">
+      </div>
+      <div class="modal-actions" style="padding:12px 16px;">
+        <div></div>
+        <button type="submit" class="btn primary"><i class="fas fa-truck-loading"></i> Log Delivery</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Recent Deliveries -->
+  <section class="card hidden" id="tab-delivery-recent" style="margin-top:14px">
+    <div class="card-head">
+      <div class="card-title">Recent Deliveries</div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Fuel</th>
+            <th>Liters</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if(empty($my_deliveries)): ?>
+          <tr>
+            <td colspan="4" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-truck"></i></div>
+                <div class="muted">No deliveries logged yet</div>
+              </div>
+            </td>
+          </tr>
+          <?php else: ?>
+            <?php foreach($my_deliveries as $delivery): ?>
+            <tr>
+              <td><?php echo date('m/d', strtotime($delivery['delivery_date'])); ?></td>
+              <td><?php echo htmlspecialchars($delivery['fuel_type']); ?></td>
+              <td><b><?php echo number_format($delivery['delivery_liters'], 0); ?> L</b></td>
+              <td>
+                <span class="fuel-badge <?php echo strtolower($delivery['status']); ?>">
+                  <?php echo $delivery['status']; ?>
+                </span>
+              </td>
+            </tr>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 3: ADJUSTMENTS -->
+  <section class="card hidden" id="tab-adjustment">
+    <div class="card-head">
+      <div class="card-title">Record Adjustment</div>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Log losses, transfers, consumption, or other adjustments</div>
+    
+    <form method="post">
+      <input type="hidden" name="action" value="record_adjustment">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Adjustment Date *</label>
+          <input type="date" name="adjustment_date" class="input" value="<?php echo date('Y-m-d'); ?>" required>
+        </div>
+        <div>
+          <label class="pay-label">Fuel Type *</label>
+          <select name="fuel_type" id="fuel_type_adjustment" class="select" required>
+            <option value="">-- Select Fuel --</option>
+          </select>
+        </div>
+        <div>
+          <label class="pay-label">Adjustment Type *</label>
+          <select name="adjustment_type" id="adjustment_type_fuel" class="select" required>
+            <option value="">-- Select Type --</option>
+          </select>
+        </div>
+        <div>
+          <label class="pay-label">Liters *</label>
+          <input type="number" step="0.01" name="liters" class="input" placeholder="0.00" required>
+        </div>
+        <div>
+          <label class="pay-label">Reason *</label>
+          <input type="text" name="reason" class="input" placeholder="e.g., Spillage, Equipment test" required>
+        </div>
+        <div>
+          <label class="pay-label">Notes (optional)</label>
+          <input name="notes" class="input" placeholder="Additional information...">
+        </div>
+      </div>
+      <div class="modal-actions" style="padding:12px 16px;">
+        <div></div>
+        <button type="submit" class="btn primary"><i class="fas fa-edit"></i> Submit Adjustment</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Recent Adjustments -->
+  <section class="card hidden" id="tab-adjustment-recent" style="margin-top:14px">
+    <div class="card-head">
+      <div class="card-title">Recent Adjustments</div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Liters</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if(empty($my_adjustments)): ?>
+          <tr>
+            <td colspan="4" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-exchange-alt"></i></div>
+                <div class="muted">No adjustments recorded yet</div>
+              </div>
+            </td>
+          </tr>
+          <?php else: ?>
+            <?php foreach($my_adjustments as $adj): ?>
+            <tr>
+              <td><?php echo date('m/d', strtotime($adj['adjustment_date'])); ?></td>
+              <td><?php echo htmlspecialchars($adj['adjustment_type']); ?></td>
+              <td class="<?php echo $adj['liters'] < 0 ? 'variance-negative' : 'variance-positive'; ?>">
+                <b><?php echo ($adj['liters'] > 0 ? '+' : '') . number_format($adj['liters'], 1); ?> L</b>
+              </td>
+              <td>
+                <span class="fuel-badge <?php echo strtolower($adj['status']); ?>">
+                  <?php echo $adj['status']; ?>
+                </span>
+              </td>
+            </tr>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+   <!-- TAB 4: ALL MY ENTRIES -->
+    <section class="card hidden" id="tab-myentries">
+      <div class="card-head">
+        <div class="card-title">All My Entries</div>
+      </div>
+      <div class="sub" style="padding:0 16px 4px;">Complete history of all your fuel entries</div>
+
+      <!-- Summary Metrics -->
+      <div class="workflow-grid" style="padding:12px 16px;">
+        <?php
+          $pending_readings = array_filter($my_readings, function($r) { return $r['status'] == 'Pending'; });
+          $pending_del = array_filter($my_deliveries, function($d) { return $d['status'] == 'Encoded' || $d['status'] == 'Pending'; });
+          $pending_adj = array_filter($my_adjustments, function($a) { return $a['status'] == 'Pending'; });
+        ?>
+        <div class="workflow-link">
+          <div class="wf-icon"><i class="fas fa-gas-pump"></i></div>
+          <div class="wf-count"><?php echo count($my_readings); ?></div>
+          <div class="muted">Pump Readings</div>
+          <div class="muted" style="font-size:11px;"><?php echo count($pending_readings); ?> Pending</div>
+        </div>
+        <div class="workflow-link">
+          <div class="wf-icon"><i class="fas fa-truck"></i></div>
+          <div class="wf-count"><?php echo count($my_deliveries); ?></div>
+          <div class="muted">Deliveries</div>
+          <div class="muted" style="font-size:11px;"><?php echo count($pending_del); ?> Pending</div>
+        </div>
+        <div class="workflow-link">
+          <div class="wf-icon"><i class="fas fa-exchange-alt"></i></div>
+          <div class="wf-count"><?php echo count($my_adjustments); ?></div>
+          <div class="muted">Adjustments</div>
+          <div class="muted" style="font-size:11px;"><?php echo count($pending_adj); ?> Pending</div>
+        </div>
+      </div>
+
+      <!-- Activity Table -->
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Details</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php
+            try {
+              $sql = "SELECT 'Reading' as type, reading_date as date, CONCAT('Pump Reading: ', sales_liters, 'L') as details, status FROM fuel_daily_readings WHERE user_id = ? AND station_id = ?
+                      UNION ALL
+                      SELECT 'Delivery' as type, delivery_date as date, CONCAT('Delivery: ', delivery_liters, 'L ', fuel_type) as details, status FROM fuel_deliveries WHERE received_by = ? AND station_id = ?
+                      UNION ALL
+                      SELECT 'Adjustment' as type, adjustment_date as date, CONCAT(adjustment_type, ': ', liters, 'L ', fuel_type) as details, status FROM fuel_adjustments WHERE user_id = ? AND station_id = ?
+                      ORDER BY date DESC LIMIT 30";
+              $stmt = $pdo->prepare($sql);
+              $stmt->execute([$me['id'], $station_id, $me['id'], $station_id, $me['id'], $station_id]);
+              $all_entries = $stmt->fetchAll();
+
+              if (empty($all_entries)):
+            ?>
+            <tr>
+              <td colspan="4" style="text-align:center; padding:30px;">
+                <div class="empty small">
+                  <div class="empty-ico"><i class="fas fa-inbox"></i></div>
+                  <div class="muted">No entries found. Start recording pump readings, deliveries, and adjustments.</div>
+                </div>
+              </td>
+            </tr>
+            <?php
+              else:
+                foreach($all_entries as $entry):
+                  $type_class = strtolower($entry['type']);
+            ?>
+            <tr>
+              <td><?php echo date('M d, Y', strtotime($entry['date'])); ?></td>
+              <td>
+                <i class="fas <?php echo $type_class == 'reading' ? 'fa-gas-pump' : ($type_class == 'delivery' ? 'fa-truck' : 'fa-exchange-alt'); ?>"></i>
+                <?php echo $entry['type']; ?>
+              </td>
+              <td><?php echo htmlspecialchars($entry['details']); ?></td>
+              <td>
+                <span class="fuel-badge <?php echo strtolower($entry['status']); ?>">
+                  <?php echo $entry['status']; ?>
+                </span>
+              </td>
+            </tr>
+            <?php
+                endforeach;
+              endif;
+            } catch (Exception $e) {
+            ?>
+            <tr><td colspan="4" style="text-align:center; color:var(--danger);">Error loading entries: <?php echo htmlspecialchars($e->getMessage()); ?></td></tr>
+            <?php } ?>
           </tbody>
         </table>
       </div>
+    </section>
+
+   <!-- TAB 5: OPERATIONS (Manager/Admin only) -->
+   <?php if($isManager): ?>
+   <section class="card hidden" id="tab-operations">
+    <div class="card-head">
+      <div class="card-title">Daily Operations</div>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Verify and approve daily fuel readings, deliveries, and adjustments</div>
+
+    <!-- Filters -->
+    <div class="filter-bar">
+      <div class="filter-group">
+        <label>Date</label>
+        <input type="date" id="filterDate" class="input" style="width:160px;" value="<?php echo htmlspecialchars($filter_date); ?>" onchange="applyFilters()">
+      </div>
+      <div class="filter-group">
+        <label>Shift</label>
+        <select id="filterShift" class="select" style="width:140px;" onchange="applyFilters()">
+          <option value="">All Shifts</option>
+          <option value="Morning">Morning</option>
+          <option value="Afternoon">Afternoon</option>
+          <option value="Evening">Evening</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Status</label>
+        <select id="filterStatus" class="select" style="width:140px;" onchange="applyFilters()">
+          <option value="">All Status</option>
+          <option value="Pending" <?php echo $filter_status == 'Pending' ? 'selected' : ''; ?>>Pending</option>
+          <option value="Verified" <?php echo $filter_status == 'Verified' ? 'selected' : ''; ?>>Verified</option>
+          <option value="Finalized" <?php echo $filter_status == 'Finalized' ? 'selected' : ''; ?>>Finalized</option>
+        </select>
+      </div>
+      <div class="filter-group" style="justify-content:flex-end;">
+        <label>&nbsp;</label>
+        <button class="btn ghost small" onclick="resetFilters()"><i class="fas fa-undo"></i> Reset</button>
+      </div>
+    </div>
+
+    <!-- Readings Table -->
+    <div class="card-head" style="border:0;padding-top:8px;">
+      <div class="card-title" style="font-size:14px;">Pump Readings</div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Pump</th>
+            <th>Shift</th>
+            <th>Previous</th>
+            <th>Current</th>
+            <th>Sales (L)</th>
+            <th>Staff</th>
+            <th>Status</th>
+            <th class="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach($daily_readings as $reading): ?>
+          <tr>
+            <td><?php echo date('M d, Y', strtotime($reading['reading_date'])); ?></td>
+            <td>
+              <b><?php echo htmlspecialchars($reading['pump_number']); ?></b><br>
+              <small class="muted"><?php echo htmlspecialchars($reading['fuel_type']); ?></small>
+            </td>
+            <td>
+              <span class="fuel-badge <?php echo strtolower($reading['shift']); ?>">
+                <?php echo $reading['shift']; ?>
+              </span>
+            </td>
+            <td><?php echo number_format($reading['previous_reading'], 2); ?></td>
+            <td><?php echo number_format($reading['current_reading'], 2); ?></td>
+            <td><b><?php echo number_format($reading['sales_liters'], 2); ?> L</b></td>
+            <td><?php echo htmlspecialchars($reading['user_name']); ?></td>
+            <td>
+              <span class="fuel-badge <?php echo strtolower($reading['status']); ?>">
+                <?php echo $reading['status']; ?>
+              </span>
+            </td>
+            <td class="right">
+              <?php if($reading['status'] == 'Pending'): ?>
+                <button class="btn ghost small" onclick="openVerifyReadingModal(<?php echo $reading['id']; ?>, '<?php echo htmlspecialchars($reading['reading_date']); ?>', '<?php echo htmlspecialchars(addslashes($reading['pump_number'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['shift']); ?>', '<?php echo $reading['previous_reading']; ?>', '<?php echo $reading['current_reading']; ?>', '<?php echo $reading['sales_liters']; ?>', '<?php echo htmlspecialchars(addslashes($reading['user_name'] ?? '')); ?>')">
+                  <i class="fas fa-check"></i> Verify
+                </button>
+              <?php endif; ?>
+              <button class="btn ghost small" onclick="viewReadingDetails(<?php echo $reading['id']; ?>, '<?php echo htmlspecialchars($reading['reading_date']); ?>', '<?php echo htmlspecialchars(addslashes($reading['pump_number'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['shift']); ?>', '<?php echo $reading['previous_reading']; ?>', '<?php echo $reading['current_reading']; ?>', '<?php echo $reading['sales_liters']; ?>', '<?php echo htmlspecialchars(addslashes($reading['user_name'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['status']); ?>')">
+                <i class="fas fa-eye"></i>
+              </button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+          <?php if(empty($daily_readings)): ?>
+          <tr>
+            <td colspan="9" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-gas-pump"></i></div>
+                <div class="muted">No pump readings found</div>
+              </div>
+            </td>
+          </tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Deliveries Table -->
+    <div class="card-head" style="border:0;padding-top:8px;">
+      <div class="card-title" style="font-size:14px;">Fuel Deliveries</div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Fuel Type</th>
+            <th>Supplier</th>
+            <th>Liters</th>
+            <th>Tanker</th>
+            <th>Received By</th>
+            <th>Status</th>
+            <th class="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach($deliveries as $delivery): ?>
+          <tr>
+            <td><?php echo date('M d, Y', strtotime($delivery['delivery_date'])); ?></td>
+            <td><b><?php echo htmlspecialchars($delivery['fuel_type']); ?></b></td>
+            <td><?php echo htmlspecialchars($delivery['supplier']); ?></td>
+            <td><b><?php echo number_format($delivery['delivery_liters'], 2); ?> L</b></td>
+            <td><?php echo htmlspecialchars($delivery['tanker_number']); ?></td>
+            <td><?php echo htmlspecialchars($delivery['receiver_name']); ?></td>
+            <td>
+              <span class="fuel-badge <?php echo strtolower($delivery['status']); ?>">
+                <?php echo $delivery['status']; ?>
+              </span>
+            </td>
+            <td class="right">
+              <?php if($delivery['status'] == 'Encoded'): ?>
+                <button class="btn ghost small" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>, '<?php echo htmlspecialchars($delivery['delivery_date']); ?>', '<?php echo htmlspecialchars(addslashes($delivery['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($delivery['supplier'])); ?>', '<?php echo $delivery['delivery_liters']; ?>', '<?php echo htmlspecialchars(addslashes($delivery['tanker_number'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($delivery['receiver_name'] ?? '')); ?>')">
+                  <i class="fas fa-check"></i> Verify
+                </button>
+              <?php endif; ?>
+              <button class="btn ghost small" onclick="viewDeliveryDetails(<?php echo $delivery['id']; ?>, '<?php echo htmlspecialchars($delivery['delivery_date']); ?>', '<?php echo htmlspecialchars(addslashes($delivery['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($delivery['supplier'])); ?>', '<?php echo $delivery['delivery_liters']; ?>', '<?php echo htmlspecialchars(addslashes($delivery['tanker_number'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($delivery['receiver_name'] ?? '')); ?>', '<?php echo htmlspecialchars($delivery['status']); ?>')">
+                <i class="fas fa-eye"></i>
+              </button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+          <?php if(empty($deliveries)): ?>
+          <tr><td colspan="8" style="text-align:center;">No delivery records found.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Adjustments Table -->
+    <div class="card-head" style="border:0;padding-top:8px;">
+      <div class="card-title" style="font-size:14px;">Fuel Adjustments</div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Fuel Type</th>
+            <th>Type</th>
+            <th>Liters</th>
+            <th>Reason</th>
+            <th>Staff</th>
+            <th>Status</th>
+            <th class="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach($adjustments as $adj): ?>
+          <tr>
+            <td><?php echo date('M d, Y', strtotime($adj['adjustment_date'])); ?></td>
+            <td><?php echo htmlspecialchars($adj['fuel_type']); ?></td>
+            <td>
+              <span class="fuel-badge <?php echo strtolower($adj['adjustment_type']); ?>">
+                <?php echo $adj['adjustment_type']; ?>
+              </span>
+            </td>
+            <td class="<?php echo $adj['adjustment_type'] == 'Loss' ? 'variance-negative' : 'variance-positive'; ?>">
+              <?php echo ($adj['adjustment_type'] == 'Loss' ? '-' : '+') . number_format($adj['liters'], 2); ?> L
+            </td>
+            <td><?php echo htmlspecialchars($adj['reason']); ?></td>
+            <td><?php echo htmlspecialchars($adj['user_name']); ?></td>
+            <td>
+              <span class="fuel-badge <?php echo strtolower($adj['status']); ?>">
+                <?php echo $adj['status']; ?>
+              </span>
+            </td>
+            <td class="right">
+              <?php if($adj['status'] == 'Pending'): ?>
+                <button class="btn ghost small" onclick="openApproveAdjustmentModal(<?php echo $adj['id']; ?>, '<?php echo htmlspecialchars($adj['adjustment_date']); ?>', '<?php echo htmlspecialchars(addslashes($adj['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($adj['adjustment_type'])); ?>', '<?php echo $adj['liters']; ?>', '<?php echo htmlspecialchars(addslashes($adj['reason'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($adj['user_name'] ?? '')); ?>')">
+                  <i class="fas fa-check"></i> Approve
+                </button>
+              <?php endif; ?>
+              <button class="btn ghost small" onclick="viewAdjustmentDetails(<?php echo $adj['id']; ?>, '<?php echo htmlspecialchars($adj['adjustment_date']); ?>', '<?php echo htmlspecialchars(addslashes($adj['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($adj['adjustment_type'])); ?>', '<?php echo $adj['liters']; ?>', '<?php echo htmlspecialchars(addslashes($adj['reason'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($adj['user_name'] ?? '')); ?>', '<?php echo htmlspecialchars($adj['status']); ?>')">
+                <i class="fas fa-eye"></i>
+              </button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+          <?php if(empty($adjustments)): ?>
+          <tr><td colspan="8" style="text-align:center;">No adjustment records found.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
     </div>
    </section>
 
    <!-- TAB 6: RECONCILIATION (Manager/Admin only) -->
-   <section class="panel hidden" id="tab-reconciliation">
-    <div class="fuel-card">
-      <div class="row">
-        <div class="col-md-8">
-          <h4>Fuel Reconciliation</h4>
-          <div class="muted">Daily reconciliation of fuel stock vs sales</div>
-        </div>
-        <div class="col-md-4 text-end">
-          <button class="btn dark" data-bs-toggle="modal" data-bs-target="#modalRunReconciliation">
-            <i class="fas fa-calculator"></i> Run Reconciliation
-          </button>
-        </div>
-      </div>
-      
-      <div class="table-wrap" style="margin-top:20px;">
-        <table class="table">
-          <thead>
-            <tr>
-               <th>Date</th>
-               <th>Fuel Type</th>
-               <th>Opening</th>
-               <th>Deliveries</th>
-               <th>Sales</th>
-               <th>Adjustments</th>
-               <th>Expected</th>
-               <th>Physical</th>
-               <th>Variance</th>
-               <th>Status</th>
-               <th>Sync to POS</th>
-             </tr>
-          </thead>
-          <tbody>
-            <?php foreach($reconciliations as $recon): ?>
-            <tr>
-              <td><?php echo date('M d, Y', strtotime($recon['reconciliation_date'])); ?></td>
-              <td><b><?php echo htmlspecialchars($recon['fuel_type']); ?></b></td>
-              <td><?php echo number_format($recon['opening_stock'], 2); ?> L</td>
-              <td><?php echo number_format($recon['deliveries'], 2); ?> L</td>
-              <td><?php echo number_format($recon['sales'], 2); ?> L</td>
-              <td><?php echo number_format($recon['adjustments'], 2); ?> L</td>
-              <td><b><?php echo number_format($recon['closing_stock'], 2); ?> L</b></td>
-              <td><?php echo number_format($recon['physical_stock'], 2); ?> L</td>
-              <td>
-                <?php if($recon['variance'] != 0): ?>
-                  <span class="<?php echo $recon['variance'] > 0 ? 'variance-positive' : 'variance-negative'; ?>">
-                    <?php echo ($recon['variance'] > 0 ? '+' : '') . number_format($recon['variance'], 2); ?> L
-                    <br>
-                    <small>(<?php echo ($recon['variance_percent'] > 0 ? '+' : '') . number_format($recon['variance_percent'], 2); ?>%)</small>
-                  </span>
-                <?php else: ?>
-                  <span class="text-muted">0.00 L</span>
-                <?php endif; ?>
-              </td>
-               <td>
-                 <span class="status-badge status-<?php echo strtolower($recon['status']); ?>">
-                   <?php echo $recon['status']; ?>
+   <section class="card hidden" id="tab-reconciliation">
+    <div class="card-head">
+      <div class="card-title">Fuel Reconciliation</div>
+      <button class="btn primary" onclick="document.getElementById('modalRunReconciliation').classList.add('show')">
+        <i class="fas fa-calculator"></i> Run Reconciliation
+      </button>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Daily reconciliation of fuel stock vs sales</div>
+
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Fuel Type</th>
+            <th>Opening</th>
+            <th>Deliveries</th>
+            <th>Sales</th>
+            <th>Adjustments</th>
+            <th>Expected</th>
+            <th>Physical</th>
+            <th>Variance</th>
+            <th>Status</th>
+            <th>Sync</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach($reconciliations as $recon): ?>
+          <tr>
+            <td><?php echo date('M d, Y', strtotime($recon['reconciliation_date'])); ?></td>
+            <td><b><?php echo htmlspecialchars($recon['fuel_type']); ?></b></td>
+            <td><?php echo number_format($recon['opening_stock'], 2); ?> L</td>
+            <td><?php echo number_format($recon['deliveries'], 2); ?> L</td>
+            <td><?php echo number_format($recon['sales'], 2); ?> L</td>
+            <td><?php echo number_format($recon['adjustments'], 2); ?> L</td>
+            <td><b><?php echo number_format($recon['closing_stock'], 2); ?> L</b></td>
+            <td><?php echo number_format($recon['physical_stock'], 2); ?> L</td>
+            <td>
+              <?php if($recon['variance'] != 0): ?>
+                <span class="<?php echo $recon['variance'] > 0 ? 'variance-positive' : 'variance-negative'; ?>">
+                  <?php echo ($recon['variance'] > 0 ? '+' : '') . number_format($recon['variance'], 2); ?> L
+                  <br>
+                  <small>(<?php echo ($recon['variance_percent'] > 0 ? '+' : '') . number_format($recon['variance_percent'], 2); ?>%)</small>
+                </span>
+              <?php else: ?>
+                <span class="muted">0.00 L</span>
+              <?php endif; ?>
+            </td>
+            <td>
+              <span class="fuel-badge <?php echo strtolower($recon['status']); ?>">
+                <?php echo $recon['status']; ?>
+              </span>
+            </td>
+            <td>
+              <?php if($recon['status'] === 'Finalized' && !$recon['synced_to_pos']): ?>
+                <a href="pos_fuel_sync.php" class="btn ghost small">
+                  <i class="fas fa-sync"></i> Sync
+                </a>
+              <?php elseif($recon['synced_to_pos']): ?>
+                <span class="fuel-badge finalized" title="<?php echo htmlspecialchars($recon['synced_at']); ?>">
+                  <i class="fas fa-check"></i> Synced
+                </span>
+              <?php else: ?>
+                <span class="muted">&mdash;</span>
+              <?php endif; ?>
+             </td>
+             <td>
+               <?php if($recon['status'] === 'Pending'): ?>
+                 <button class="btn primary small" onclick="showApproveModal(<?php echo $recon['id']; ?>, '<?php echo htmlspecialchars($recon['fuel_type']); ?>', '<?php echo $recon['reconciliation_date']; ?>')">
+                   <i class="fas fa-check"></i> Approve
+                 </button>
+               <?php elseif($recon['status'] === 'approved'): ?>
+                 <span class="fuel-badge approved" title="Waiting for Admin finalization">
+                   <i class="fas fa-clock"></i> Pending Admin
                  </span>
-               </td>
-               <td>
-                 <?php if($recon['status'] === 'Finalized' && !$recon['synced_to_pos']): ?>
-                   <a href="pos_fuel_sync.php" class="btn btn-sm btn-primary">
-                     <i class="fas fa-sync"></i> Sync
-                   </a>
-                 <?php elseif($recon['synced_to_pos']): ?>
-                   <span class="badge bg-success" title="<?php echo htmlspecialchars($recon['synced_at']); ?>">
-                     <i class="fas fa-check"></i> Synced
-                   </span>
-                 <?php else: ?>
-                   <span class="text-muted">—</span>
-                 <?php endif; ?>
-               </td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
+               <?php elseif($recon['status'] === 'finalized'): ?>
+                 <span class="fuel-badge finalized" title="Finalized and locked">
+                   <i class="fas fa-lock"></i> Locked
+                 </span>
+               <?php endif; ?>
+             </td>
+           </tr>
+           <?php endforeach; ?>
+           <?php if(empty($reconciliations)): ?>
+           <tr>
+             <td colspan="12" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-calculator"></i></div>
+                <div class="muted">No reconciliation records found</div>
+              </div>
+            </td>
+          </tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
     </div>
    </section>
 
    <!-- TAB 7: VARIANCE REPORTS (Manager/Admin only) -->
-   <section class="panel hidden" id="tab-variances">
-    <div class="fuel-card">
-      <h4>Variance Reports</h4>
-      <div class="muted">Fuel stock discrepancies requiring investigation</div>
-      
-      <div class="table-wrap" style="margin-top:20px;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Report Date</th>
-              <th>Fuel Type</th>
-              <th>Expected</th>
-              <th>Actual</th>
-              <th>Variance</th>
-              <th>Status</th>
-              <th>Investigated By</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach($variance_reports as $report): ?>
-            <tr>
-              <td><?php echo date('M d, Y', strtotime($report['report_date'])); ?></td>
-              <td><b><?php echo htmlspecialchars($report['fuel_type']); ?></b></td>
-              <td><?php echo number_format($report['expected_stock'], 2); ?> L</td>
-              <td><?php echo number_format($report['actual_stock'], 2); ?> L</td>
-              <td>
-                <span class="<?php echo $report['variance_liters'] > 0 ? 'variance-positive' : 'variance-negative'; ?>">
-                  <?php echo ($report['variance_liters'] > 0 ? '+' : '') . number_format($report['variance_liters'], 2); ?> L
-                  <br>
-                  <small>(<?php echo ($report['variance_percent'] > 0 ? '+' : '') . number_format($report['variance_percent'], 2); ?>%)</small>
-                </span>
-              </td>
-              <td>
-                <span class="badge <?php 
-                  echo $report['status'] == 'Open' ? 'danger' : 
-                         ($report['status'] == 'Under Investigation' ? 'warning' : 
-                         ($report['status'] == 'Resolved' ? 'success' : 'secondary')); ?>">
-                  <?php echo $report['status']; ?>
-                </span>
-              </td>
-              <td><?php echo $report['investigator_name'] ? htmlspecialchars($report['investigator_name']) : '—'; ?></td>
-              <td>
-                <button class="btn small" onclick="viewVarianceDetails(<?php echo $report['id']; ?>)">
-                  <i class="fas fa-eye"></i> View
+   <section class="card hidden" id="tab-variances">
+    <div class="card-head">
+      <div class="card-title">Variance Reports</div>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Fuel stock discrepancies requiring investigation</div>
+
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Report Date</th>
+            <th>Fuel Type</th>
+            <th>Expected</th>
+            <th>Actual</th>
+            <th>Variance</th>
+            <th>Status</th>
+            <th>Investigated By</th>
+            <th class="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach($variance_reports as $report): ?>
+          <tr>
+            <td><?php echo date('M d, Y', strtotime($report['report_date'])); ?></td>
+            <td><b><?php echo htmlspecialchars($report['fuel_type']); ?></b></td>
+            <td><?php echo number_format($report['expected_stock'], 2); ?> L</td>
+            <td><?php echo number_format($report['actual_stock'], 2); ?> L</td>
+            <td>
+              <span class="<?php echo $report['variance_liters'] > 0 ? 'variance-positive' : 'variance-negative'; ?>">
+                <?php echo ($report['variance_liters'] > 0 ? '+' : '') . number_format($report['variance_liters'], 2); ?> L
+                <br>
+                <small>(<?php echo ($report['variance_percent'] > 0 ? '+' : '') . number_format($report['variance_percent'], 2); ?>%)</small>
+              </span>
+            </td>
+            <td>
+              <span class="fuel-badge <?php 
+                echo $report['status'] == 'Open' ? 'open' : 
+                       ($report['status'] == 'Under Investigation' ? 'investigating' : 
+                       ($report['status'] == 'Resolved' ? 'resolved' : 'pending')); ?>">
+                <?php echo $report['status']; ?>
+              </span>
+            </td>
+            <td><?php echo $report['investigator_name'] ? htmlspecialchars($report['investigator_name']) : '&mdash;'; ?></td>
+            <td class="right">
+              <button class="btn ghost small" onclick="viewVarianceDetails(<?php echo $report['id']; ?>, '<?php echo htmlspecialchars($report['report_date']); ?>', '<?php echo htmlspecialchars(addslashes($report['fuel_type'])); ?>', '<?php echo $report['expected_stock']; ?>', '<?php echo $report['actual_stock']; ?>', '<?php echo $report['variance_liters']; ?>', '<?php echo $report['variance_percent']; ?>', '<?php echo htmlspecialchars($report['status']); ?>', '<?php echo htmlspecialchars(addslashes($report['investigator_name'] ?? '')); ?>')">
+                <i class="fas fa-eye"></i> View
+              </button>
+              <?php if(in_array($report['status'], ['Open', 'Under Investigation']) && $isManager): ?>
+                <button class="btn ghost small" style="color:var(--blue);" onclick="openInvestigateVarianceModal(<?php echo $report['id']; ?>, '<?php echo htmlspecialchars($report['report_date']); ?>', '<?php echo htmlspecialchars(addslashes($report['fuel_type'])); ?>', '<?php echo $report['expected_stock']; ?>', '<?php echo $report['actual_stock']; ?>', '<?php echo $report['variance_liters']; ?>', '<?php echo $report['variance_percent']; ?>', '<?php echo htmlspecialchars($report['status']); ?>')">
+                  <i class="fas fa-search"></i> Investigate
                 </button>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
+              <?php endif; ?>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+          <?php if(empty($variance_reports)): ?>
+          <tr>
+            <td colspan="8" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-exclamation-triangle"></i></div>
+                <div class="muted">No variance reports found</div>
+              </div>
+            </td>
+          </tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
     </div>
    </section>
 
    <!-- TAB 8: SHIFT HISTORY (Manager/Admin only) -->
-   <section class="panel hidden" id="tab-history">
-    <div class="fuel-card">
-      <h4>Shift History</h4>
-      <div class="muted">Complete audit trail of all shift entries</div>
-      
-      <div class="row" style="margin-top:20px;">
-        <div class="col-md-12">
-          <div class="table-responsive">
-            <table class="table table-striped">
-              <thead>
-                <tr>
-                  <th>Date & Time</th>
-                  <th>Staff</th>
-                  <th>Action</th>
-                  <th>Details</th>
-                  <th>Shift</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                <?php
-                // Fetch activity logs for fuel management
-                try {
-                  $sql = "SELECT al.*, u.name as user_name 
-                          FROM activity_logs al 
-                          LEFT JOIN users u ON al.user_id = u.id 
-                          WHERE al.action LIKE '%fuel%' AND al.module = 'fuel_management'
-                          ORDER BY al.created_at DESC 
-                          LIMIT 100";
-                  $stmt = $pdo->prepare($sql);
-                  $stmt->execute();
-                  $activity_logs = $stmt->fetchAll();
-                  
-                  if (!empty($activity_logs)) {
-                    foreach($activity_logs as $log) {
-                ?>
-                <tr>
-                  <td>
-                    <?php echo date('M d, Y', strtotime($log['created_at'])); ?><br>
-                    <small><?php echo date('H:i:s', strtotime($log['created_at'])); ?></small>
-                  </td>
-                  <td><?php echo htmlspecialchars($log['user_name']); ?></td>
-                  <td>
-                    <span class="badge bg-primary"><?php echo htmlspecialchars($log['action']); ?></span>
-                  </td>
-                  <td><?php echo htmlspecialchars($log['details']); ?></td>
-                  <td>
-                    <?php
-                    // Extract shift from details if available
-                    $shift = 'N/A';
-                    if (preg_match('/\((Morning|Afternoon|Evening) shift\)/i', $log['details'], $matches)) {
-                        $shift = $matches[1];
-                    }
-                    echo $shift;
-                    ?>
-                  </td>
-                  <td>
-                    <span class="badge bg-success">Logged</span>
-                  </td>
-                </tr>
-                <?php
-                    }
-                  } else {
-                ?>
-                <tr>
-                  <td colspan="6" style="text-align:center; padding:30px;">
-                    <div class="empty">
-                      <div class="empty-ico"><i class="fas fa-history"></i></div>
-                      <div class="muted">No activity logs found</div>
-                    </div>
-                  </td>
-                </tr>
-                <?php
-                  }
-                } catch (Exception $e) {
-                ?>
-                <tr>
-                  <td colspan="6" style="text-align:center; padding:30px; color:#dc3545;">
-                    Error loading activity logs: <?php echo htmlspecialchars($e->getMessage()); ?>
-                  </td>
-                </tr>
-                              <?php
-                }
-                ?>
-               </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+   <section class="card hidden" id="tab-history">
+    <div class="card-head">
+      <div class="card-title">Shift History</div>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Complete audit trail of all shift entries</div>
+
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date & Time</th>
+            <th>Staff</th>
+            <th>Action</th>
+            <th>Details</th>
+            <th>Shift</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php
+          try {
+            $sql = "SELECT al.*, u.name as user_name 
+                    FROM activity_logs al 
+                    LEFT JOIN users u ON al.user_id = u.id 
+                    WHERE al.action LIKE '%fuel%' AND al.module = 'fuel_management'
+                    ORDER BY al.created_at DESC 
+                    LIMIT 100";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute();
+            $activity_logs = $stmt->fetchAll();
+            
+            if (!empty($activity_logs)):
+              foreach($activity_logs as $log):
+          ?>
+          <tr>
+            <td>
+              <?php echo date('M d, Y', strtotime($log['created_at'])); ?><br>
+              <small class="muted"><?php echo date('H:i:s', strtotime($log['created_at'])); ?></small>
+            </td>
+            <td><?php echo htmlspecialchars($log['user_name']); ?></td>
+            <td>
+              <span class="fuel-badge verified"><?php echo htmlspecialchars($log['action']); ?></span>
+            </td>
+            <td><?php echo htmlspecialchars($log['details']); ?></td>
+            <td>
+              <?php
+              $shift = 'N/A';
+              if (preg_match('/\((Morning|Afternoon|Evening) shift\)/i', $log['details'], $matches)) {
+                  $shift = $matches[1];
+              }
+              if ($shift !== 'N/A'): ?>
+                <span class="fuel-badge <?php echo strtolower($shift); ?>"><?php echo $shift; ?></span>
+              <?php else: ?>
+                <span class="muted">N/A</span>
+              <?php endif; ?>
+            </td>
+            <td>
+              <span class="fuel-badge verified">Logged</span>
+            </td>
+          </tr>
+          <?php
+              endforeach;
+            else:
+          ?>
+          <tr>
+            <td colspan="6" style="text-align:center; padding:30px;">
+              <div class="empty small">
+                <div class="empty-ico"><i class="fas fa-history"></i></div>
+                <div class="muted">No activity logs found</div>
+              </div>
+            </td>
+          </tr>
+          <?php
+            endif;
+          } catch (Exception $e) {
+          ?>
+          <tr>
+            <td colspan="6" style="text-align:center; padding:30px; color:var(--danger);">
+              Error loading activity logs: <?php echo htmlspecialchars($e->getMessage()); ?>
+            </td>
+          </tr>
+          <?php } ?>
+        </tbody>
+      </table>
     </div>
    </section>
 
    <!-- TAB 9: MANAGE PUMPS (Admin/Superadmin only) -->
-   <section class="panel hidden" id="tab-manage_pumps">
-    <div class="fuel-card">
-      <div class="row">
-        <div class="col-md-8">
-          <h4><i class="fas fa-sliders-h"></i> Manage Fuel Pumps</h4>
-          <div class="muted">Create, edit, or remove fuel pumps for this station</div>
-        </div>
-        <div class="col-md-4 text-end">
-          <button class="btn dark" onclick="openAddPumpModal()">
-            <i class="fas fa-plus"></i> Add New Pump
-          </button>
-        </div>
-      </div>
-      
-       <div style="margin-top:20px;">
-         <?php if(!empty($fuel_pumps)): ?>
-           <?php foreach($fuel_pumps as $pump): ?>
-           <div class="fuel-card" style="margin-bottom:20px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
-             <!-- Pump Header -->
-             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #f0f0f0;">
-               <div>
-                 <div style="font-size: 14px; color: #666; margin-bottom: 5px;">Pump Number</div>
-                 <div style="font-size: 20px; font-weight: 700; color: #333; margin-bottom: 10px;">
-                   <?php echo htmlspecialchars($pump['pump_number']); ?>
-                 </div>
-                 <?php if ($pump['calibration_value'] !== null): ?>
-                 <div style="font-size: 13px; color: #666;">
-                   <strong>Calibration:</strong> <?php echo htmlspecialchars($pump['calibration_value']); ?>
-                 </div>
-                 <?php endif; ?>
-               </div>
-               <div style="text-align: right;">
-                 <div style="margin-bottom: 10px;">
-                   <span class="status-badge status-<?php echo strtolower($pump['status']); ?>">
-                     <?php echo ucfirst($pump['status']); ?>
-                   </span>
-                 </div>
-                 <div>
-                   <button class="btn small" onclick="openEditPumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>', '<?php echo htmlspecialchars($pump['calibration_value'] ?? ''); ?>', '<?php echo $pump['status']; ?>')">
-                     <i class="fas fa-edit"></i> Edit
-                   </button>
-                   <?php if($isSuper): ?>
-                   <button class="btn small red" onclick="openDeletePumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
-                     <i class="fas fa-trash"></i> Delete
-                   </button>
-                   <?php endif; ?>
-                 </div>
-               </div>
-             </div>
+   <section class="card hidden" id="tab-manage_pumps">
+    <div class="card-head">
+      <div class="card-title">Manage Fuel Pumps</div>
+      <button class="btn primary" onclick="document.getElementById('modalAddPump').classList.add('show')">
+        <i class="fas fa-plus"></i> Add New Pump
+      </button>
+    </div>
+    <div class="sub" style="padding:0 16px 4px;">Create, edit, or remove fuel pumps for this station</div>
 
-             <!-- Nozzles Section -->
-             <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-               <div style="margin-bottom: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
-                 <div><i class="fas fa-wind"></i> Nozzles</div>
-                 <button class="btn small dark" onclick="openAddNozzleModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
-                   <i class="fas fa-plus"></i> Add Nozzle
-                 </button>
-               </div>
-               
-               <?php 
-               $nozzles = getNozzlesForPump($pdo, $pump['id']);
-               if (!empty($nozzles)): 
-               ?>
-                 <div style="display: grid; gap: 10px;">
-                   <?php foreach ($nozzles as $nozzle): ?>
-                   <div style="background: white; padding: 12px; border-radius: 4px; border-left: 3px solid #667eea; display: flex; justify-content: space-between; align-items: center;">
-                     <div>
-                       <div style="font-weight: 600; margin-bottom: 4px;">
-                         Nozzle <?php echo htmlspecialchars($nozzle['nozzle_number']); ?>
-                       </div>
-                       <div style="font-size: 13px; color: #666;">
-                         <?php echo htmlspecialchars($nozzle['fuel_type_name'] ?? 'Unknown'); ?> • 
-                         <span class="status-badge status-<?php echo strtolower($nozzle['status']); ?>" style="font-size: 12px;">
-                           <?php echo ucfirst($nozzle['status']); ?>
-                         </span>
-                       </div>
-                     </div>
-                     <div>
-                       <button class="btn small" onclick="openEditNozzleModal(<?php echo $nozzle['id']; ?>, <?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($nozzle['nozzle_number']); ?>', <?php echo $nozzle['fuel_type_id']; ?>, '<?php echo $nozzle['status']; ?>', '<?php echo htmlspecialchars($nozzle['notes'] ?? ''); ?>')">
-                         <i class="fas fa-edit"></i> Edit
-                       </button>
-                     </div>
-                   </div>
-                   <?php endforeach; ?>
-                 </div>
-               <?php else: ?>
-                 <div style="text-align: center; padding: 20px; color: #999;">
-                   <i class="fas fa-inbox" style="font-size: 20px; margin-bottom: 10px; display: block;"></i>
-                   No nozzles added yet
-                 </div>
-               <?php endif; ?>
-             </div>
-           </div>
-           <?php endforeach; ?>
-         <?php else: ?>
-         <div style="text-align: center; padding: 60px 20px;">
-           <div style="font-size: 40px; color: #ddd; margin-bottom: 15px;">
-             <i class="fas fa-gas-pump"></i>
-           </div>
-           <div style="color: #999; font-size: 16px;">
-             No pumps configured for this station
-           </div>
-         </div>
-         <?php endif; ?>
-       </div>
+    <div style="padding:16px;">
+      <?php if(!empty($fuel_pumps)): ?>
+        <?php foreach($fuel_pumps as $pump): ?>
+        <div class="pump-card">
+          <div class="pump-head">
+            <div>
+              <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;">Pump Number</div>
+              <div style="font-size:18px;font-weight:700;"><?php echo htmlspecialchars($pump['pump_number']); ?></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="fuel-badge <?php echo strtolower($pump['status']); ?>"><?php echo ucfirst($pump['status']); ?></span>
+              <button class="btn ghost small" onclick="openEditPumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>', '<?php echo $pump['status']; ?>')">
+                <i class="fas fa-edit"></i> Edit
+              </button>
+              <?php if($isSuper): ?>
+              <button class="btn ghost small" style="color:var(--danger);" onclick="openDeletePumpModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
+                <i class="fas fa-trash"></i>
+              </button>
+              <?php endif; ?>
+            </div>
+          </div>
+
+          <!-- Nozzles -->
+          <div class="nozzle-wrap">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div style="font-weight:600;font-size:13px;"><i class="fas fa-wind"></i> Nozzles</div>
+              <button class="btn ghost small" onclick="openAddNozzleModal(<?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($pump['pump_number']); ?>')">
+                <i class="fas fa-plus"></i> Add
+              </button>
+            </div>
+
+            <?php 
+            $nozzles = getNozzlesForPump($pdo, $pump['id']);
+            if (!empty($nozzles)): 
+            ?>
+              <?php foreach ($nozzles as $nozzle): ?>
+              <div class="nozzle-item">
+                <div>
+                  <div style="font-weight:600;">Nozzle <?php echo htmlspecialchars($nozzle['nozzle_number']); ?></div>
+                  <div class="muted" style="font-size:12px;">
+                    <?php echo htmlspecialchars($nozzle['fuel_type_name'] ?? 'Unknown'); ?> &bull;
+                    <span class="fuel-badge <?php echo strtolower($nozzle['status']); ?>" style="font-size:11px;"><?php echo ucfirst($nozzle['status']); ?></span>
+                  </div>
+                </div>
+                <button class="btn ghost small" onclick="openEditNozzleModal(<?php echo $nozzle['id']; ?>, <?php echo $pump['id']; ?>, '<?php echo htmlspecialchars($nozzle['nozzle_number']); ?>', <?php echo $nozzle['fuel_type_id']; ?>, '<?php echo $nozzle['status']; ?>', '<?php echo htmlspecialchars($nozzle['notes'] ?? ''); ?>')">
+                  <i class="fas fa-edit"></i> Edit
+                </button>
+              </div>
+              <?php endforeach; ?>
+            <?php else: ?>
+              <div class="empty small" style="padding:16px 0;">
+                <div class="empty-ico"><i class="fas fa-inbox"></i></div>
+                <div class="muted">No nozzles added yet</div>
+              </div>
+            <?php endif; ?>
+          </div>
+        </div>
+        <?php endforeach; ?>
+      <?php else: ?>
+        <div class="empty" style="padding:40px 0;">
+          <div class="empty-ico"><i class="fas fa-gas-pump"></i></div>
+          <div class="muted">No pumps configured for this station</div>
+        </div>
+      <?php endif; ?>
     </div>
    </section>
    <?php endif; ?>
 
-</div> <!-- End main page div -->
-
 <?php endif; ?>
 
-<!-- MODALS (Bootstrap) -->
-<!-- Modal: Record Pump Reading -->
-<div class="modal fade" id="modalRecordReading" tabindex="-1"></div>
-
-<!-- Modal: Record Delivery -->
-<div class="modal fade" id="modalRecordDelivery" tabindex="-1"></div>
-
-<!-- Modal: Record Adjustment -->
-<div class="modal fade" id="modalRecordAdjustment" tabindex="-1"></div>
-
-<!-- Modal: Run Reconciliation -->
-<div class="modal fade" id="modalRunReconciliation" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Run Reconciliation</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="post">
-        <input type="hidden" name="action" value="run_reconciliation">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Reconciliation Date *</label>
-            <input type="date" name="reconciliation_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Fuel Type *</label>
-            <select name="fuel_type" class="form-control" required>
-              <option value="">-- Select Fuel --</option>
-              <option value="Diesel">Diesel</option>
-              <option value="Gasoline">Gasoline</option>
-              <option value="Premium">Premium</option>
-            </select>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Physical Stock (L) *</label>
-            <input type="number" step="0.01" name="physical_stock" class="form-control" placeholder="0.00" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Notes</label>
-            <textarea name="notes" class="form-control" rows="2"></textarea>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Run Reconciliation</button>
-        </div>
-      </form>
+<!-- MODALS -->
+<!-- Placeholder modals for dynamic content -->
+<div class="modal" id="modalRecordReading"></div>
+<div class="modal" id="modalRecordDelivery"></div>
+<div class="modal" id="modalRecordAdjustment"></div>
+<div class="modal" id="modalVerifyReading">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="card-title">Verify Pump Reading</div>
+      <button type="button" class="close" onclick="this.closest('.modal').classList.remove('show')">&times;</button>
     </div>
+
+    <!-- Reading details (populated by JS) -->
+    <div id="verifyReadingDetails" style="padding:16px;"></div>
+
+    <form method="post" id="verifyReadingForm">
+      <input type="hidden" name="action" value="verify_reading">
+      <input type="hidden" name="id" id="verifyReadingId">
+
+      <div style="padding:0 16px;">
+        <label class="pay-label">Verification Status *</label>
+        <div style="display:flex;gap:20px;margin:8px 0 16px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Verified" checked onchange="toggleVerifyBtn()">
+            <span class="fuel-badge verified">Verified</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Rejected" onchange="toggleVerifyBtn()">
+            <span class="fuel-badge rejected">Rejected</span>
+          </label>
+        </div>
+
+        <div id="rejectReasonWrap" style="display:none;margin-bottom:12px;">
+          <label class="pay-label">Reason for Rejection *</label>
+          <select class="select" name="rejection_reason" id="rejectReasonSelect" style="width:100%;">
+            <option value="">Select reason...</option>
+            <option value="Incorrect Reading">Incorrect meter reading</option>
+            <option value="Negative Sales">Negative sales calculation</option>
+            <option value="Incomplete Information">Incomplete information provided</option>
+            <option value="Other">Other (specify in notes)</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label class="pay-label">Manager Notes</label>
+          <textarea class="input" name="notes" id="verifyNotes" rows="3" style="width:100%;resize:vertical;" placeholder="Enter any comments..."></textarea>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="document.getElementById('modalVerifyReading').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary" id="verifySubmitBtn"><i class="fas fa-check"></i> Verify Reading</button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- Modal: Verify Delivery -->
+<div class="modal" id="modalVerifyDelivery">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="card-title">Verify Delivery</div>
+      <button type="button" class="close" onclick="this.closest('.modal').classList.remove('show')">&times;</button>
+    </div>
+
+    <div id="verifyDeliveryDetails" style="padding:16px;"></div>
+
+    <form method="post" id="verifyDeliveryForm">
+      <input type="hidden" name="action" value="verify_delivery">
+      <input type="hidden" name="id" id="verifyDeliveryId">
+      <input type="hidden" name="fuel_type" id="verifyDeliveryFuelType">
+
+      <div style="padding:0 16px;">
+        <label class="pay-label">Verification Status *</label>
+        <div style="display:flex;gap:20px;margin:8px 0 16px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Finalized" checked onchange="toggleDeliveryBtn()">
+            <span class="fuel-badge finalized">Finalized</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Rejected" onchange="toggleDeliveryBtn()">
+            <span class="fuel-badge rejected">Rejected</span>
+          </label>
+        </div>
+
+        <div id="deliveryRejectReasonWrap" style="display:none;margin-bottom:12px;">
+          <label class="pay-label">Reason for Rejection *</label>
+          <select class="select" name="rejection_reason" id="deliveryRejectReasonSelect" style="width:100%;">
+            <option value="">Select reason...</option>
+            <option value="Incorrect Volume">Incorrect volume received</option>
+            <option value="Wrong Fuel Type">Wrong fuel type delivered</option>
+            <option value="Quality Issue">Fuel quality issue</option>
+            <option value="Documentation Missing">Missing documentation</option>
+            <option value="Other">Other (specify in notes)</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label class="pay-label">Manager Notes</label>
+          <textarea class="input" name="notes" id="verifyDeliveryNotes" rows="3" style="width:100%;resize:vertical;" placeholder="Enter any comments..."></textarea>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="document.getElementById('modalVerifyDelivery').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary" id="verifyDeliverySubmitBtn"><i class="fas fa-check"></i> Finalize Delivery</button>
+      </div>
+    </form>
   </div>
 </div>
 
-<!-- Verification/Approval Modals -->
-<div class="modal fade" id="modalVerifyReading" tabindex="-1"></div>
-<div class="modal fade" id="modalVerifyDelivery" tabindex="-1"></div>
-<div class="modal fade" id="modalApproveAdjustment" tabindex="-1"></div>
-<div class="modal fade" id="modalInvestigateVariance" tabindex="-1"></div>
-
-<!-- Pump Management Modals -->
-<!-- Modal: Add Pump -->
-<div class="modal fade" id="modalAddPump" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Add New Pump</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="post">
-        <input type="hidden" name="action" value="add_pump">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Pump Number *</label>
-            <input type="text" name="pump_number" class="form-control" placeholder="e.g., 1, 2, 3" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Status *</label>
-            <div>
-              <label class="form-check">
-                <input type="radio" name="status" value="active" class="form-check-input" checked> Active
-              </label>
-              <label class="form-check">
-                <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
-              </label>
-            </div>
-          </div>
-          <p style="color: #666; font-size: 12px;">
-            <i class="fas fa-info-circle"></i> After creating the pump, you'll add nozzles to this pump.
-          </p>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create Pump</button>
-        </div>
-      </form>
+<!-- Modal: Approve Adjustment -->
+<div class="modal" id="modalApproveAdjustment">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="card-title">Approve Adjustment</div>
+      <button type="button" class="close" onclick="this.closest('.modal').classList.remove('show')">&times;</button>
     </div>
+
+    <div id="approveAdjustmentDetails" style="padding:16px;"></div>
+
+    <form method="post" id="approveAdjustmentForm">
+      <input type="hidden" name="action" value="approve_adjustment">
+      <input type="hidden" name="id" id="approveAdjustmentId">
+
+      <div style="padding:0 16px;">
+        <label class="pay-label">Approval Decision *</label>
+        <div style="display:flex;gap:20px;margin:8px 0 16px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Approved" checked onchange="toggleAdjustmentBtn()">
+            <span class="fuel-badge verified">Approved</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Rejected" onchange="toggleAdjustmentBtn()">
+            <span class="fuel-badge rejected">Rejected</span>
+          </label>
+        </div>
+
+        <div id="adjustmentRejectReasonWrap" style="display:none;margin-bottom:12px;">
+          <label class="pay-label">Reason for Rejection *</label>
+          <select class="select" name="rejection_reason" id="adjustmentRejectReasonSelect" style="width:100%;">
+            <option value="">Select reason...</option>
+            <option value="Unsupported Reason">Unsupported adjustment reason</option>
+            <option value="Incorrect Volume">Incorrect volume amount</option>
+            <option value="Duplicate Entry">Duplicate adjustment entry</option>
+            <option value="Insufficient Evidence">Insufficient supporting evidence</option>
+            <option value="Other">Other (specify in notes)</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label class="pay-label">Manager Notes</label>
+          <textarea class="input" name="notes" id="approveAdjustmentNotes" rows="3" style="width:100%;resize:vertical;" placeholder="Enter any comments..."></textarea>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="document.getElementById('modalApproveAdjustment').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary" id="approveAdjustmentSubmitBtn"><i class="fas fa-check"></i> Approve Adjustment</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Investigate Variance -->
+<div class="modal" id="modalInvestigateVariance">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="card-title">Investigate Variance</div>
+      <button type="button" class="close" onclick="this.closest('.modal').classList.remove('show')">&times;</button>
+    </div>
+
+    <div id="investigateVarianceDetails" style="padding:16px;"></div>
+
+    <form method="post" id="investigateVarianceForm">
+      <input type="hidden" name="action" value="investigate_variance">
+      <input type="hidden" name="id" id="investigateVarianceId">
+
+      <div style="padding:0 16px;">
+        <label class="pay-label">Investigation Status *</label>
+        <div style="display:flex;gap:20px;margin:8px 0 16px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Under Investigation" checked onchange="toggleVarianceBtn()">
+            <span class="fuel-badge investigating">Under Investigation</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="status" value="Resolved" onchange="toggleVarianceBtn()">
+            <span class="fuel-badge resolved">Resolved</span>
+          </label>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label class="pay-label">Root Cause</label>
+          <select class="select" name="root_cause" id="varianceRootCause" style="width:100%;">
+            <option value="">Select root cause...</option>
+            <option value="Measurement Error">Measurement Error</option>
+            <option value="Recording Error">Recording Error</option>
+            <option value="Equipment Malfunction">Equipment Malfunction</option>
+            <option value="Fuel Loss">Fuel Loss / Leakage</option>
+            <option value="Process Issue">Process Issue</option>
+            <option value="Environmental">Environmental Factor</option>
+            <option value="Other">Other (specify in notes)</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label class="pay-label">Investigation Notes *</label>
+          <textarea class="input" name="notes" id="investigateVarianceNotes" rows="3" style="width:100%;resize:vertical;" placeholder="Describe findings from the investigation..." required></textarea>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label class="pay-label">Corrective Actions</label>
+          <textarea class="input" name="corrective_actions" id="varianceCorrectiveActions" rows="2" style="width:100%;resize:vertical;" placeholder="What steps will be taken to prevent recurrence..."></textarea>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="document.getElementById('modalInvestigateVariance').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary" id="investigateVarianceSubmitBtn"><i class="fas fa-search"></i> Save Investigation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Run Reconciliation -->
+<div class="modal" id="modalRunReconciliation">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Run Reconciliation</div>
+      <button class="icon-btn" onclick="document.getElementById('modalRunReconciliation').classList.remove('show')">&times;</button>
+    </div>
+    <form method="post">
+      <input type="hidden" name="action" value="run_reconciliation">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Reconciliation Date *</label>
+          <input class="input" type="date" name="reconciliation_date" value="<?php echo date('Y-m-d'); ?>" required>
+        </div>
+        <div>
+          <label class="pay-label">Fuel Type *</label>
+          <select class="select" name="fuel_type" required>
+            <option value="">-- Select Fuel --</option>
+            <option value="Diesel">Diesel</option>
+            <option value="Gasoline">Gasoline</option>
+            <option value="Premium">Premium</option>
+          </select>
+        </div>
+        <div>
+          <label class="pay-label">Physical Stock (L) *</label>
+          <input class="input" type="number" step="0.01" name="physical_stock" placeholder="0.00" required>
+        </div>
+      </div>
+      <div class="pay-section">
+        <label class="pay-label">Notes (optional)</label>
+        <input class="input" name="notes" placeholder="Any remarks...">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('modalRunReconciliation').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary">Run Reconciliation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Approve Reconciliation -->
+<div class="modal" id="modalApproveReconciliation">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Approve Reconciliation</div>
+      <button class="icon-btn" onclick="document.getElementById('modalApproveReconciliation').classList.remove('show')">&times;</button>
+    </div>
+    <form method="post">
+      <input type="hidden" name="action" value="approve_reconciliation">
+      <input type="hidden" name="recon_id" id="approveReconId">
+      <div style="padding:16px;">
+        <div style="margin-bottom:16px;">
+          <strong>Fuel Type:</strong> <span id="approveFuelType"></span><br>
+          <strong>Date:</strong> <span id="approveReconDate"></span>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="pay-label">Manager Notes (Optional)</label>
+          <textarea class="input" name="manager_notes" rows="3" style="width:100%;resize:vertical;" placeholder="Add any notes about this reconciliation..."></textarea>
+        </div>
+        <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:12px;margin-bottom:16px;">
+          <strong style="color:#0369a1;"><i class="fas fa-info-circle"></i> Next Step:</strong>
+          <p style="color:#0369a1;font-size:13px;margin:4px 0 0 0;">After approval, an Admin will review and finalize this reconciliation with a password lock.</p>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="document.getElementById('modalApproveReconciliation').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary"><i class="fas fa-check"></i> Approve Reconciliation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Add Pump -->
+<div class="modal" id="modalAddPump">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Add New Pump</div>
+      <button class="icon-btn" onclick="document.getElementById('modalAddPump').classList.remove('show')">&times;</button>
+    </div>
+    <form method="post">
+      <input type="hidden" name="action" value="add_pump">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Pump Number *</label>
+          <input class="input" type="text" name="pump_number" placeholder="e.g., 1, 2, 3" required>
+        </div>
+        <div>
+          <label class="pay-label">Status *</label>
+          <div style="display:flex;gap:16px;padding-top:6px;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="active" checked> Active
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="inactive"> Inactive
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="pay-section">
+        <span class="muted" style="font-size:12px;"><i class="fas fa-info-circle"></i> After creating the pump, you can add nozzles to it.</span>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('modalAddPump').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary">Create Pump</button>
+      </div>
+    </form>
   </div>
 </div>
 
 <!-- Modal: Edit Pump -->
-<div class="modal fade" id="modalEditPump" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Edit Pump</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="post">
-        <input type="hidden" name="action" value="edit_pump">
-        <input type="hidden" name="pump_id" id="editPumpId">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Pump Number</label>
-            <input type="text" id="editPumpNumber" class="form-control" disabled>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Status *</label>
-            <div>
-              <label class="form-check">
-                <input type="radio" name="status" value="active" class="form-check-input"> Active
-              </label>
-              <label class="form-check">
-                <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
-              </label>
-            </div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Calibration Value (Optional)</label>
-            <input type="number" name="calibration_value" id="editCalibrationValue" class="form-control" step="0.000001" placeholder="e.g., 0.05 for variance tracking">
-            <small style="color: #666;">Used for variance tracking in fuel reconciliation. Leave empty if not needed.</small>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Update Pump</button>
-        </div>
-      </form>
+<div class="modal" id="modalEditPump">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Edit Pump</div>
+      <button class="icon-btn" onclick="document.getElementById('modalEditPump').classList.remove('show')">&times;</button>
     </div>
+    <form method="post">
+      <input type="hidden" name="action" value="edit_pump">
+      <input type="hidden" name="pump_id" id="editPumpId">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Pump Number</label>
+          <input class="input" type="text" id="editPumpNumber" disabled>
+        </div>
+        <div>
+          <label class="pay-label">Status *</label>
+          <div style="display:flex;gap:16px;padding-top:6px;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="active"> Active
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="inactive"> Inactive
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('modalEditPump').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary">Update Pump</button>
+      </div>
+    </form>
   </div>
 </div>
 
-<!-- Modal: Delete Pump (Confirmation) -->
-<div class="modal fade" id="modalDeletePump" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Delete Pump</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<!-- Modal: Delete Pump -->
+<div class="modal" id="modalDeletePump">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Delete Pump</div>
+      <button class="icon-btn" onclick="document.getElementById('modalDeletePump').classList.remove('show')">&times;</button>
+    </div>
+    <form method="post">
+      <input type="hidden" name="action" value="delete_pump">
+      <input type="hidden" name="pump_id" id="deletePumpId">
+      <div class="pay-section">
+        <p><i class="fas fa-exclamation-triangle" style="color:var(--danger);"></i> Are you sure you want to delete <strong id="deletePumpName"></strong>?</p>
+        <p class="muted">This action cannot be undone.</p>
       </div>
-      <form method="post">
-        <input type="hidden" name="action" value="delete_pump">
-        <input type="hidden" name="pump_id" id="deletePumpId">
-        <div class="modal-body">
-          <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle"></i> Are you sure you want to delete <strong id="deletePumpName"></strong>?
-          </div>
-          <p>This action cannot be undone.</p>
-        </div>
-        <div class="modal-footer">
-           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-           <button type="submit" class="btn btn-danger">Delete Pump</button>
-         </div>
-       </form>
-     </div>
-   </div>
- </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('modalDeletePump').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary" style="background:var(--danger);">Delete Pump</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- Modal: Add Nozzle -->
-<div class="modal fade" id="modalAddNozzle" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Add Nozzle to Pump <span id="addNozzlePumpNumber"></span></h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="post">
-        <input type="hidden" name="action" value="add_nozzle">
-        <input type="hidden" name="pump_id" id="addNozzlePumpId">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Nozzle Number *</label>
-            <input type="text" name="nozzle_number" class="form-control" placeholder="e.g., 1, 2, 3, A, B, C" required>
-          </div>
-           <div class="mb-3">
-             <label class="form-label">Fuel Type *</label>
-             <select name="fuel_type_id" id="addNozzleFuelTypeId" class="form-control" required>
-               <option value="">-- Select Fuel Type --</option>
-             </select>
-           </div>
-          <div class="mb-3">
-            <label class="form-label">Status *</label>
-            <div>
-              <label class="form-check">
-                <input type="radio" name="status" value="active" class="form-check-input" checked> Active
-              </label>
-              <label class="form-check">
-                <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Add Nozzle</button>
-        </div>
-      </form>
+<div class="modal" id="modalAddNozzle">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Add Nozzle to <span id="addNozzlePumpNumber"></span></div>
+      <button class="icon-btn" onclick="document.getElementById('modalAddNozzle').classList.remove('show')">&times;</button>
     </div>
+    <form method="post">
+      <input type="hidden" name="action" value="add_nozzle">
+      <input type="hidden" name="pump_id" id="addNozzlePumpId">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Nozzle Number *</label>
+          <input class="input" type="text" name="nozzle_number" placeholder="e.g., 1, 2, A, B" required>
+        </div>
+        <div>
+          <label class="pay-label">Fuel Type *</label>
+          <select class="select" name="fuel_type_id" id="addNozzleFuelTypeId" required>
+            <option value="">-- Select Fuel Type --</option>
+          </select>
+        </div>
+        <div>
+          <label class="pay-label">Status *</label>
+          <div style="display:flex;gap:16px;padding-top:6px;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="active" checked> Active
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="inactive"> Inactive
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('modalAddNozzle').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary">Add Nozzle</button>
+      </div>
+    </form>
   </div>
 </div>
 
 <!-- Modal: Edit Nozzle -->
-<div class="modal fade" id="modalEditNozzle" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Edit Nozzle</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="post">
-        <input type="hidden" name="action" value="edit_nozzle">
-        <input type="hidden" name="nozzle_id" id="editNozzleId">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Nozzle Number *</label>
-            <input type="text" name="nozzle_number" id="editNozzleNumber" class="form-control" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Fuel Type *</label>
-            <select name="fuel_type_id" id="editNozzleFuelTypeId" class="form-control" required>
-              <option value="">-- Select Fuel Type --</option>
-            </select>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Status *</label>
-            <div>
-              <label class="form-check">
-                <input type="radio" name="status" value="active" class="form-check-input"> Active
-              </label>
-              <label class="form-check">
-                <input type="radio" name="status" value="inactive" class="form-check-input"> Inactive
-              </label>
-            </div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Notes</label>
-            <textarea name="notes" id="editNozzleNotes" class="form-control" placeholder="Optional notes about this nozzle" rows="3"></textarea>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Update Nozzle</button>
-        </div>
-      </form>
+<div class="modal" id="modalEditNozzle">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Edit Nozzle</div>
+      <button class="icon-btn" onclick="document.getElementById('modalEditNozzle').classList.remove('show')">&times;</button>
     </div>
+    <form method="post">
+      <input type="hidden" name="action" value="edit_nozzle">
+      <input type="hidden" name="nozzle_id" id="editNozzleId">
+      <div class="form-grid">
+        <div>
+          <label class="pay-label">Nozzle Number *</label>
+          <input class="input" type="text" name="nozzle_number" id="editNozzleNumber" required>
+        </div>
+        <div>
+          <label class="pay-label">Fuel Type *</label>
+          <select class="select" name="fuel_type_id" id="editNozzleFuelTypeId" required>
+            <option value="">-- Select Fuel Type --</option>
+          </select>
+        </div>
+        <div>
+          <label class="pay-label">Status *</label>
+          <div style="display:flex;gap:16px;padding-top:6px;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="active"> Active
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="status" value="inactive"> Inactive
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="pay-section">
+        <label class="pay-label">Notes (optional)</label>
+        <input class="input" name="notes" id="editNozzleNotes" placeholder="Optional notes about this nozzle">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('modalEditNozzle').classList.remove('show')">Cancel</button>
+        <button type="submit" class="btn primary">Update Nozzle</button>
+      </div>
+    </form>
   </div>
 </div>
-
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<style>
-.variance-positive { color: #28a745; font-weight: bold; }
-.variance-negative { color: #dc3545; font-weight: bold; }
-</style>
 
 <script src="../assets/js/data_helper.js"></script>
 
 <script>
-// Tab switching - more robust version
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded, initializing tabs...');
 
-     // Load fuel types dynamically from backend
-     DataHelper.populateFuelTypes('fuel_type_delivery', '-- Select Fuel Type --')
-         .then(() => DataHelper.populateFuelTypes('fuel_type_adjustment', '-- Select Fuel --'))
-         .then(() => DataHelper.populateFuelTypes('addNozzleFuelTypeId', '-- Select Fuel Type --'))
-         .then(() => DataHelper.populateFuelTypes('editNozzleFuelTypeId', '-- Select Fuel Type --'))
-         .then(() => DataHelper.populateShifts('shift_delivery', '-- Select Shift --'))
-         .then(() => DataHelper.populateAdjustmentTypes('adjustment_type_fuel', '-- Select Type --'))
-         .then(() => console.log('Fuel types, shifts, and adjustment types loaded'))
-         .catch(error => {
-             console.error('Failed to load fuel types/shifts/adjustment types:', error);
-             DataHelper.showError('Failed to load fuel types/shifts/adjustment types. Please refresh.');
-         });
+    // Load fuel types dynamically from backend
+    DataHelper.populateFuelTypes('fuel_type_delivery', '-- Select Fuel Type --')
+        .then(() => DataHelper.populateFuelTypes('fuel_type_adjustment', '-- Select Fuel --'))
+        .then(() => DataHelper.populateFuelTypes('addNozzleFuelTypeId', '-- Select Fuel Type --'))
+        .then(() => DataHelper.populateFuelTypes('editNozzleFuelTypeId', '-- Select Fuel Type --'))
+        .then(() => DataHelper.populateShifts('shift_delivery', '-- Select Shift --'))
+        .then(() => DataHelper.populateAdjustmentTypes('adjustment_type_fuel', '-- Select Type --'))
+        .catch(error => console.error('Failed to load fuel types/shifts/adjustment types:', error));
+
+    // ── Tab switching (data-fueltab) ──
+    const fuelTabs = document.querySelectorAll('.tab[data-fueltab]');
+    const tabKeys = ['pump','delivery','adjustment','myentries','operations','reconciliation','variances','history','manage_pumps'];
+
+    // Companion sections that show/hide with their parent tab
+    const tabCompanions = {
+        'pump': ['tab-pump-readings'],
+        'delivery': ['tab-delivery-recent'],
+        'adjustment': ['tab-adjustment-recent']
+    };
+
+    function showFuelTab(key) {
+        fuelTabs.forEach(b => b.classList.toggle('active', b.dataset.fueltab === key));
+        tabKeys.forEach(k => {
+            const panel = document.getElementById('tab-' + k);
+            if (panel) panel.classList.toggle('hidden', k !== key);
+            // Toggle companion sections
+            const companions = tabCompanions[k] || [];
+            companions.forEach(cid => {
+                const el = document.getElementById(cid);
+                if (el) el.classList.toggle('hidden', k !== key);
+            });
+        });
+    }
+
+    fuelTabs.forEach(btn => btn.addEventListener('click', () => showFuelTab(btn.dataset.fueltab)));
 
     // Show correct tab based on URL parameter
     const urlParams = new URLSearchParams(window.location.search);
     const activeTab = urlParams.get('tab') || 'pump';
-    console.log('Active tab from URL:', activeTab);
-    
-    // Hide all panels and remove active from tabs
-    document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
-    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-    
-    // Show the correct tab
-    const targetTab = document.querySelector(`[data-tab="${activeTab}"]`);
-    const targetPanel = document.getElementById(`tab-${activeTab}`);
-    
-    console.log('Target tab:', targetTab);
-    console.log('Target panel:', targetPanel);
-    
-    if (targetTab && targetPanel) {
-        targetTab.classList.add('active');
-        targetPanel.classList.remove('hidden');
-        console.log('Tab activated successfully');
-    }
-    
-    // Tab click handlers
-    const tabButtons = document.querySelectorAll('.tab');
-    console.log('Found tab buttons:', tabButtons.length);
-    
-    tabButtons.forEach(btn => {
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            console.log('Tab clicked:', btn.dataset.tab);
-            
-            // Remove active from all tabs
-            document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-            // Hide all panels
-            document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
-            
-            // Activate clicked tab and show its panel
-            btn.classList.add('active');
-            const tabName = btn.dataset.tab;
-            const panel = document.getElementById(`tab-${tabName}`);
-            
-            if (panel) {
-                panel.classList.remove('hidden');
-                console.log('Panel shown:', tabName);
-            }
-        });
-        
-        // Add hover effect
-        btn.addEventListener('mouseenter', function() {
-            btn.style.transform = 'translateY(-2px)';
-        });
-        
-        btn.addEventListener('mouseleave', function() {
-            btn.style.transform = 'translateY(0)';
-        });
-    });
-    
-    // Auto-calculate sales liters
+    showFuelTab(activeTab);
+
+    // ── Auto-calculate sales liters ──
     function calculateSales() {
         const prev = parseFloat(document.querySelector('input[name="previous_reading"]')?.value) || 0;
         const curr = parseFloat(document.querySelector('input[name="current_reading"]')?.value) || 0;
-        const calib = parseFloat(document.querySelector('input[name="calibration"]')?.value) || 0;
-        const sales = curr - prev - calib;
-        if (document.getElementById('salesCalc')) {
-            document.getElementById('salesCalc').value = sales.toFixed(2) + ' liters';
-        }
+        const sales = curr - prev;
+        const el = document.getElementById('salesCalc');
+        if (el) el.value = sales.toFixed(2) + ' liters';
     }
-    
-    // Add event listeners for sales calculation
-    const inputs = ['previous_reading', 'current_reading', 'calibration'];
-    inputs.forEach(name => {
-        const input = document.querySelector(`input[name="${name}"]`);
-        if (input) {
-            input.addEventListener('input', calculateSales);
-        }
+
+    ['previous_reading', 'current_reading'].forEach(name => {
+        const input = document.querySelector('input[name="' + name + '"]');
+        if (input) input.addEventListener('input', calculateSales);
     });
-    
-    // Fetch previous reading when pump is selected
+
+    // ── Fetch previous reading when pump is selected ──
     const pumpSelect = document.getElementById('pump_id');
     if (pumpSelect) {
         pumpSelect.addEventListener('change', function() {
             const pumpId = this.value;
-            const previousReadingInput = document.getElementById('previous_reading');
+            const prevInput = document.getElementById('previous_reading');
             const syncIcon = document.getElementById('syncIcon');
-            
-            if (pumpId && previousReadingInput) {
-                // Show loading state
-                previousReadingInput.value = 'Loading...';
-                if (syncIcon) {
-                    syncIcon.style.display = 'inline';
-                    syncIcon.classList.add('fa-spin');
-                }
-                
-                fetch(`fuel_staff.php?action=get_previous_reading&pump_id=${pumpId}`)
-                    .then(response => response.json())
+
+            if (pumpId && prevInput) {
+                prevInput.value = 'Loading...';
+                if (syncIcon) { syncIcon.style.display = 'inline'; syncIcon.classList.add('fa-spin'); }
+
+                fetch('fuel_staff.php?action=get_previous_reading&pump_id=' + pumpId)
+                    .then(r => r.json())
                     .then(data => {
-                        console.log('Previous reading response:', data);
-                        if (data.success) {
-                            const prevReading = parseFloat(data.previous_reading);
-                            console.log('Setting previous reading to:', prevReading);
-                            previousReadingInput.value = prevReading.toFixed(2);
-                            // Recalculate sales with new previous reading
-                            calculateSales();
-                        } else {
-                            previousReadingInput.value = '0.00';
-                            console.error('Failed to fetch previous reading:', data.error);
-                        }
-                        // Hide loading indicator
-                        if (syncIcon) {
-                            syncIcon.style.display = 'none';
-                            syncIcon.classList.remove('fa-spin');
-                        }
+                        prevInput.value = data.success ? parseFloat(data.previous_reading).toFixed(2) : '0.00';
+                        calculateSales();
+                        if (syncIcon) { syncIcon.style.display = 'none'; syncIcon.classList.remove('fa-spin'); }
                     })
-                    .catch(error => {
-                        previousReadingInput.value = '0.00';
-                        console.error('Error fetching previous reading:', error);
-                        // Hide loading indicator
-                        if (syncIcon) {
-                            syncIcon.style.display = 'none';
-                            syncIcon.classList.remove('fa-spin');
-                        }
+                    .catch(() => {
+                        prevInput.value = '0.00';
+                        if (syncIcon) { syncIcon.style.display = 'none'; syncIcon.classList.remove('fa-spin'); }
                     });
-            } else if (previousReadingInput) {
-                previousReadingInput.value = '0.00';
+            } else if (prevInput) {
+                prevInput.value = '0.00';
             }
         });
     }
-    
-    // Initial calculation
+
     calculateSales();
+
+    // ── Modal backdrop click to close ──
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('click', function(e) {
+            if (e.target === this) this.classList.remove('show');
+        });
+    });
+
+    // ── Escape key closes all modals ──
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal.show').forEach(m => m.classList.remove('show'));
+        }
+    });
 });
 
-// Filter Functions
+// ── Filter Functions ──
 function applyFilters() {
     const date = document.getElementById('filterDate')?.value;
     const shift = document.getElementById('filterShift')?.value;
     const status = document.getElementById('filterStatus')?.value;
-    
+
     let url = 'fuel_staff.php?tab=operations';
     if (date) url += '&date=' + encodeURIComponent(date);
     if (shift) url += '&shift=' + encodeURIComponent(shift);
     if (status) url += '&status=' + encodeURIComponent(status);
-    
+
     window.location.href = url;
 }
 
@@ -2752,126 +2752,474 @@ function resetFilters() {
     window.location.href = 'fuel_staff.php?tab=operations';
 }
 
-// Modal functions (placeholder implementations)
-function openVerifyReadingModal(id) {
-    alert('Verify reading modal for ID ' + id);
+// ── Helper: close modal ──
+function closeModal(id) {
+    document.getElementById(id).classList.remove('show');
 }
 
-function openVerifyDeliveryModal(id) {
-    alert('Verify delivery modal for ID ' + id);
+// ── Verify Reading Modal ──
+function openVerifyReadingModal(id, date, pump, shift, prev, curr, sales, staff) {
+    document.getElementById('verifyReadingId').value = id;
+
+    // Build details summary
+    const details = document.getElementById('verifyReadingDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Pump</label><div class="input" style="background:var(--bg);">' + pump + '</div></div>' +
+            '<div><label class="pay-label">Shift</label><div class="input" style="background:var(--bg);">' + shift + '</div></div>' +
+            '<div><label class="pay-label">Staff</label><div class="input" style="background:var(--bg);">' + staff + '</div></div>' +
+            '<div><label class="pay-label">Previous</label><div class="input" style="background:var(--bg);">' + parseFloat(prev).toFixed(2) + '</div></div>' +
+            '<div><label class="pay-label">Current</label><div class="input" style="background:var(--bg);">' + parseFloat(curr).toFixed(2) + '</div></div>' +
+            '<div><label class="pay-label">Sales (L)</label><div class="input" style="background:var(--bg);font-weight:600;">' + parseFloat(sales).toFixed(2) + ' L</div></div>' +
+        '</div>';
+
+    // Reset form state
+    document.querySelector('#verifyReadingForm input[name="status"][value="Verified"]').checked = true;
+    document.getElementById('rejectReasonWrap').style.display = 'none';
+    document.getElementById('rejectReasonSelect').value = '';
+    document.getElementById('verifyNotes').value = '';
+    const btn = document.getElementById('verifySubmitBtn');
+    btn.innerHTML = '<i class="fas fa-check"></i> Verify Reading';
+    btn.style.background = '';
+
+    document.getElementById('modalVerifyReading').classList.add('show');
 }
 
-function openApproveAdjustmentModal(id) {
-    alert('Approve adjustment modal for ID ' + id);
+function toggleVerifyBtn() {
+    const status = document.querySelector('#verifyReadingForm input[name="status"]:checked').value;
+    const rejectWrap = document.getElementById('rejectReasonWrap');
+    const btn = document.getElementById('verifySubmitBtn');
+
+    if (status === 'Rejected') {
+        rejectWrap.style.display = 'block';
+        btn.innerHTML = '<i class="fas fa-times"></i> Reject Reading';
+        btn.style.background = 'var(--red,#c62828)';
+    } else {
+        rejectWrap.style.display = 'none';
+        btn.innerHTML = '<i class="fas fa-check"></i> Verify Reading';
+        btn.style.background = '';
+    }
 }
 
-function viewReadingDetails(id) {
-    alert('View reading details for ID ' + id);
+// Form submit handler for verify reading
+document.getElementById('verifyReadingForm')?.addEventListener('submit', function(e) {
+    const status = document.querySelector('#verifyReadingForm input[name="status"]:checked')?.value;
+    const reason = document.getElementById('rejectReasonSelect').value;
+
+    if (status === 'Rejected' && !reason) {
+        e.preventDefault();
+        alert('Please select a reason for rejection.');
+        return;
+    }
+
+    // Append rejection reason to notes
+    if (status === 'Rejected' && reason) {
+        const notes = document.getElementById('verifyNotes');
+        notes.value = (notes.value ? notes.value + ' ' : '') + '[Reason: ' + reason + ']';
+    }
+});
+
+// ── Verify Delivery Modal ──
+function openVerifyDeliveryModal(id, date, fuelType, supplier, liters, tanker, receiver) {
+    document.getElementById('verifyDeliveryId').value = id;
+    document.getElementById('verifyDeliveryFuelType').value = fuelType;
+
+    const details = document.getElementById('verifyDeliveryDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Fuel Type</label><div class="input" style="background:var(--bg);">' + fuelType + '</div></div>' +
+            '<div><label class="pay-label">Supplier</label><div class="input" style="background:var(--bg);">' + supplier + '</div></div>' +
+            '<div><label class="pay-label">Volume</label><div class="input" style="background:var(--bg);font-weight:600;">' + parseFloat(liters).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div><label class="pay-label">Tanker #</label><div class="input" style="background:var(--bg);">' + (tanker || '&mdash;') + '</div></div>' +
+            '<div><label class="pay-label">Received By</label><div class="input" style="background:var(--bg);">' + (receiver || '&mdash;') + '</div></div>' +
+        '</div>';
+
+    // Reset form state
+    document.querySelector('#verifyDeliveryForm input[name="status"][value="Finalized"]').checked = true;
+    document.getElementById('deliveryRejectReasonWrap').style.display = 'none';
+    document.getElementById('deliveryRejectReasonSelect').value = '';
+    document.getElementById('verifyDeliveryNotes').value = '';
+    const btn = document.getElementById('verifyDeliverySubmitBtn');
+    btn.innerHTML = '<i class="fas fa-check"></i> Finalize Delivery';
+    btn.style.background = '';
+
+    document.getElementById('modalVerifyDelivery').classList.add('show');
 }
 
-function viewDeliveryDetails(id) {
-    alert('View delivery details for ID ' + id);
+function toggleDeliveryBtn() {
+    const status = document.querySelector('#verifyDeliveryForm input[name="status"]:checked').value;
+    const rejectWrap = document.getElementById('deliveryRejectReasonWrap');
+    const btn = document.getElementById('verifyDeliverySubmitBtn');
+
+    if (status === 'Rejected') {
+        rejectWrap.style.display = 'block';
+        btn.innerHTML = '<i class="fas fa-times"></i> Reject Delivery';
+        btn.style.background = 'var(--red,#c62828)';
+    } else {
+        rejectWrap.style.display = 'none';
+        btn.innerHTML = '<i class="fas fa-check"></i> Finalize Delivery';
+        btn.style.background = '';
+    }
 }
 
-function viewAdjustmentDetails(id) {
-    alert('View adjustment details for ID ' + id);
+// Form submit handler for verify delivery
+document.getElementById('verifyDeliveryForm')?.addEventListener('submit', function(e) {
+    const status = document.querySelector('#verifyDeliveryForm input[name="status"]:checked')?.value;
+    const reason = document.getElementById('deliveryRejectReasonSelect').value;
+
+    if (status === 'Rejected' && !reason) {
+        e.preventDefault();
+        alert('Please select a reason for rejection.');
+        return;
+    }
+
+    if (status === 'Rejected' && reason) {
+        const notes = document.getElementById('verifyDeliveryNotes');
+        notes.value = (notes.value ? notes.value + ' ' : '') + '[Reason: ' + reason + ']';
+    }
+});
+
+// ── Approve Adjustment Modal ──
+function openApproveAdjustmentModal(id, date, fuelType, adjType, liters, reason, staff) {
+    document.getElementById('approveAdjustmentId').value = id;
+
+    const details = document.getElementById('approveAdjustmentDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const isLoss = adjType.toLowerCase() === 'loss';
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Fuel Type</label><div class="input" style="background:var(--bg);">' + fuelType + '</div></div>' +
+            '<div><label class="pay-label">Type</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + adjType.toLowerCase() + '">' + adjType + '</span></div></div>' +
+            '<div><label class="pay-label">Volume</label><div class="input ' + (isLoss ? 'variance-negative' : 'variance-positive') + '" style="background:var(--bg);font-weight:600;">' + (isLoss ? '-' : '+') + parseFloat(liters).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div class="pay-section"><label class="pay-label">Reason</label><div class="input" style="background:var(--bg);">' + (reason || '&mdash;') + '</div></div>' +
+            '<div><label class="pay-label">Submitted By</label><div class="input" style="background:var(--bg);">' + (staff || '&mdash;') + '</div></div>' +
+        '</div>';
+
+    // Reset form state
+    document.querySelector('#approveAdjustmentForm input[name="status"][value="Approved"]').checked = true;
+    document.getElementById('adjustmentRejectReasonWrap').style.display = 'none';
+    document.getElementById('adjustmentRejectReasonSelect').value = '';
+    document.getElementById('approveAdjustmentNotes').value = '';
+    const btn = document.getElementById('approveAdjustmentSubmitBtn');
+    btn.innerHTML = '<i class="fas fa-check"></i> Approve Adjustment';
+    btn.style.background = '';
+
+    document.getElementById('modalApproveAdjustment').classList.add('show');
 }
 
-function viewVarianceDetails(id) {
-    alert('View variance details for ID ' + id);
+function toggleAdjustmentBtn() {
+    const status = document.querySelector('#approveAdjustmentForm input[name="status"]:checked').value;
+    const rejectWrap = document.getElementById('adjustmentRejectReasonWrap');
+    const btn = document.getElementById('approveAdjustmentSubmitBtn');
+
+    if (status === 'Rejected') {
+        rejectWrap.style.display = 'block';
+        btn.innerHTML = '<i class="fas fa-times"></i> Reject Adjustment';
+        btn.style.background = 'var(--red,#c62828)';
+    } else {
+        rejectWrap.style.display = 'none';
+        btn.innerHTML = '<i class="fas fa-check"></i> Approve Adjustment';
+        btn.style.background = '';
+    }
 }
 
-// Pump Management Functions
-function openAddPumpModal() {
-    // Clear the form
-    document.querySelector('#modalAddPump form').reset();
-    // Open modal
-    const modal = new bootstrap.Modal(document.getElementById('modalAddPump'));
-    modal.show();
+// Form submit handler for approve adjustment
+document.getElementById('approveAdjustmentForm')?.addEventListener('submit', function(e) {
+    const status = document.querySelector('#approveAdjustmentForm input[name="status"]:checked')?.value;
+    const reason = document.getElementById('adjustmentRejectReasonSelect').value;
+
+    if (status === 'Rejected' && !reason) {
+        e.preventDefault();
+        alert('Please select a reason for rejection.');
+        return;
+    }
+
+    if (status === 'Rejected' && reason) {
+        const notes = document.getElementById('approveAdjustmentNotes');
+        notes.value = (notes.value ? notes.value + ' ' : '') + '[Reason: ' + reason + ']';
+    }
+});
+
+// ── Investigate Variance Modal ──
+function openInvestigateVarianceModal(id, date, fuelType, expected, actual, variance, variancePct, currentStatus) {
+    document.getElementById('investigateVarianceId').value = id;
+
+    const details = document.getElementById('investigateVarianceDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const vLiters = parseFloat(variance);
+    const vPct = parseFloat(variancePct);
+    const varClass = vLiters > 0 ? 'variance-positive' : 'variance-negative';
+    const varSign = vLiters > 0 ? '+' : '';
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Report Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Fuel Type</label><div class="input" style="background:var(--bg);">' + fuelType + '</div></div>' +
+            '<div><label class="pay-label">Expected Stock</label><div class="input" style="background:var(--bg);">' + parseFloat(expected).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div><label class="pay-label">Actual Stock</label><div class="input" style="background:var(--bg);">' + parseFloat(actual).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div><label class="pay-label">Variance</label><div class="input ' + varClass + '" style="background:var(--bg);font-weight:600;">' + varSign + vLiters.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L (' + varSign + vPct.toFixed(2) + '%)</div></div>' +
+            '<div><label class="pay-label">Current Status</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + (currentStatus === 'Open' ? 'open' : 'investigating') + '">' + currentStatus + '</span></div></div>' +
+        '</div>';
+
+    // Set default status based on current
+    if (currentStatus === 'Open') {
+        document.querySelector('#investigateVarianceForm input[name="status"][value="Under Investigation"]').checked = true;
+    } else {
+        document.querySelector('#investigateVarianceForm input[name="status"][value="Resolved"]').checked = true;
+    }
+    toggleVarianceBtn();
+
+    document.getElementById('varianceRootCause').value = '';
+    document.getElementById('investigateVarianceNotes').value = '';
+    document.getElementById('varianceCorrectiveActions').value = '';
+
+    document.getElementById('modalInvestigateVariance').classList.add('show');
 }
 
-function openEditPumpModal(pumpId, pumpNumber, calibrationValue, status) {
-    // Populate form
+function toggleVarianceBtn() {
+    const status = document.querySelector('#investigateVarianceForm input[name="status"]:checked').value;
+    const btn = document.getElementById('investigateVarianceSubmitBtn');
+
+    if (status === 'Resolved') {
+        btn.innerHTML = '<i class="fas fa-check-circle"></i> Resolve Variance';
+        btn.style.background = 'var(--green,#2e7d32)';
+    } else {
+        btn.innerHTML = '<i class="fas fa-search"></i> Save Investigation';
+        btn.style.background = '';
+    }
+}
+
+// Form submit handler for investigate variance
+document.getElementById('investigateVarianceForm')?.addEventListener('submit', function(e) {
+    const notes = document.getElementById('investigateVarianceNotes').value.trim();
+    if (!notes) {
+        e.preventDefault();
+        alert('Investigation notes are required.');
+        return;
+    }
+});
+
+// ── View Detail Modals (read-only) ──
+function viewReadingDetails(id, date, pump, shift, prev, curr, sales, staff, status) {
+    const details = document.getElementById('verifyReadingDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Pump</label><div class="input" style="background:var(--bg);">' + pump + '</div></div>' +
+            '<div><label class="pay-label">Shift</label><div class="input" style="background:var(--bg);">' + shift + '</div></div>' +
+            '<div><label class="pay-label">Staff</label><div class="input" style="background:var(--bg);">' + staff + '</div></div>' +
+            '<div><label class="pay-label">Previous</label><div class="input" style="background:var(--bg);">' + parseFloat(prev).toFixed(2) + '</div></div>' +
+            '<div><label class="pay-label">Current</label><div class="input" style="background:var(--bg);">' + parseFloat(curr).toFixed(2) + '</div></div>' +
+            '<div><label class="pay-label">Sales (L)</label><div class="input" style="background:var(--bg);font-weight:600;">' + parseFloat(sales).toFixed(2) + ' L</div></div>' +
+            '<div><label class="pay-label">Status</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + status.toLowerCase() + '">' + status + '</span></div></div>' +
+        '</div>';
+
+    // Hide form, show details only
+    document.getElementById('verifyReadingForm').style.display = 'none';
+    document.querySelector('#modalVerifyReading .modal-head .card-title').textContent = 'Reading Details';
+    document.getElementById('modalVerifyReading').classList.add('show');
+
+    // Restore form visibility on close
+    const modal = document.getElementById('modalVerifyReading');
+    const restoreForm = function() {
+        document.getElementById('verifyReadingForm').style.display = '';
+        document.querySelector('#modalVerifyReading .modal-head .card-title').textContent = 'Verify Pump Reading';
+        modal.removeEventListener('click', handleBackdropClick);
+    };
+    const handleBackdropClick = function(e) {
+        if (e.target === modal) { modal.classList.remove('show'); restoreForm(); }
+    };
+    modal.addEventListener('click', handleBackdropClick);
+    // Also override the close button temporarily
+    const closeBtn = modal.querySelector('.modal-head .close');
+    const origOnclick = closeBtn.onclick;
+    closeBtn.onclick = function() { modal.classList.remove('show'); restoreForm(); closeBtn.onclick = origOnclick; };
+}
+
+function viewDeliveryDetails(id, date, fuelType, supplier, liters, tanker, receiver, status) {
+    const details = document.getElementById('verifyDeliveryDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Fuel Type</label><div class="input" style="background:var(--bg);">' + fuelType + '</div></div>' +
+            '<div><label class="pay-label">Supplier</label><div class="input" style="background:var(--bg);">' + supplier + '</div></div>' +
+            '<div><label class="pay-label">Volume</label><div class="input" style="background:var(--bg);font-weight:600;">' + parseFloat(liters).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div><label class="pay-label">Tanker #</label><div class="input" style="background:var(--bg);">' + (tanker || '&mdash;') + '</div></div>' +
+            '<div><label class="pay-label">Received By</label><div class="input" style="background:var(--bg);">' + (receiver || '&mdash;') + '</div></div>' +
+            '<div><label class="pay-label">Status</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + status.toLowerCase() + '">' + status + '</span></div></div>' +
+        '</div>';
+
+    document.getElementById('verifyDeliveryForm').style.display = 'none';
+    document.querySelector('#modalVerifyDelivery .modal-head .card-title').textContent = 'Delivery Details';
+    document.getElementById('modalVerifyDelivery').classList.add('show');
+
+    const modal = document.getElementById('modalVerifyDelivery');
+    const restoreForm = function() {
+        document.getElementById('verifyDeliveryForm').style.display = '';
+        document.querySelector('#modalVerifyDelivery .modal-head .card-title').textContent = 'Verify Delivery';
+        modal.removeEventListener('click', handleBackdropClick);
+    };
+    const handleBackdropClick = function(e) {
+        if (e.target === modal) { modal.classList.remove('show'); restoreForm(); }
+    };
+    modal.addEventListener('click', handleBackdropClick);
+    const closeBtn = modal.querySelector('.modal-head .close');
+    const origOnclick = closeBtn.onclick;
+    closeBtn.onclick = function() { modal.classList.remove('show'); restoreForm(); closeBtn.onclick = origOnclick; };
+}
+
+function viewAdjustmentDetails(id, date, fuelType, adjType, liters, reason, staff, status) {
+    const details = document.getElementById('approveAdjustmentDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const isLoss = adjType.toLowerCase() === 'loss';
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Fuel Type</label><div class="input" style="background:var(--bg);">' + fuelType + '</div></div>' +
+            '<div><label class="pay-label">Type</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + adjType.toLowerCase() + '">' + adjType + '</span></div></div>' +
+            '<div><label class="pay-label">Volume</label><div class="input ' + (isLoss ? 'variance-negative' : 'variance-positive') + '" style="background:var(--bg);font-weight:600;">' + (isLoss ? '-' : '+') + parseFloat(liters).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div class="pay-section"><label class="pay-label">Reason</label><div class="input" style="background:var(--bg);">' + (reason || '&mdash;') + '</div></div>' +
+            '<div><label class="pay-label">Submitted By</label><div class="input" style="background:var(--bg);">' + (staff || '&mdash;') + '</div></div>' +
+            '<div><label class="pay-label">Status</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + status.toLowerCase() + '">' + status + '</span></div></div>' +
+        '</div>';
+
+    document.getElementById('approveAdjustmentForm').style.display = 'none';
+    document.querySelector('#modalApproveAdjustment .modal-head .card-title').textContent = 'Adjustment Details';
+    document.getElementById('modalApproveAdjustment').classList.add('show');
+
+    const modal = document.getElementById('modalApproveAdjustment');
+    const restoreForm = function() {
+        document.getElementById('approveAdjustmentForm').style.display = '';
+        document.querySelector('#modalApproveAdjustment .modal-head .card-title').textContent = 'Approve Adjustment';
+        modal.removeEventListener('click', handleBackdropClick);
+    };
+    const handleBackdropClick = function(e) {
+        if (e.target === modal) { modal.classList.remove('show'); restoreForm(); }
+    };
+    modal.addEventListener('click', handleBackdropClick);
+    const closeBtn = modal.querySelector('.modal-head .close');
+    const origOnclick = closeBtn.onclick;
+    closeBtn.onclick = function() { modal.classList.remove('show'); restoreForm(); closeBtn.onclick = origOnclick; };
+}
+
+function viewVarianceDetails(id, date, fuelType, expected, actual, variance, variancePct, status, investigator) {
+    const details = document.getElementById('investigateVarianceDetails');
+    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const vLiters = parseFloat(variance);
+    const vPct = parseFloat(variancePct);
+    const varClass = vLiters > 0 ? 'variance-positive' : 'variance-negative';
+    const varSign = vLiters > 0 ? '+' : '';
+    details.innerHTML =
+        '<div class="form-grid">' +
+            '<div><label class="pay-label">Report Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
+            '<div><label class="pay-label">Fuel Type</label><div class="input" style="background:var(--bg);">' + fuelType + '</div></div>' +
+            '<div><label class="pay-label">Expected Stock</label><div class="input" style="background:var(--bg);">' + parseFloat(expected).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div><label class="pay-label">Actual Stock</label><div class="input" style="background:var(--bg);">' + parseFloat(actual).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L</div></div>' +
+            '<div><label class="pay-label">Variance</label><div class="input ' + varClass + '" style="background:var(--bg);font-weight:600;">' + varSign + vLiters.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L (' + varSign + vPct.toFixed(2) + '%)</div></div>' +
+            '<div><label class="pay-label">Status</label><div class="input" style="background:var(--bg);"><span class="fuel-badge ' + (status === 'Open' ? 'open' : (status === 'Under Investigation' ? 'investigating' : (status === 'Resolved' ? 'resolved' : 'pending'))) + '">' + status + '</span></div></div>' +
+            '<div><label class="pay-label">Investigated By</label><div class="input" style="background:var(--bg);">' + (investigator || '&mdash;') + '</div></div>' +
+        '</div>';
+
+    document.getElementById('investigateVarianceForm').style.display = 'none';
+    document.querySelector('#modalInvestigateVariance .modal-head .card-title').textContent = 'Variance Details';
+    document.getElementById('modalInvestigateVariance').classList.add('show');
+
+    const modal = document.getElementById('modalInvestigateVariance');
+    const restoreForm = function() {
+        document.getElementById('investigateVarianceForm').style.display = '';
+        document.querySelector('#modalInvestigateVariance .modal-head .card-title').textContent = 'Investigate Variance';
+        modal.removeEventListener('click', handleBackdropClick);
+    };
+    const handleBackdropClick = function(e) {
+        if (e.target === modal) { modal.classList.remove('show'); restoreForm(); }
+    };
+    modal.addEventListener('click', handleBackdropClick);
+    const closeBtn = modal.querySelector('.modal-head .close');
+    const origOnclick = closeBtn.onclick;
+    closeBtn.onclick = function() { modal.classList.remove('show'); restoreForm(); closeBtn.onclick = origOnclick; };
+}
+
+// ── Pump Reading Filters ──
+function applyPumpFilters() {
+    const date = document.getElementById('pumpFilterDate')?.value;
+    const shift = document.getElementById('pumpFilterShift')?.value;
+    const status = document.getElementById('pumpFilterStatus')?.value;
+
+    let url = 'fuel_staff.php?tab=pump';
+    if (date) url += '&date=' + encodeURIComponent(date);
+    if (shift) url += '&shift=' + encodeURIComponent(shift);
+    if (status) url += '&status=' + encodeURIComponent(status);
+    window.location.href = url;
+}
+
+function resetPumpFilters() {
+    window.location.href = 'fuel_staff.php?tab=pump';
+}
+
+// ── Pump Management ──
+function openEditPumpModal(pumpId, pumpNumber, status) {
     document.getElementById('editPumpId').value = pumpId;
     document.getElementById('editPumpNumber').value = pumpNumber;
-    document.getElementById('editCalibrationValue').value = calibrationValue || '';
-    document.querySelector('input[name="status"][value="' + status + '"]').checked = true;
-    // Open modal
-    const modal = new bootstrap.Modal(document.getElementById('modalEditPump'));
-    modal.show();
+    const radio = document.querySelector('#modalEditPump input[name="status"][value="' + status + '"]');
+    if (radio) radio.checked = true;
+    document.getElementById('modalEditPump').classList.add('show');
 }
 
 function openDeletePumpModal(pumpId, pumpNumber) {
-     // Populate form
-     document.getElementById('deletePumpId').value = pumpId;
-     document.getElementById('deletePumpName').textContent = 'Pump ' + pumpNumber;
-     // Open modal
-     const modal = new bootstrap.Modal(document.getElementById('modalDeletePump'));
-     modal.show();
- }
+    document.getElementById('deletePumpId').value = pumpId;
+    document.getElementById('deletePumpName').textContent = 'Pump ' + pumpNumber;
+    document.getElementById('modalDeletePump').classList.add('show');
+}
 
- // Nozzle Management Functions
- function openAddNozzleModal(pumpId, pumpNumber) {
-     // Clear the form
-     document.querySelector('#modalAddNozzle form').reset();
-     // Set pump_id and update title
-     document.getElementById('addNozzlePumpId').value = pumpId;
-     document.getElementById('addNozzlePumpNumber').textContent = pumpNumber;
-     // Load fuel types for nozzle modal if not already loaded
-     loadFuelTypesForNozzle();
-     // Open modal
-     const modal = new bootstrap.Modal(document.getElementById('modalAddNozzle'));
-     modal.show();
- }
+// ── Nozzle Management ──
+function openAddNozzleModal(pumpId, pumpNumber) {
+    document.querySelector('#modalAddNozzle form').reset();
+    document.getElementById('addNozzlePumpId').value = pumpId;
+    document.getElementById('addNozzlePumpNumber').textContent = 'Pump ' + pumpNumber;
+    loadFuelTypesForNozzle();
+    document.getElementById('modalAddNozzle').classList.add('show');
+}
 
- function openEditNozzleModal(nozzleId, pumpId, nozzleNumber, fuelTypeId, status, notes) {
-     // Clear the form first
-     document.querySelector('#modalEditNozzle form').reset();
-     // Populate form
-     document.getElementById('editNozzleId').value = nozzleId;
-     document.getElementById('editNozzlePumpId').value = pumpId;
-     document.getElementById('editNozzleNumber').value = nozzleNumber;
-     document.querySelector('input[name="status"][value="' + status + '"]', document.querySelector('#modalEditNozzle')).checked = true;
-     if (document.getElementById('editNozzleNotes')) {
-         document.getElementById('editNozzleNotes').value = notes || '';
-     }
-     // Load fuel types and set selected value
-     loadFuelTypesForNozzle('editNozzleFuelTypeId', fuelTypeId);
-     // Open modal
-     const modal = new bootstrap.Modal(document.getElementById('modalEditNozzle'));
-     modal.show();
- }
+function openEditNozzleModal(nozzleId, pumpId, nozzleNumber, fuelTypeId, status, notes) {
+    document.querySelector('#modalEditNozzle form').reset();
+    document.getElementById('editNozzleId').value = nozzleId;
+    document.getElementById('editNozzleNumber').value = nozzleNumber;
+    const radio = document.querySelector('#modalEditNozzle input[name="status"][value="' + status + '"]');
+    if (radio) radio.checked = true;
+    if (document.getElementById('editNozzleNotes')) {
+        document.getElementById('editNozzleNotes').value = notes || '';
+    }
+    loadFuelTypesForNozzle('editNozzleFuelTypeId', fuelTypeId);
+    document.getElementById('modalEditNozzle').classList.add('show');
+}
 
- function loadFuelTypesForNozzle(selectId, selectedId) {
-     const targetSelect = selectId ? document.getElementById(selectId) : document.querySelector('#modalAddNozzle select[name="fuel_type_id"]');
-     if (!targetSelect) return;
-     
-     // If fuel types already loaded, just set selected value and return
-     if (targetSelect.children.length > 1) {
-         if (selectedId) {
-             targetSelect.value = selectedId;
-         }
-         return;
-     }
-     
-     // Load fuel types from DataHelper
-     if (typeof DataHelper !== 'undefined' && DataHelper.populateFuelTypes) {
-         DataHelper.populateFuelTypes(targetSelect.id || targetSelect.name, '-- Select Fuel Type --').then(() => {
-             if (selectedId) {
-                 targetSelect.value = selectedId;
-             }
-         });
-     }
- }
- 
- // Close all modals on escape key
- document.addEventListener('keydown', function(event) {
-     if (event.key === 'Escape') {
-         const modals = ['modalAddPump', 'modalEditPump', 'modalDeletePump', 'modalAddNozzle', 'modalEditNozzle'];
-         modals.forEach(id => {
-             const modal = bootstrap.Modal.getInstance(document.getElementById(id));
-             if (modal) modal.hide();
-         });
-     }
- });
+function loadFuelTypesForNozzle(selectId, selectedId) {
+    const targetSelect = selectId ? document.getElementById(selectId) : document.querySelector('#modalAddNozzle select[name="fuel_type_id"]');
+    if (!targetSelect) return;
+
+    if (targetSelect.children.length > 1) {
+        if (selectedId) targetSelect.value = selectedId;
+        return;
+    }
+
+    if (typeof DataHelper !== 'undefined' && DataHelper.populateFuelTypes) {
+        DataHelper.populateFuelTypes(targetSelect.id || targetSelect.name, '-- Select Fuel Type --').then(() => {
+            if (selectedId) targetSelect.value = selectedId;
+        });
+    }
+}
+
+// ── Approve Reconciliation Modal ──
+function showApproveModal(reconId, fuelType, reconDate) {
+    document.getElementById('approveReconId').value = reconId;
+    document.getElementById('approveFuelType').textContent = fuelType;
+    document.getElementById('approveReconDate').textContent = new Date(reconDate + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    document.getElementById('modalApproveReconciliation').classList.add('show');
+}
 </script>

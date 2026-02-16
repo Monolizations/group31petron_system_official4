@@ -7,7 +7,7 @@ require_login();
 $me = current_user();
 $role = $me['role'] ?? 'staff';
 $isAdminOrSuper = in_array($role, ['admin', 'superadmin']);
-$station_id = $me['station_id'] ?? 1;
+$station_id = user_station_id();
 
 // Get current view
 $view = $_GET['view'] ?? 'list';

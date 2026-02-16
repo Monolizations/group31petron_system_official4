@@ -69,7 +69,7 @@ function role_key($role){
   if(in_array($r, ['superadmin','super admin','super_admin'])) return 'superadmin';
   if(in_array($r, ['admin','station admin','station_admin'])) return 'admin';
   if(in_array($r, ['manager','supervisor','manager / supervisor','manager/supervisor','supervisor/manager'])) return 'manager';
-  if(in_array($r, ['staff','operations staff','operations_staff','operations','ops','operations_staff '])) return 'staff';
+  if(in_array($r, ['staff','operations staff','operations','ops'])) return 'staff';
   // Fallback: if legacy normalize_role labels indicate Admin, treat manager/admin as admin.
   $label = normalize_role($role);
   if($label === 'Super Admin') return 'superadmin';

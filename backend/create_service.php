@@ -1,5 +1,5 @@
 <?php
-require_once '../db_connect.php';
+require_once __DIR__ . '/../public/db_connect.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true) ?: $_POST;

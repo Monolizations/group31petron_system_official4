@@ -1,0 +1,407 @@
+{
+    "timestamp": "2026-02-16 10:58:37",
+    "system_health": {
+        "score": 81,
+        "status": "GOOD"
+    },
+    "test_results": {
+        "database_structure": {
+            "tables": {
+                "users": {
+                    "status": "exists",
+                    "count": 15
+                },
+                "stations": {
+                    "status": "exists",
+                    "count": 1413
+                },
+                "customers": {
+                    "status": "exists",
+                    "count": 1
+                },
+                "activity_logs": {
+                    "status": "exists",
+                    "count": 71
+                },
+                "products": {
+                    "status": "exists",
+                    "count": 135
+                },
+                "sales": {
+                    "status": "exists",
+                    "count": 0
+                },
+                "inventory": {
+                    "status": "exists",
+                    "count": 3
+                },
+                "fuel_inventory": {
+                    "status": "missing"
+                },
+                "merchandise": {
+                    "status": "missing"
+                },
+                "services": {
+                    "status": "missing"
+                },
+                "job_orders": {
+                    "status": "exists",
+                    "count": 2
+                },
+                "transactions": {
+                    "status": "missing"
+                }
+            },
+            "summary": {
+                "existing_tables": 8,
+                "missing_tables": 4,
+                "total_tables": 12
+            }
+        },
+        "authentication": {
+            "testadmin": {
+                "status": "authenticated",
+                "role": "admin",
+                "expected_role": "admin",
+                "role_match": true,
+                "station_id": 1205,
+                "user_data": {
+                    "id": 19,
+                    "0": 19,
+                    "emp_id": null,
+                    "1": null,
+                    "username": "testadmin",
+                    "2": "testadmin",
+                    "password": "$2y$10$k0rqAGVjodVR.37P6B1VNekAjEdxRbF2X037ZXcNCfkK0jvUjNyyC",
+                    "3": "$2y$10$k0rqAGVjodVR.37P6B1VNekAjEdxRbF2X037ZXcNCfkK0jvUjNyyC",
+                    "role": "admin",
+                    "4": "admin",
+                    "hourly_rate": "150.00",
+                    "5": "150.00",
+                    "email": "testadmin@petron.com",
+                    "6": "testadmin@petron.com",
+                    "name": "Test Admin",
+                    "7": "Test Admin",
+                    "station_id": 1205,
+                    "8": 1205,
+                    "status": "active",
+                    "9": "active",
+                    "is_deleted": 0,
+                    "10": 0,
+                    "deleted_at": null,
+                    "11": null,
+                    "deleted_by": null,
+                    "12": null,
+                    "created_at": "2026-02-16 16:06:34",
+                    "13": "2026-02-16 16:06:34"
+                }
+            },
+            "teststaff": {
+                "status": "authenticated",
+                "role": "staff",
+                "expected_role": "staff",
+                "role_match": true,
+                "station_id": 1205,
+                "user_data": {
+                    "id": 18,
+                    "0": 18,
+                    "emp_id": null,
+                    "1": null,
+                    "username": "teststaff",
+                    "2": "teststaff",
+                    "password": "$2y$10$k0rqAGVjodVR.37P6B1VNekAjEdxRbF2X037ZXcNCfkK0jvUjNyyC",
+                    "3": "$2y$10$k0rqAGVjodVR.37P6B1VNekAjEdxRbF2X037ZXcNCfkK0jvUjNyyC",
+                    "role": "staff",
+                    "4": "staff",
+                    "hourly_rate": "150.00",
+                    "5": "150.00",
+                    "email": "teststaff@petron.com",
+                    "6": "teststaff@petron.com",
+                    "name": "Test Staff",
+                    "7": "Test Staff",
+                    "station_id": 1205,
+                    "8": 1205,
+                    "status": "active",
+                    "9": "active",
+                    "is_deleted": 0,
+                    "10": 0,
+                    "deleted_at": null,
+                    "11": null,
+                    "deleted_by": null,
+                    "12": null,
+                    "created_at": "2026-02-16 16:06:34",
+                    "13": "2026-02-16 16:06:34"
+                }
+            },
+            "manager": {
+                "status": "authenticated",
+                "role": "manager",
+                "expected_role": "manager",
+                "role_match": true,
+                "station_id": 1205,
+                "user_data": {
+                    "id": 3,
+                    "0": 3,
+                    "emp_id": null,
+                    "1": null,
+                    "username": "manager",
+                    "2": "manager",
+                    "password": "$2y$10$k0rqAGVjodVR.37P6B1VNekAjEdxRbF2X037ZXcNCfkK0jvUjNyyC",
+                    "3": "$2y$10$k0rqAGVjodVR.37P6B1VNekAjEdxRbF2X037ZXcNCfkK0jvUjNyyC",
+                    "role": "manager",
+                    "4": "manager",
+                    "hourly_rate": "150.00",
+                    "5": "150.00",
+                    "email": "manager@petron.com",
+                    "6": "manager@petron.com",
+                    "name": "Station Manager",
+                    "7": "Station Manager",
+                    "station_id": 1205,
+                    "8": 1205,
+                    "status": "active",
+                    "9": "active",
+                    "is_deleted": 0,
+                    "10": 0,
+                    "deleted_at": null,
+                    "11": null,
+                    "deleted_by": null,
+                    "12": null,
+                    "created_at": "2026-02-06 01:37:41",
+                    "13": "2026-02-06 01:37:41"
+                }
+            },
+            "admin": {
+                "status": "authenticated",
+                "role": "admin",
+                "expected_role": "admin",
+                "role_match": true,
+                "station_id": null,
+                "user_data": {
+                    "id": 2,
+                    "0": 2,
+                    "emp_id": null,
+                    "1": null,
+                    "username": "admin",
+                    "2": "admin",
+                    "password": "$2y$10$pip5fV3ZDTnWrHuvh019Z.VPE1ufgSmzk8fD1YwteM\/4barHlJGIC",
+                    "3": "$2y$10$pip5fV3ZDTnWrHuvh019Z.VPE1ufgSmzk8fD1YwteM\/4barHlJGIC",
+                    "role": "admin",
+                    "4": "admin",
+                    "hourly_rate": "150.00",
+                    "5": "150.00",
+                    "email": "admin@petron.com",
+                    "6": "admin@petron.com",
+                    "name": "Admin",
+                    "7": "Admin",
+                    "station_id": null,
+                    "8": null,
+                    "status": "active",
+                    "9": "active",
+                    "is_deleted": 0,
+                    "10": 0,
+                    "deleted_at": null,
+                    "11": null,
+                    "deleted_by": null,
+                    "12": null,
+                    "created_at": "2026-02-06 01:37:41",
+                    "13": "2026-02-06 01:37:41"
+                }
+            },
+            "operations": {
+                "status": "authenticated",
+                "role": "operations_staff",
+                "expected_role": "operations_staff",
+                "role_match": true,
+                "station_id": 1205,
+                "user_data": {
+                    "id": 4,
+                    "0": 4,
+                    "emp_id": null,
+                    "1": null,
+                    "username": "operations",
+                    "2": "operations",
+                    "password": "$2y$10$YO63CN8KeYXxFn0qIOPibuvPkxAf8Fpwbq.dze.kViC8Imj9cW1\/6",
+                    "3": "$2y$10$YO63CN8KeYXxFn0qIOPibuvPkxAf8Fpwbq.dze.kViC8Imj9cW1\/6",
+                    "role": "operations_staff",
+                    "4": "operations_staff",
+                    "hourly_rate": "150.00",
+                    "5": "150.00",
+                    "email": "operations@petron.com",
+                    "6": "operations@petron.com",
+                    "name": "Operations Staff",
+                    "7": "Operations Staff",
+                    "station_id": 1205,
+                    "8": 1205,
+                    "status": "active",
+                    "9": "active",
+                    "is_deleted": 0,
+                    "10": 0,
+                    "deleted_at": null,
+                    "11": null,
+                    "deleted_by": null,
+                    "12": null,
+                    "created_at": "2026-02-06 01:37:41",
+                    "13": "2026-02-06 01:37:41"
+                }
+            }
+        },
+        "file_structure": {
+            "directories": {
+                "backend": {
+                    "status": "exists",
+                    "file_count": 39
+                },
+                "backend\/api": {
+                    "status": "exists",
+                    "file_count": 18
+                },
+                "public": {
+                    "status": "exists",
+                    "file_count": 122
+                },
+                "app": {
+                    "status": "exists",
+                    "file_count": 1
+                },
+                "app\/master_data": {
+                    "status": "exists",
+                    "file_count": 6
+                },
+                "app\/master_data\/users": {
+                    "status": "exists",
+                    "file_count": 8
+                },
+                "app\/reports": {
+                    "status": "missing"
+                },
+                "sql": {
+                    "status": "exists",
+                    "file_count": 1
+                }
+            },
+            "files": {
+                "public\/db_connect.php": {
+                    "status": "exists",
+                    "size": 401
+                },
+                "backend\/lib.php": {
+                    "status": "exists",
+                    "size": 11888
+                },
+                "backend\/api\/users.php": {
+                    "status": "exists",
+                    "size": 19597
+                },
+                "backend\/api\/customers.php": {
+                    "status": "exists",
+                    "size": 2215
+                },
+                "backend\/api\/sales.php": {
+                    "status": "exists",
+                    "size": 5396
+                },
+                "public\/login.php": {
+                    "status": "exists",
+                    "size": 13233
+                },
+                "public\/index.php": {
+                    "status": "exists",
+                    "size": 1135
+                }
+            }
+        },
+        "business_logic": {
+            "functions": {
+                "password_hash": {
+                    "status": "available"
+                },
+                "password_verify": {
+                    "status": "available"
+                }
+            },
+            "custom_functions": {
+                "current_user": {
+                    "status": "defined"
+                },
+                "require_login": {
+                    "status": "defined"
+                },
+                "log_activity": {
+                    "status": "defined"
+                }
+            }
+        },
+        "rbac": {
+            "roles_in_system": {
+                "superadmin": 2,
+                "admin": 3,
+                "manager": 2,
+                "operations_staff": 1,
+                "staff": 7
+            },
+            "station_distribution": {
+                "NULL": {
+                    "user_count": 7,
+                    "roles": "superadmin,admin,staff"
+                },
+                "1205": {
+                    "user_count": 8,
+                    "roles": "superadmin,admin,manager,operations_staff,staff"
+                }
+            }
+        },
+        "data_integrity": {
+            "user_station_relations": {
+                "valid": 8,
+                "invalid": 0
+            },
+            "customer_integrity": {
+                "total": 1,
+                "0": 1,
+                "missing_names": "0",
+                "1": "0",
+                "invalid_credit": "0",
+                "2": "0"
+            },
+            "activity_logs": {
+                "total_logs": 71,
+                "0": 71,
+                "unique_users": 10,
+                "1": 10,
+                "earliest_log": "2026-02-07 20:15:11",
+                "2": "2026-02-07 20:15:11",
+                "latest_log": "2026-02-16 18:46:50",
+                "3": "2026-02-16 18:46:50"
+            }
+        },
+        "system_features": {
+            "inventory": {
+                "status": "available",
+                "details": {
+                    "products": 135,
+                    "inventory": 3
+                }
+            },
+            "customers": {
+                "status": "available",
+                "total": 1,
+                "credit_customers": 0,
+                "active_customers": 1
+            },
+            "sales": {
+                "status": "available",
+                "tables": {
+                    "sales": 0
+                }
+            },
+            "reporting": {
+                "status": "missing"
+            },
+            "job_orders": {
+                "status": "available",
+                "job_orders": 2
+            }
+        }
+    },
+    "summary": "Comprehensive system testing completed"
+}

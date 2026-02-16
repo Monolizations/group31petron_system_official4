@@ -1,12 +1,13 @@
 <?php
 session_start();
 require_once 'db_connect.php';
+require_once __DIR__ . '/../backend/station_management.php';
 
 // 1. Redirect if already logged in (RBAC Logic)
 if (isset($_SESSION['user'])) {
     $role = $_SESSION['user']['role'] ?? 'staff';
     if ($role === 'superadmin') {
-        header("Location: home.php");
+        header("Location: dashboard.php");
     } else {
         header("Location: dashboard.php");
     }
@@ -46,8 +47,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Hash password
                     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                     
-                    $insert = $pdo->prepare("INSERT INTO users (username, password, role, email, status, station_id) VALUES (?, ?, ?, ?, 'active', 1205)");
-                    if ($insert->execute([$username, $hashed_password, $role, $email])) {
+                    // Get default station for registration
+                    $default_station = StationManager::getDefaultStation();
+                    if (!$default_station) {
+                        throw new Exception('No active stations available for registration');
+                    }
+                    
+                    $insert = $pdo->prepare("INSERT INTO users (username, password, role, email, status, station_id) VALUES (?, ?, ?, ?, 'active', ?)");
+                    if ($insert->execute([$username, $hashed_password, $role, $email, $default_station])) {
                         // AUTO LOGIN: Diretso na login human register
                         $_SESSION['user_id'] = $pdo->lastInsertId();
                         $_SESSION['username'] = $username;
@@ -61,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'role' => $dashboard_role, // Use the mapped role
                             'name' => $username,
                             'email' => $email,
-                            'station_id' => 1205,
+                            'station_id' => $default_station,
                             'id' => $_SESSION['user_id']
                         ];
                         

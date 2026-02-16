@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/lib.php';
-require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../public/db_connect.php';
 require_login();
 
 $customers = read_json('customers.json', []);
