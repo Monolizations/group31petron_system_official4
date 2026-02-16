@@ -148,6 +148,26 @@ function require_role($minRole){
 
 function user_station_id(){
   $u = current_user();
+  if(!$u) return null;
+  
+  // Refresh station_id from database to ensure latest data after migrations
+  // This ensures users who were migrated to a new station see the correct station
+  try {
+    global $pdo;
+    if($pdo && isset($u['id'])) {
+      $stmt = $pdo->prepare("SELECT station_id FROM users WHERE id = ? LIMIT 1");
+      $stmt->execute([$u['id']]);
+      $result = $stmt->fetch(PDO::FETCH_ASSOC);
+      if($result && isset($result['station_id'])) {
+        // Update session with latest station_id
+        $_SESSION['user']['station_id'] = $result['station_id'];
+        return $result['station_id'];
+      }
+    }
+  } catch(Exception $e) {
+    // Fall back to session value if DB query fails
+  }
+  
   return $u['station_id'] ?? null;
 }
 

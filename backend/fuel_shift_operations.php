@@ -92,65 +92,65 @@ class FuelShiftOperations {
                     }
                     
                     if ($sales_liters > 0) {
-                        // Check if fuel_inventory exists
-                        if (!$reading['product_id']) {
-                            throw new Exception("Fuel product not found for pump {$reading['pump_number']}");
-                        }
-                        
-                        $quantity_before = $reading['stock_level'] ?? 0;
+                         // Check if fuel_inventory exists
+                         if (!$reading['product_id']) {
+                             throw new Exception("Fuel product not found for pump {$reading['pump_number']}");
+                         }
                          
-                         // UPDATE fuel_inventory - DEDUCT sales liters
-                         $stmt = $this->pdo->prepare("
-                             UPDATE fuel_inventory 
-                             SET stock_level = stock_level - ?
-                             WHERE station_id = ? AND product_id = ?
-                         ");
-                         
-                         $stmt->execute([
-                             $sales_liters,
-                             $station_id,
-                             $reading['product_id']
-                         ]);
-                         
-                         // Get new stock level
-                         $stmt = $this->pdo->prepare("
-                             SELECT stock_level FROM fuel_inventory 
-                             WHERE station_id = ? AND product_id = ?
-                         ");
-                         $stmt->execute([$station_id, $reading['product_id']]);
-                         $updated = $stmt->fetch(PDO::FETCH_ASSOC);
-                         $quantity_after = $updated['stock_level'] ?? 0;
-                         
-                         // Log to fuel_inventory_logs via audit logging module
-                         log_fuel_inventory_action(
-                             $this->pdo,
-                             $manager_id,
-                             'reading_approved',
-                             'fuel_daily_reading',
-                             $reading['id'],
-                             $station_id,
-                             $reading['product_id'],
-                             [
-                                 'pump_number' => $reading['pump_number'],
-                                 'fuel_type' => $reading['fuel_name'],
-                                 'sales_liters' => $sales_liters,
-                                 'shift' => $reading['shift'],
-                                 'quantity_before' => $quantity_before,
-                                 'quantity_after' => $quantity_after,
-                                 'quantity_change' => -$sales_liters,
-                                 'status' => 'Approved'
-                             ]
-                         );
-                         
-                         $total_liters_deducted += $sales_liters;
-                         
-                         $summary[] = [
-                             'pump_number' => $reading['pump_number'],
-                             'fuel_type' => $reading['fuel_name'],
-                             'sales_liters' => $sales_liters,
-                             'stock_before' => $quantity_before,
-                             'stock_after' => $quantity_after
-                         ];
+                         $quantity_before = $reading['stock_level'] ?? 0;
+                           
+                           // UPDATE fuel_inventory - DEDUCT sales liters
+                           $stmt = $this->pdo->prepare("
+                               UPDATE fuel_inventory 
+                               SET stock_level = stock_level - ?
+                               WHERE station_id = ? AND product_id = ?
+                           ");
+                           
+                           $stmt->execute([
+                               $sales_liters,
+                               $station_id,
+                               $reading['product_id']
+                           ]);
+                           
+                           // Get new stock level
+                           $stmt = $this->pdo->prepare("
+                               SELECT stock_level FROM fuel_inventory 
+                               WHERE station_id = ? AND product_id = ?
+                           ");
+                           $stmt->execute([$station_id, $reading['product_id']]);
+                           $updated = $stmt->fetch(PDO::FETCH_ASSOC);
+                           $quantity_after = $updated['stock_level'] ?? 0;
+                           
+                           // Log to fuel_inventory_logs via audit logging module
+                           log_fuel_inventory_action(
+                               $this->pdo,
+                               $manager_id,
+                               'reading_approved',
+                               'fuel_daily_reading',
+                               $reading['id'],
+                               $station_id,
+                               $reading['product_id'],
+                               [
+                                   'pump_number' => $reading['pump_number'],
+                                   'fuel_type' => $reading['fuel_name'],
+                                   'sales_liters' => $sales_liters,
+                                   'shift' => $reading['shift'],
+                                   'quantity_before' => $quantity_before,
+                                   'quantity_after' => $quantity_after,
+                                   'quantity_change' => -$sales_liters,
+                                   'status' => 'Approved'
+                               ]
+                           );
+                           
+                           $total_liters_deducted += $sales_liters;
+                           
+                           $summary[] = [
+                               'pump_number' => $reading['pump_number'],
+                               'fuel_type' => $reading['fuel_name'],
+                               'sales_liters' => $sales_liters,
+                               'stock_before' => $quantity_before,
+                               'stock_after' => $quantity_after
+                           ];
                     }
                     
                     // Mark reading as Approved

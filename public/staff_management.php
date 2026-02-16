@@ -26,14 +26,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'update_shift') {
             $user_id = $_POST['user_id'] ?? 0;
             $shift = $_POST['shift'] ?? '';
+            $scheduled_date = $_POST['scheduled_date'] ?? date('Y-m-d');
             
             // Verify user belongs to this station
             $check = $pdo->prepare("SELECT id FROM users WHERE id = ? AND station_id = ?");
             $check->execute([$user_id, $station_id]);
             if (!$check->fetch()) throw new Exception("Unauthorized");
             
-            $stmt = $pdo->prepare("UPDATE users SET shift = ? WHERE id = ?");
-            $stmt->execute([$shift, $user_id]);
+            // Insert or update shift
+            $stmt = $pdo->prepare("INSERT INTO staff_schedules (user_id, shift, scheduled_date, status) VALUES (?, ?, ?, 'scheduled') ON DUPLICATE KEY UPDATE shift = ?, scheduled_date = ?, updated_at = NOW()");
+            $stmt->execute([$user_id, $shift, $scheduled_date, $shift, $scheduled_date]);
             $msg = "✅ Shift updated successfully.";
         }
         
@@ -41,14 +43,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $user_id = $_POST['user_id'] ?? 0;
             $task = $_POST['task'] ?? '';
             $priority = $_POST['priority'] ?? 'medium';
+            $due_date = $_POST['due_date'] ?? null;
             
             // Verify user
             $check = $pdo->prepare("SELECT id FROM users WHERE id = ? AND station_id = ?");
             $check->execute([$user_id, $station_id]);
             if (!$check->fetch()) throw new Exception("Unauthorized");
             
-            $stmt = $pdo->prepare("INSERT INTO staff_tasks (user_id, task, priority, status, created_at) VALUES (?, ?, ?, 'pending', NOW())");
-            $stmt->execute([$user_id, $task, $priority]);
+            $stmt = $pdo->prepare("INSERT INTO staff_tasks (user_id, task, priority, status, assigned_date, due_date) VALUES (?, ?, ?, 'pending', CURDATE(), ?)");
+            $stmt->execute([$user_id, $task, $priority, $due_date]);
             $msg = "✅ Task assigned successfully.";
         }
         
@@ -170,10 +173,11 @@ $staff = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: #f9fafb;">
                     <h4 style="margin: 0 0 8px 0; color: #1f2937;"><?php echo htmlspecialchars($s['name']); ?></h4>
                     <p style="margin: 0 0 12px 0; color: #6b7280; font-size: 13px;">@<?php echo htmlspecialchars($s['username']); ?></p>
-                    <form method="post" style="display: flex; gap: 8px;">
+                    <form method="post" style="display: flex; gap: 8px; flex-wrap: wrap;">
                         <input type="hidden" name="action" value="update_shift">
                         <input type="hidden" name="user_id" value="<?php echo $s['id']; ?>">
-                        <select name="shift" style="flex: 1; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;">
+                        <input type="date" name="scheduled_date" style="flex: 0 1 120px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;" value="<?php echo date('Y-m-d'); ?>">
+                        <select name="shift" style="flex: 1; min-width: 150px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;" required>
                             <option value="">Select shift</option>
                             <option value="morning">Morning (6AM - 2PM)</option>
                             <option value="afternoon">Afternoon (2PM - 10PM)</option>
@@ -183,6 +187,70 @@ $staff = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </form>
                 </div>
                 <?php endforeach; ?>
+            </div>
+            
+            <div style="margin-top: 24px;">
+                <h4 style="margin: 0 0 12px 0; color: #1f2937;">Scheduled Shifts</h4>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                                <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Staff Member</th>
+                                <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Shift</th>
+                                <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Scheduled Date</th>
+                                <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php
+                            $schedules = $pdo->prepare("
+                                SELECT ss.*, u.name, u.username 
+                                FROM staff_schedules ss 
+                                JOIN users u ON ss.user_id = u.id 
+                                WHERE u.station_id = ? AND ss.scheduled_date >= CURDATE()
+                                ORDER BY ss.scheduled_date ASC, u.name ASC
+                                LIMIT 30
+                            ");
+                            $schedules->execute([$station_id]);
+                            $schedule_rows = $schedules->fetchAll(PDO::FETCH_ASSOC);
+                            ?>
+                            <?php if(empty($schedule_rows)): ?>
+                                <tr>
+                                    <td colspan="4" style="padding: 16px; text-align: center; color: #9ca3af;">No scheduled shifts</td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach($schedule_rows as $s): ?>
+                                <tr style="border-bottom: 1px solid #e5e7eb;">
+                                    <td style="padding: 12px 16px; color: #1f2937; font-weight: 500;"><?php echo htmlspecialchars($s['name']); ?></td>
+                                    <td style="padding: 12px 16px;">
+                                        <?php 
+                                        $shift_colors = ['morning' => '#dbeafe', 'afternoon' => '#fef3c7', 'evening' => '#f3e8ff'];
+                                        $shift_text = ['morning' => '#0c4a6e', 'afternoon' => '#78350f', 'evening' => '#581c87'];
+                                        $shift = $s['shift'] ?? 'unset';
+                                        $shift_label = [
+                                            'morning' => '🌅 Morning (6AM - 2PM)',
+                                            'afternoon' => '☀️ Afternoon (2PM - 10PM)',
+                                            'evening' => '🌙 Evening (10PM - 6AM)',
+                                        ][$shift] ?? ucfirst($shift);
+                                        ?>
+                                        <span style="background: <?php echo $shift_colors[$shift] ?? '#e5e7eb'; ?>; color: <?php echo $shift_text[$shift] ?? '#1f2937'; ?>; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;">
+                                            <?php echo $shift_label; ?>
+                                        </span>
+                                    </td>
+                                    <td style="padding: 12px 16px; color: #6b7280; font-size: 13px;">
+                                        <?php echo date('M d, Y (D)', strtotime($s['scheduled_date'])); ?>
+                                    </td>
+                                    <td style="padding: 12px 16px;">
+                                        <span style="background: #d1fae5; color: #065f46; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;">
+                                            <?php echo ucfirst($s['status']); ?>
+                                        </span>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         <?php endif; ?>
     </div>
@@ -207,6 +275,7 @@ $staff = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <?php endforeach; ?>
                 </select>
                 <input type="text" name="task" placeholder="Task description" style="padding: 10px; border: 1px solid #d1d5db; border-radius: 6px;" required>
+                <input type="date" name="due_date" style="padding: 10px; border: 1px solid #d1d5db; border-radius: 6px;">
                 <select name="priority" style="padding: 10px; border: 1px solid #d1d5db; border-radius: 6px;">
                     <option value="low">Low Priority</option>
                     <option value="medium" selected>Medium Priority</option>
@@ -217,10 +286,63 @@ $staff = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <div style="margin-top: 20px;">
-            <h4 style="margin: 0 0 12px 0; color: #1f2937;">Recent Tasks</h4>
-            <div style="background: #fef3c7; padding: 16px; border-radius: 8px; color: #92400e; text-align: center;">
-                <i class="fas fa-info-circle" style="margin-right: 8px;"></i>
-                Task history feature coming soon
+            <h4 style="margin: 0 0 12px 0; color: #1f2937;">Pending Tasks</h4>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Staff Member</th>
+                            <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Task</th>
+                            <th style="padding: 12px 16px; text-align: center; font-weight: 600; color: #374151;">Priority</th>
+                            <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Due Date</th>
+                            <th style="padding: 12px 16px; text-align: left; font-weight: 600; color: #374151;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php
+                        $tasks = $pdo->prepare("
+                            SELECT st.*, u.name, u.username 
+                            FROM staff_tasks st 
+                            JOIN users u ON st.user_id = u.id 
+                            WHERE u.station_id = ? AND st.status IN ('pending', 'in_progress')
+                            ORDER BY st.priority DESC, st.due_date ASC
+                            LIMIT 20
+                        ");
+                        $tasks->execute([$station_id]);
+                        $task_rows = $tasks->fetchAll(PDO::FETCH_ASSOC);
+                        ?>
+                        <?php if(empty($task_rows)): ?>
+                            <tr>
+                                <td colspan="5" style="padding: 16px; text-align: center; color: #9ca3af;">No pending tasks</td>
+                            </tr>
+                        <?php else: ?>
+                            <?php foreach($task_rows as $t): ?>
+                            <tr style="border-bottom: 1px solid #e5e7eb;">
+                                <td style="padding: 12px 16px; color: #1f2937; font-weight: 500;"><?php echo htmlspecialchars($t['name']); ?></td>
+                                <td style="padding: 12px 16px; color: #6b7280;"><?php echo htmlspecialchars($t['task']); ?></td>
+                                <td style="padding: 12px 16px; text-align: center;">
+                                    <?php 
+                                    $priority_colors = ['low' => '#d1d5db', 'medium' => '#fbbf24', 'high' => '#ef4444'];
+                                    $priority_text = ['low' => '#1f2937', 'medium' => '#78350f', 'high' => '#ffffff'];
+                                    $p = $t['priority'] ?? 'medium';
+                                    ?>
+                                    <span style="background: <?php echo $priority_colors[$p]; ?>; color: <?php echo $priority_text[$p]; ?>; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;">
+                                        <?php echo ucfirst($p); ?>
+                                    </span>
+                                </td>
+                                <td style="padding: 12px 16px; color: #6b7280; font-size: 13px;">
+                                    <?php echo $t['due_date'] ? date('M d, Y', strtotime($t['due_date'])) : '--'; ?>
+                                </td>
+                                <td style="padding: 12px 16px;">
+                                    <span style="background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;">
+                                        <?php echo ucfirst($t['status']); ?>
+                                    </span>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Hash password
                     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                     
-                    $insert = $pdo->prepare("INSERT INTO users (username, password, role, email, status) VALUES (?, ?, ?, ?, 'active')");
+                    $insert = $pdo->prepare("INSERT INTO users (username, password, role, email, status, station_id) VALUES (?, ?, ?, ?, 'active', 1250)");
                     if ($insert->execute([$username, $hashed_password, $role, $email])) {
                         // AUTO LOGIN: Diretso na login human register
                         $_SESSION['user_id'] = $pdo->lastInsertId();
@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'role' => $dashboard_role, // Use the mapped role
                             'name' => $username,
                             'email' => $email,
-                            'station_id' => null,
+                            'station_id' => 226,
                             'id' => $_SESSION['user_id']
                         ];
                         

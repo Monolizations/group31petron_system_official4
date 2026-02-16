@@ -87,11 +87,10 @@ include __DIR__ . '/../partials/header.php';
 
 <style>
 .page-container {
-    height: calc(100vh - 110px);
     display: flex;
     flex-direction: column;
     padding: 20px;
-    overflow: hidden;
+    min-height: 100%;
 }
 
 .page-header {
@@ -136,17 +135,18 @@ include __DIR__ . '/../partials/header.php';
 }
 
 .table-container {
-    flex: 1;
-    overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--card);
+     flex: 1;
+     overflow: hidden;
+     border: 1px solid var(--line);
+     border-radius: 8px;
+     background: var(--card);
+     min-height: 0;
 }
 
 .stations-table {
     width: 100%;
-    height: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
 }
 
 .stations-table thead {
@@ -155,6 +155,8 @@ include __DIR__ . '/../partials/header.php';
     position: sticky;
     top: 0;
     z-index: 10;
+    display: table;
+    width: 100%;
 }
 
 .stations-table th, .stations-table td {
@@ -164,13 +166,16 @@ include __DIR__ . '/../partials/header.php';
 }
 
 .stations-table tbody {
+    display: block;
     overflow-y: auto;
-    max-height: calc(100vh - 300px);
+    max-height: 500px;
 }
 
 .stations-table tbody tr {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
     transition: background-color 0.2s;
-    height: 48px;
 }
 
 .stations-table tbody tr:hover {

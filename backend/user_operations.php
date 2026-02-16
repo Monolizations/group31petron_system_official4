@@ -54,11 +54,11 @@ try {
             $email = trim($_POST['email'] ?? '');
             $username = trim($_POST['username'] ?? '');
             $phone_number = trim($_POST['phone_number'] ?? '');
-            $assigned_station = $_POST['assigned_station'] ?? '';
+            $assigned_station = $_POST['assigned_station'] ?? 226; // Default to Station 226
             $status = $_POST['status'] ?? 'active';
             
-            if (empty($full_name) || empty($email) || empty($username) || empty($assigned_station)) {
-                throw new Exception('All required fields must be filled');
+            if (empty($full_name) || empty($email) || empty($username)) {
+                throw new Exception('Full name, email, and username are required');
             }
             
             if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -103,11 +103,7 @@ try {
         case 'create_default_accounts':
             require_permission(CREATE_DEFAULT_ROLES_FOR_STATION);
             
-            $station_id = $_POST['station_id'] ?? '';
-            
-            if (empty($station_id)) {
-                throw new Exception('Station is required');
-            }
+            $station_id = $_POST['station_id'] ?? 1250; // Default to Station 1250 (Kauswagan CDO Petron)
             
             // Get station info
             $station = $pdo->prepare("SELECT name FROM stations WHERE id = ?");

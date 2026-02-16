@@ -193,23 +193,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           /* =======================
              CONFIRM PARTS USED
           ======================= */
-          if ($action === 'confirm_parts') {
-              $parts_used = json_decode($_POST['parts_used'] ?? '[]', true);
-              $notes = $_POST['notes'] ?? '';
-              
-              if (empty($parts_used)) {
-                  json_response(['success'=>false,'message'=>'Please add at least one part']);
-              }
-              
-              $result = $jobOrderOps->confirmPartsUsed(
-                  $_POST['job_id'],
-                  $parts_used,
-                  $notes
-               );
-
-               json_response($result);
-           }
-
        /* =======================
               GET JOB DETAILS
          ======================= */
@@ -274,17 +257,31 @@ try {
 
 // Products/Parts for inventory (for completion screen)
 $products_list = [];
+$products_error = false;
 try {
     $stmt = $pdo->prepare("
-        SELECT p.id, p.name, p.barcode, si.stock_level, p.cost_price
+        SELECT p.id, p.name, p.sku, i.stock_level, p.price
         FROM products p
-        INNER JOIN station_inventory si ON si.product_id = p.id
-        WHERE si.station_id = ? AND si.status = 'active' AND si.stock_level > 0
+        INNER JOIN station_inventory i ON i.product_id = p.id AND i.station_id = ?
+        WHERE i.status = 'active'
+          AND i.stock_level > 0
+          AND p.type_id = 2
         ORDER BY p.name
     ");
     $stmt->execute([$station_id]);
     $products_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {}
+} catch (Exception $e) {
+    $products_error = true;
+    error_log('Failed to load products: ' . $e->getMessage());
+}
+
+// Add error warning if products failed to load
+$products_warning = '';
+if ($products_error) {
+    $products_warning = '<div style="background: #fff3cd; border: 1px solid #ffc107; color: #856404; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <strong>⚠️ Warning:</strong> Unable to load products from station inventory. Please contact administrator.
+    </div>';
+}
 
 // ADMIN: Pending Jobs (require review)
 $pending_jobs = [];
@@ -742,12 +739,17 @@ include __DIR__ . '/../partials/header.php';
     position: fixed;
     top: 20px;
     right: 20px;
-    padding: 15px 25px;
+    padding: 15px 20px;
     background: var(--blue);
     color: white;
     border-radius: 5px;
     box-shadow: 0 5px 15px rgba(0,0,0,0.2);
     z-index: 10001;
+    max-width: 380px;
+    font-size: 14px;
+    white-space: normal;
+    word-wrap: break-word;
+    line-height: 1.4;
 }
 
 /* Custom Confirm Modal */
@@ -1175,14 +1177,11 @@ include __DIR__ . '/../partials/header.php';
                                 <button type="button" class="btn btn-info" onclick="event.stopPropagation(); event.preventDefault(); console.log('In Progress button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'In Progress', '⏳ Keep In Progress?', 'Job will remain in progress for continued work.')">
                                     <i class="fas fa-spinner"></i> In Progress
                                 </button>
-                                <button type="button" class="btn btn-success" onclick="event.stopPropagation(); event.preventDefault(); console.log('Complete button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'Completed', '✅ Mark as Completed?', 'This will finalize the job and move it to history.')">
+                                <button type="button" class="btn btn-success" onclick="event.stopPropagation(); event.preventDefault(); console.log('Complete button clicked'); completeJobOrder(<?php echo $job['id']; ?>)">
                                     <i class="fas fa-check-circle"></i> Complete
                                 </button>
                                 <button type="button" class="btn btn-danger" onclick="event.stopPropagation(); event.preventDefault(); console.log('Cancel button clicked'); confirmStatusChange(<?php echo $job['id']; ?>, 'Cancelled', '❌ Cancel This Job?', 'This action cannot be easily undone. Are you sure?')">
                                     <i class="fas fa-times-circle"></i> Cancel
-                                </button>
-                                <button type="button" class="btn btn-primary" onclick="event.stopPropagation(); event.preventDefault(); console.log('Parts Used button clicked'); confirmPartsUsed(<?php echo $job['id']; ?>)">
-                                    <i class="fas fa-cogs"></i> 📦 Parts Used
                                 </button>
                             </div>
                         </div>
@@ -1311,29 +1310,6 @@ include __DIR__ . '/../partials/header.php';
 
 <!-- Status Update Modal -->
 
-<!-- Parts Confirmation Modal -->
-<div id="partsModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title">Confirm Parts Used</h3>
-            <button class="modal-close" onclick="closePartsModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div id="partsList">
-                <!-- Parts will be loaded here -->
-            </div>
-            <div class="form-group" style="margin-top: 20px;">
-                <label>Additional Notes</label>
-                <textarea class="form-textarea" id="partsNotes" placeholder="Any additional notes about parts used..."></textarea>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closePartsModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="confirmPartsConfirmation()">Confirm Parts</button>
-        </div>
-    </div>
-</div>
-
 <!-- Job Completion Modal with Parts Selection -->
 <div id="completionModal" class="modal">
     <div class="modal-content" style="max-width: 800px;">
@@ -1362,6 +1338,8 @@ include __DIR__ . '/../partials/header.php';
             <div id="partsListContainer">
                 <!-- Part rows will be added here -->
             </div>
+            
+            <?= $products_warning ?>
             
             <div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin-top: 20px;">
                 <strong>ℹ️ Inventory Deduction:</strong> Selected parts will be automatically deducted from station inventory upon completion.
@@ -1459,10 +1437,11 @@ function updateEstimatedCosts() {
             durationField.value = duration;
         }
         
-        // Show estimated cost info
+        // Show estimated cost info as alert dialog
         const total = labor + parts;
         if (total > 0) {
-            showToast(`Estimated cost: ₱${total.toFixed(2)} (Labor: ₱${labor.toFixed(2)}, Parts: ₱${parts.toFixed(2)})`, 'info');
+            const message = `Service Cost Breakdown\n\nLabor Cost: ₱${labor.toFixed(2)}\nParts Cost: ₱${parts.toFixed(2)}\n\nEstimated Total: ₱${total.toFixed(2)}\nEstimated Duration: ${duration} minutes`;
+            alert(message);
         }
     }
 }
@@ -1685,45 +1664,72 @@ function completeJobOrder(jobId) {
 }
 
  function addPartRowToCompletion() {
-     const container = document.getElementById('partsListContainer');
-    const row = document.createElement('div');
-    row.className = 'part-row';
-    row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;';
-    
-    row.innerHTML = `
-        <div class="form-group" style="margin: 0;">
-            <label>Part/Product</label>
-            <select class="form-select part-select" required>
-                <option value="">Select Product</option>
-                <?php foreach ($products_list as $product): ?>
-                    <option value="<?= $product['id'] ?>" data-cost="<?= $product['cost_price'] ?>" data-stock="<?= $product['stock_level'] ?>">
-                        <?= htmlspecialchars($product['name']) ?> (Stock: <?= $product['stock_level'] ?>)
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <div class="form-group" style="margin: 0;">
-            <label>Quantity</label>
-            <input type="number" class="form-input part-quantity" min="1" step="1" value="1" required>
-        </div>
-        <div class="form-group" style="margin: 0;">
-            <label>Unit Cost</label>
-            <input type="number" class="form-input part-cost" min="0" step="0.01" required readonly>
-        </div>
-        <button type="button" class="btn btn-danger" onclick="this.parentElement.remove()" style="height: 40px;">Remove</button>
-    `;
-    
-    // Auto-fill cost when product is selected
-    const select = row.querySelector('.part-select');
-    const costInput = row.querySelector('.part-cost');
-    select.addEventListener('change', function() {
-        const option = this.options[this.selectedIndex];
-        const cost = option.getAttribute('data-cost') || 0;
-        costInput.value = cost;
-    });
-    
-    container.appendChild(row);
-}
+      const container = document.getElementById('partsListContainer');
+     const row = document.createElement('div');
+     row.className = 'part-row';
+     row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;';
+     
+     row.innerHTML = `
+         <div class="form-group" style="margin: 0;">
+             <label>Part/Product</label>
+             <select class="form-select part-select" required onchange="validatePartStock(this)">
+                 <option value="">Select Product</option>
+                 <?php foreach ($products_list as $product): ?>
+                     <option value="<?= $product['id'] ?>" data-price="<?= $product['price'] ?>" data-stock="<?= $product['stock_level'] ?>" data-name="<?= htmlspecialchars($product['name']) ?>">
+                         <?= htmlspecialchars($product['name']) ?> (Stock: <?= $product['stock_level'] ?>)
+                     </option>
+                 <?php endforeach; ?>
+             </select>
+         </div>
+         <div class="form-group" style="margin: 0;">
+             <label>Quantity</label>
+             <input type="number" class="form-input part-quantity" min="1" step="1" value="1" required onchange="validatePartStock(this.parentElement.parentElement.querySelector('.part-select'))">
+         </div>
+         <div class="form-group" style="margin: 0;">
+             <label>Unit Cost</label>
+             <input type="number" class="form-input part-cost" min="0" step="0.01" required readonly>
+         </div>
+         <button type="button" class="btn btn-danger" onclick="this.parentElement.remove()" style="height: 40px;">Remove</button>
+     `;
+     
+     container.appendChild(row);
+ }
+
+ // Validate stock availability
+ function validatePartStock(select) {
+     const row = select.closest('.part-row');
+     const quantityInput = row.querySelector('.part-quantity');
+     const selectedOption = select.options[select.selectedIndex];
+     
+     // Reset styling
+     select.style.borderColor = '';
+     quantityInput.style.borderColor = '';
+     
+     if (selectedOption && select.value) {
+         const availableStock = parseInt(selectedOption.getAttribute('data-stock')) || 0;
+         const requestedQty = parseInt(quantityInput.value) || 0;
+         
+         if (requestedQty > availableStock) {
+             alert(`Insufficient stock!\n\nProduct: ${selectedOption.getAttribute('data-name')}\nAvailable: ${availableStock}\nRequested: ${requestedQty}\n\nPlease reduce quantity or select a different product.`);
+             select.style.borderColor = '#dc3545';
+             quantityInput.style.borderColor = '#dc3545';
+             return false;
+         }
+     }
+     
+     return true;
+ }
+
+ // Auto-fill cost and validate stock when product is selected
+  document.addEventListener('change', function(event) {
+      if (event.target.classList.contains('part-select')) {
+          const row = event.target.closest('.part-row');
+          const costInput = row.querySelector('.part-cost');
+          const selectedOption = event.target.options[event.target.selectedIndex];
+          const price = selectedOption.getAttribute('data-price') || 0;
+          costInput.value = price;
+      }
+  }, true);
 
 async function submitJobCompletion() {
     const jobId = document.getElementById('job_id_for_completion').value;
@@ -1908,157 +1914,11 @@ async function submitStatusUpdate(jobId, status, notes) {
 }
 
 function completeJobOrder(jobId) {
-    if (!confirm('Mark this job as completed? This will finalize the job order.')) return;
-    updateJobStatus(jobId, 'Completed');
-}
-
-function confirmPartsUsed(jobId) {
-    currentJobId = jobId;
-    
-    // Create a table for parts input
-    const partsHtml = `
-        <div class="form-group">
-            <label>Parts Used</label>
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
-                <thead>
-                    <tr style="background: #f5f5f5;">
-                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Part Name</th>
-                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Quantity</th>
-                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Unit Price</th>
-                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Total</th>
-                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Action</th>
-                    </tr>
-                </thead>
-                <tbody id="partsTableBody">
-                    <tr id="partRow-0">
-                        <td style="border: 1px solid #ddd; padding: 5px;"><input type="text" class="form-input" placeholder="e.g., Oil Filter" style="width: 100%; margin: 0;"></td>
-                        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="1" min="1" style="width: 100%; margin: 0;" value="1"></td>
-                        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="0.00" min="0" step="0.01" style="width: 100%; margin: 0;" value="0.00"></td>
-                        <td style="border: 1px solid #ddd; padding: 5px; text-align: right; font-weight: bold;">₱0.00</td>
-                        <td style="border: 1px solid #ddd; padding: 5px; text-align: center;"><button class="btn btn-sm btn-danger" onclick="removePartRow(0)" style="padding: 5px 10px;">Remove</button></td>
-                    </tr>
-                </tbody>
-            </table>
-            <button type="button" class="btn btn-secondary" onclick="addPartRow()" style="width: 100%;">
-                <i class="fas fa-plus"></i> Add Another Part
-            </button>
-        </div>
-    `;
-    
-    document.getElementById('partsList').innerHTML = partsHtml;
-    document.getElementById('partsModal').style.display = 'block';
-    
-    // Attach event listeners for calculations
-    attachPartsEventListeners();
-}
-
-function addPartRow() {
-    const tbody = document.getElementById('partsTableBody');
-    const rowCount = tbody.children.length;
-    
-    const newRow = document.createElement('tr');
-    newRow.id = `partRow-${rowCount}`;
-    newRow.innerHTML = `
-        <td style="border: 1px solid #ddd; padding: 5px;"><input type="text" class="form-input" placeholder="e.g., Engine Oil" style="width: 100%; margin: 0;"></td>
-        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="1" min="1" style="width: 100%; margin: 0;" value="1" onchange="calculateRowTotal(this)"></td>
-        <td style="border: 1px solid #ddd; padding: 5px;"><input type="number" class="form-input" placeholder="0.00" min="0" step="0.01" style="width: 100%; margin: 0;" value="0.00" onchange="calculateRowTotal(this)"></td>
-        <td style="border: 1px solid #ddd; padding: 5px; text-align: right; font-weight: bold;">₱0.00</td>
-        <td style="border: 1px solid #ddd; padding: 5px; text-align: center;"><button class="btn btn-sm btn-danger" onclick="removePartRow(${rowCount})" style="padding: 5px 10px;">Remove</button></td>
-    `;
-    
-    tbody.appendChild(newRow);
-    attachPartsEventListeners();
-}
-
-function removePartRow(rowIndex) {
-    const row = document.getElementById(`partRow-${rowIndex}`);
-    if (row) {
-        row.remove();
-        attachPartsEventListeners();
-    }
-}
-
-function calculateRowTotal(input) {
-    const row = input.closest('tr');
-    const quantityInput = row.querySelector('td:nth-child(2) input');
-    const priceInput = row.querySelector('td:nth-child(3) input');
-    const totalCell = row.querySelector('td:nth-child(4)');
-    
-    const quantity = parseFloat(quantityInput.value) || 0;
-    const price = parseFloat(priceInput.value) || 0;
-    const total = quantity * price;
-    
-    totalCell.textContent = '₱' + total.toFixed(2);
-}
-
-function attachPartsEventListeners() {
-    const tbody = document.getElementById('partsTableBody');
-    const rows = tbody.querySelectorAll('tr');
-    
-    rows.forEach(row => {
-        const quantityInput = row.querySelector('td:nth-child(2) input');
-        const priceInput = row.querySelector('td:nth-child(3) input');
-        
-        quantityInput.onchange = () => calculateRowTotal(quantityInput);
-        priceInput.onchange = () => calculateRowTotal(priceInput);
-    });
-}
-
-function closePartsModal() {
-    document.getElementById('partsModal').style.display = 'none';
-}
-
-async function confirmPartsConfirmation() {
-     const notes = document.getElementById('partsNotes').value;
-     
-     // Read parts from table
-     const tbody = document.getElementById('partsTableBody');
-     const rows = tbody.querySelectorAll('tr');
-     
-     const partsUsed = [];
-     rows.forEach(row => {
-         const partName = row.querySelector('td:nth-child(1) input').value.trim();
-         const quantity = parseFloat(row.querySelector('td:nth-child(2) input').value) || 0;
-         const unitPrice = parseFloat(row.querySelector('td:nth-child(3) input').value) || 0;
-         
-         if (partName) {
-             partsUsed.push({
-                 part_name: partName,
-                 quantity: quantity,
-                 unit_cost: unitPrice
-             });
-         }
-     });
-     
-     if (partsUsed.length === 0) {
-         showToast('Please add at least one part', 'error');
-         return;
-     }
-
-     const formData = new FormData();
-     formData.append('action', 'confirm_parts');
-     formData.append('job_id', currentJobId);
-     formData.append('parts_used', JSON.stringify(partsUsed));
-     formData.append('notes', notes);
-
-     try {
-         const response = await fetch('joborder.php', {
-             method: 'POST',
-             body: formData
-         });
-
-         const result = await response.json();
-
-         if (result.success) {
-             showToast('Parts confirmed and inventory updated!', 'success');
-             closePartsModal();
-             setTimeout(() => location.reload(), 1500);
-         } else {
-             showToast(result.message, 'error');
-         }
-     } catch (error) {
-         showToast('Error confirming parts', 'error');
-     }
+    selectedParts = [];
+    document.getElementById('job_id_for_completion').value = jobId;
+    document.getElementById('partsListContainer').innerHTML = '';
+    document.getElementById('completionModal').style.display = 'block';
+    document.getElementById('actual_labor_hours').value = '0';
 }
 
 async function showJobDetails(jobId) {

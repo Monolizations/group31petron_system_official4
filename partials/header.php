@@ -600,12 +600,14 @@ if (!isset($pdo) || !$pdo) {
 
       ['id'=>'user_management','label'=>'User Management','ico'=>'fas fa-user-cog','href'=>'users.php'],
 
-      ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items' => [
-          ['id'=>'shift_reports','label'=>'Shift Reports','href'=>'reports.php?view=shift_reports'],
-          ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
-          ['id'=>'job_order_reports','label'=>'Job Order Reports','href'=>'reports.php?view=job_order_reports'],
-          ['id'=>'verification','label'=>'Verification','href'=>'reports.php?view=verification']
-      ]],
+       ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items' => [
+           ['id'=>'shift_reports','label'=>'Shift Reports','href'=>'reports.php?view=shift_reports'],
+           ['id'=>'inventory_reports','label'=>'Inventory Reports','href'=>'reports.php?view=inventory_reports'],
+           ['id'=>'job_order_reports','label'=>'Job Order Reports','href'=>'reports.php?view=job_order_reports'],
+           ['id'=>'sales_by_pump','label'=>'Sales by Pump','href'=>'reports/sales_by_pump.php'],
+           ['id'=>'fuel_variance_report','label'=>'Fuel Variance Report','href'=>'reports/fuel_variance_report.php'],
+           ['id'=>'verification','label'=>'Verification','href'=>'reports.php?view=verification']
+       ]],
 
       ['id'=>'unlock_records','label'=>'Unlock Records','ico'=>'fas fa-lock-open','href'=>'admin_unlock.php'],
 
@@ -649,12 +651,14 @@ if (!isset($pdo) || !$pdo) {
            ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
        ]],
 
-       ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
-           ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
-           ['id'=>'staff_performance_reports','label'=>'Individual Performance','href'=>'staff_reports.php?view=performance'],
-           ['id'=>'staff_attendance','label'=>'Attendance & Shift Coverage','href'=>'staff_reports.php?view=attendance'],
-           ['id'=>'staff_quality_metrics','label'=>'Quality Metrics','href'=>'staff_reports.php?view=quality'],
-       ]],
+        ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
+            ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
+            ['id'=>'staff_performance_reports','label'=>'Individual Performance','href'=>'staff_reports.php?view=performance'],
+            ['id'=>'staff_attendance','label'=>'Attendance & Shift Coverage','href'=>'staff_reports.php?view=attendance'],
+            ['id'=>'staff_quality_metrics','label'=>'Quality Metrics','href'=>'staff_reports.php?view=quality'],
+            ['id'=>'sales_by_pump','label'=>'Sales by Pump','href'=>'reports/sales_by_pump.php'],
+            ['id'=>'fuel_variance_report','label'=>'Fuel Variance Report','href'=>'reports/fuel_variance_report.php'],
+        ]],
 
        ['id'=>'staff_management','label'=>'Staff Management','ico'=>'fas fa-users','href'=>'#','sub_items'=>[
            ['id'=>'staff_active','label'=>'Active Staff','href'=>'staff_management.php?view=active'],
@@ -679,6 +683,7 @@ if (!isset($pdo) || !$pdo) {
 
       ['id'=>'transactions','label'=>'Transactions','ico'=>'fas fa-shopping-cart','href'=>'#','sub_items'=>[
           ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php'],
+          ['id'=>'pos_multi','label'=>'Multi-Item Transaction','href'=>'pos_multi.php'],
           ['id'=>'pos_credit','label'=>'Credit Sales','href'=>'credit_transactions.php'],
           ['id'=>'txn_history','label'=>'Transaction History','href'=>'transactions.php?view=my_history'],
           ['id'=>'receipt_reprint','label'=>'Receipt Reprint','href'=>'transactions.php?view=reprint'],

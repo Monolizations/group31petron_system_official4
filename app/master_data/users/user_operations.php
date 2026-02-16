@@ -103,11 +103,7 @@ try {
         case 'create_default_accounts':
             require_permission(CREATE_DEFAULT_ROLES_FOR_STATION);
             
-            $station_id = $_POST['station_id'] ?? '';
-            
-            if (empty($station_id)) {
-                throw new Exception('Station is required');
-            }
+            $station_id = $_POST['station_id'] ?? 1250; // Default to Station 1250 (Kauswagan CDO Petron)
             
             // Get station info
             $station = $pdo->prepare("SELECT name FROM stations WHERE id = ?");

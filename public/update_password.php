@@ -50,15 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
         
         // Update password in database
-        $updateStmt = $pdo->prepare("UPDATE users SET password = ?, must_change_password = 0, updated_at = NOW() WHERE id = ?");
+        $updateStmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
         $updateStmt->execute([$hashed_password, $me['id']]);
-        
-        // Set password expiry to 90 days from now
-        try {
-            $expires = (new DateTime("+90 days"))->format('Y-m-d H:i:s');
-            $pdo->prepare("UPDATE users SET password_expires_at = ? WHERE id = ?")
-                ->execute([$expires, $me['id']]);
-        } catch(Exception $e){}
         
         log_activity($pdo, $me['id'], 'Change Password', 'User changed their own password');
         

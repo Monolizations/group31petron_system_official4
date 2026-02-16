@@ -258,11 +258,13 @@ include __DIR__ . '/../partials/header.php';
                 <div class="form-group mb-3">
                     <label class="lbl">Station</label>
                     <select name="station_id" class="inp full" required>
-                        <?php foreach($stations as $s): ?>
-                            <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
+                         <?php foreach($stations as $s): ?>
+                             <option value="<?php echo $s['id']; ?>" <?php echo ($s['id'] == 1250) ? 'selected' : ''; ?>><?php echo htmlspecialchars($s['name']); ?></option>
+                         <?php endforeach; ?>
+                     </select>
+                 </div>
+                 <?php else: ?>
+                 <input type="hidden" name="station_id" value="1250">
                 <?php endif; ?>
                 <div class="form-group mb-3">
                     <label class="lbl">Password</label>

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db_connect.php';
 require_once __DIR__ . '/../backend/lib.php';
+require_once __DIR__ . '/../backend/inventory_automation.php';
 
 require_login();
 $u = current_user();
@@ -107,6 +108,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         $admin_notes,
                         $recon_id
                     ]);
+                    
+                    // Update inventory in real-time to match physical stock
+                    $stock_adjustment = $physical_stock - ($recon['present_reading'] - $recon['previous_reading'] - ($recon['calibration'] ?? 0));
+                    $stock_result = recordStockMovement(
+                        $pdo,
+                        $station_id,
+                        $recon['fuel_type_id'],
+                        $stock_adjustment,
+                        'reconciliation_sync',
+                        'fuel_reconciliation',
+                        $recon_id,
+                        $u['id'],
+                        "Reconciliation #$recon_id finalized - adjusted to physical: {$physical_stock}L"
+                    );
+                    
+                    // Record daily closing stock for next day's opening balance
+                    recordDailyClosingStock(
+                        $pdo,
+                        $station_id,
+                        $recon['fuel_type_id'],
+                        $physical_stock,
+                        $me['id'],
+                        'Shift: ' . date('H:i', strtotime($recon['reconciliation_date'])),
+                        date('Y-m-d'),
+                        $u['id']
+                    );
                     
                     log_activity($pdo, $u['id'], 'Reconciliation Finalized', 
                         "ID: $recon_id | Fuel: {$recon['fuel_type_id']} | Physical: {$physical_stock}L | Variance: {$variance_liters}L | LOCKED");

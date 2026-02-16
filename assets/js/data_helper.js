@@ -31,9 +31,13 @@ class DataHelper {
             // Remove leading slash if present to avoid double slashes
             const cleanEndpoint = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
             
-            // Use relative paths that work from any page location
-            // The browser will resolve relative to the current page's base
-            const fullUrl = `${cleanEndpoint}?action=${action}`;
+            // Build correct path - if we're in /public/, go up one level
+            let basePath = '';
+            if (window.location.pathname.includes('/public/')) {
+                basePath = '../';
+            }
+            
+            const fullUrl = `${basePath}${cleanEndpoint}?action=${action}`;
             const response = await fetch(fullUrl);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);

@@ -97,35 +97,66 @@ class JobOrderOperations {
             // Calculate estimated costs
             $estimated_costs = $this->calculateEstimatedCosts($data);
             
-            // Insert job order
-            $stmt = $this->pdo->prepare("
-                INSERT INTO job_orders
-                (job_order_number, station_id, customer_id, vehicle_plate, vehicle_type,
-                 service_category_id, assigned_mechanic_id, assigned_by, service_description, 
-                 estimated_duration, status, notes, created_at, requires_approval,
-                 estimated_labor_cost, estimated_parts_cost)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
-            ");
+            // Insert job order with retry mechanism to handle race conditions
+            $maxRetries = 3;
+            $job_order_number = $this->generateJobOrderNumber();
+            $lastException = null;
+            $job_id = null;
+
+            for ($retry = 0; $retry < $maxRetries; $retry++) {
+                try {
+                    $stmt = $this->pdo->prepare("
+                        INSERT INTO job_orders
+                        (job_order_number, station_id, customer_id, vehicle_plate, vehicle_type,
+                         service_category_id, assigned_mechanic_id, assigned_by, service_description, 
+                         estimated_duration, status, notes, created_at, requires_approval,
+                         estimated_labor_cost, estimated_parts_cost)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
+                    ");
+                    
+                    $stmt->execute([
+                        $job_order_number,
+                        $this->station_id,
+                        $customer_id ?: null,
+                        $data['vehicle_plate'] ?? null,
+                        $data['vehicle_type'] ?? null,
+                        $data['service_category_id'],
+                        $assigned_mechanic_id,
+                        $this->user['id'],
+                        $data['service_description'] ?? 'General Service',
+                        (int)($data['estimated_duration'] ?? 60),
+                        $initial_status,
+                        $data['notes'] ?? null,
+                        $requires_approval ? 1 : 0,
+                        $estimated_costs['labor'],
+                        $estimated_costs['parts']
+                    ]);
+                    
+                    // Insert successful - exit retry loop
+                    $job_id = $this->pdo->lastInsertId();
+                    break;
+                    
+                } catch (PDOException $e) {
+                    $lastException = $e;
+                    
+                    if ($this->isDuplicateKeyException($e)) {
+                        // Generate new sequence number and retry
+                        $sequence = intval(explode('-', $job_order_number)[3]) + 1;
+                        $job_order_number = $this->generateJobOrderNumber($sequence);
+                        
+                        if ($retry < $maxRetries - 1) {
+                            continue; // Retry
+                        }
+                    }
+                    
+                    // Not a duplicate key or retries exhausted
+                    throw $e;
+                }
+            }
             
-            $stmt->execute([
-                $job_order_number,
-                $this->station_id,
-                $customer_id ?: null,
-                $data['vehicle_plate'] ?? null,
-                $data['vehicle_type'] ?? null,
-                $data['service_category_id'],
-                $assigned_mechanic_id,
-                $this->user['id'],
-                $data['service_description'] ?? 'General Service',
-                (int)($data['estimated_duration'] ?? 60),
-                $initial_status,
-                $data['notes'] ?? null,
-                $requires_approval ? 1 : 0,
-                $estimated_costs['labor'],
-                $estimated_costs['parts']
-            ]);
-            
-            $job_id = $this->pdo->lastInsertId();
+            if (!$job_id) {
+                throw new Exception('Failed to create job order after multiple attempts: ' . $lastException->getMessage());
+            }
             
             // Log activity
             log_activity(
@@ -762,20 +793,31 @@ class JobOrderOperations {
     }
     
     /**
-     * Generate Job Order Number
-     */
-    private function generateJobOrderNumber() {
+      * Generate Job Order Number
+      */
+    private function generateJobOrderNumber($sequence = null) {
         $date = date('Y-m-d');
-        $stmt = $this->pdo->prepare("
-            SELECT COUNT(*) + 1 as next_number
-            FROM job_orders
-            WHERE DATE(created_at) = CURDATE()
-              AND station_id = ?
-        ");
-        $stmt->execute([$this->station_id]);
-        $next = $stmt->fetchColumn();
+        
+        if ($sequence === null) {
+            $stmt = $this->pdo->prepare("
+                SELECT COUNT(*) + 1 as next_number
+                FROM job_orders
+                WHERE DATE(created_at) = CURDATE()
+                  AND station_id = ?
+            ");
+            $stmt->execute([$this->station_id]);
+            $next = $stmt->fetchColumn();
+        } else {
+            $next = $sequence;
+        }
         
         return 'JO-' . $date . '-' . str_pad($next, 4, '0', STR_PAD_LEFT);
+    }
+
+    private function isDuplicateKeyException($e) {
+        return $e instanceof PDOException && 
+               $e->errorInfo[0] === '23000' && // Integrity constraint violation
+               ($e->errorInfo[1] === 1062 || $e->errorInfo[1] === 1586); // Duplicate entry
     }
     
     /**

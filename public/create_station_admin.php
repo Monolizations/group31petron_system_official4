@@ -74,13 +74,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-function generateRandomPassword($length = 12) {
-    $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
-    $password = '';
-    for ($i = 0; $i < $length; $i++) {
-        $password .= $chars[rand(0, strlen($chars) - 1)];
-    }
-    return $password;
+function generateRandomPassword($length = 8) {
+    return 'petron' . rand(100, 999);
 }
 
 // --- FETCH STATIONS ---
@@ -450,7 +445,7 @@ document.querySelector('form').addEventListener('submit', function(e) {
 });
 
 <?php if ($notice && strpos($notice, 'successfully') !== false): ?>
-showToast('<?php echo htmlspecialchars($notice); ?>', 'success');
+alert('<?php echo htmlspecialchars(str_replace("'", "\\'", $notice)); ?>');
 <?php endif; ?>
 </script>
 

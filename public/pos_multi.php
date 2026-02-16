@@ -30,64 +30,54 @@ $error = '';
 $inventory = [];
 $fuelPricing = [];
 try {
-    // Load merchandise products
-    $stmt = $pdo->prepare("
-        SELECT p.*, i.stock_level, inv.unit as unit, i.status as inventory_status
-        FROM products p
-        INNER JOIN product_types pt ON p.type_id = pt.id
-        LEFT JOIN station_inventory i ON p.id = i.product_id AND i.station_id = ? AND i.status = 'active'
-        WHERE pt.name = 'merch' AND (i.status IS NULL OR i.status = 'active')
-        ORDER BY p.name
-    ");
-    $stmt->execute([$station_id]);
-    $merchProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Load fuel products with current pricing
-    $stmt = $pdo->prepare("
-        SELECT p.*, i.stock_level, inv.unit as unit, i.status as inventory_status,
-               fp.price_per_liter as price
-        FROM products p
-        INNER JOIN product_types pt ON p.type_id = pt.id
-        LEFT JOIN station_inventory i ON p.id = i.product_id AND i.station_id = ? AND i.status = 'active'
-        LEFT JOIN fuel_pricing fp ON fp.fuel_type_id = p.type_id AND fp.station_id = ? AND fp.is_active = 1
-        WHERE pt.name = 'fuel' AND (i.status IS NULL OR i.status = 'active')
-        ORDER BY p.name
-    ");
-    $stmt->execute([$station_id, $station_id]);
-    $fuelProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Fallback to products.price if fuel_pricing not available
-    foreach ($fuelProducts as &$fp) {
-        if (!$fp['price'] && $fp['price'] > 0) {
-            $fp['price'] = $fp['price'] ?? $fp['price'];
-        }
-    }
-    
-    $inventory = [
-        'fuel' => $fuelProducts,
-        'merch' => $merchProducts
-    ];
-    
-    // Load all fuel pricing for display
-    $stmt = $pdo->prepare("
-        SELECT fp.*, ft.name as fuel_name
-        FROM fuel_pricing fp
-        INNER JOIN fuel_types ft ON fp.fuel_type_id = ft.id
-        WHERE fp.station_id = ? AND fp.is_active = 1
-        ORDER BY ft.name
-    ");
-    $stmt->execute([$station_id]);
-    $fuelPricing = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+     // Load merchandise products
+     $stmt = $pdo->prepare("
+         SELECT p.id, p.name, p.price, p.sku, i.stock_level, i.unit, i.status as inventory_status, pt.name as type_name, p.type_id
+         FROM products p
+         INNER JOIN product_types pt ON p.type_id = pt.id
+         INNER JOIN station_inventory i ON p.id = i.product_id AND i.station_id = ? AND i.status = 'active'
+         WHERE pt.name = 'merch'
+         ORDER BY p.name
+     ");
+     $stmt->execute([$station_id]);
+     $merchProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+     
+     // Load fuel products
+     $stmt = $pdo->prepare("
+         SELECT p.id, p.name, p.price, p.sku, i.stock_level, i.unit, i.status as inventory_status, pt.name as type_name, p.type_id,
+                fp.price_per_liter as price
+         FROM products p
+         INNER JOIN product_types pt ON p.type_id = pt.id
+         INNER JOIN station_inventory i ON p.id = i.product_id AND i.station_id = ? AND i.status = 'active'
+         LEFT JOIN fuel_pricing fp ON fp.fuel_type_id = p.type_id AND fp.station_id = ? AND fp.is_active = 1
+         WHERE pt.name = 'fuel'
+         ORDER BY p.name
+     ");
+     $stmt->execute([$station_id, $station_id]);
+     $fuelProducts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+     
+     // Combine both
+     $inventory = [
+         'merch' => $merchProducts,
+         'fuel' => $fuelProducts
+     ];
+     
 } catch (Exception $e) {
-    $inventory = ['fuel' => [], 'merch' => []];
-    $fuelPricing = [];
-}
+     $inventory = ['merch' => [], 'fuel' => []];
+ }
 
 // Handle multi-product transaction
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customer_name = $_POST['customer_name'] ?? 'Walk-in';
-    $items = $_POST['items'] ?? [];
+    
+    // Parse items from JSON if it's a string
+    $items_raw = $_POST['items'] ?? '[]';
+    if (is_string($items_raw)) {
+        $items = json_decode($items_raw, true) ?? [];
+    } else {
+        $items = $items_raw;
+    }
+    
     $payment_type = $_POST['payment_type'] ?? 'Cash';
     $gcash_ref_number = trim($_POST['gcash_ref_number'] ?? '');
     $discount = (float)($_POST['discount'] ?? 0);
@@ -98,114 +88,158 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg = "❌ Error: Customer name is required.";
     } elseif (empty($payment_type)) {
         $msg = "❌ Error: Payment type is required.";
-    } else {
-        try {
-            $pdo->beginTransaction();
-            
-            $total = 0;
-            $item_details = [];
-            
-            // Validate and process each item
-            foreach ($items as $item) {
-                $product_id = (int)($item['product_id'] ?? 0);
-                $quantity = (int)($item['quantity'] ?? 0);
-                
-                if ($product_id <= 0 || $quantity <= 0) {
-                    $pdo->rollBack();
-                    $msg = "❌ Error: Invalid product or quantity.";
-                    break 2;
-                }
-                
-                // Get product details
-                $stmt = $pdo->prepare("SELECT p.name, pt.name as type_name, inv.unit, p.price FROM products p INNER JOIN product_types pt ON p.type_id = pt.id WHERE p.id = ?");
-                $stmt->execute([$product_id]);
-                $product = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if (!$product) {
-                    $pdo->rollBack();
-                    $msg = "❌ Error: Product not found for ID: $product_id";
-                    break 2;
-                }
-                
-                // Get product details
-                $stmt = $pdo->prepare("SELECT p.name, pt.name as type_name, inv.unit, p.price FROM products p INNER JOIN product_types pt ON p.type_id = pt.id WHERE p.id = ?");
-                $stmt->execute([$product_id]);
-                $product = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if (!$product) {
-                    $pdo->rollBack();
-                    $msg = "❌ Error: Product not found for ID: $product_id";
-                    break 2;
-                }
-                
-                // Check stock availability
-                $stmt = $pdo->prepare("SELECT stock_level FROM station_inventory WHERE product_id = ? AND station_id = ?");
-                $stmt->execute([$product_id, $station_id]);
-                $stock = $stmt->fetchColumn();
-                
-                if ($stock === null || $stock === false || $stock < $quantity) {
-                    $pdo->rollBack();
-                    $msg = "❌ Error: Insufficient stock for {$product['name']}. Available: {$stock} {$product['inv_unit']}. Requested: {$quantity} {$product['inv_unit']}.";
-                    break 2;
-                }
-                
-                $item_price = $product['price'];
-                $item_total = $quantity * $item_price;
-                $total += $item_total;
-                
-                $item_details[] = [
-                    'name' => $product['name'],
-                    'quantity' => $quantity,
-                    'price' => $item_price,
-                    'unit_price' => $item_price,
-                    'total' => $item_total,
-                    'unit' => $product['unit']
-                ];
-            }
-            
-            // Apply discount to total
-            $final_total = $total - $discount;
-            
-            if ($final_total <= 0) {
-                $pdo->rollBack();
-                $msg = "❌ Error: Total amount must be greater than 0.";
-            } elseif ($msg === '') {
-                // Insert sale
-                $initial_status = $isAdmin ? 'Completed' : 'Pending';
-                $sale_id = uniqid('SALE-');
-                $is_locked = $isAdmin ? 1 : 0;
-                
-                $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, sale_date, sale_time, payment_method, total, status, created_at, gcash_ref_number) VALUES (?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, NOW(), ?)");
-                $stmt->execute([$sale_id, $station_id, $me['id'], $payment_type, $final_total, $initial_status, $gcash_ref_number]);
-                $last_sale_id = $sale_id;
-                
-                // Add name column if it doesn't exist
-                try {
-                    $pdo->exec("ALTER TABLE sale_items ADD COLUMN name VARCHAR(255) NULL AFTER product_id");
-                } catch (PDOException $e) {
-                    // Column already exists, ignore
-                }
-                
-                // Insert items
-                $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, name, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?)");
-                foreach ($item_details as $item) {
-                    $stmtItem->execute([$sale_id, $item['product_id'], $item['name'], $item['quantity'], $item['unit_price'], $item['total']]);
-                    
-                    // Deduct stock for each item
-                    $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
-                    $stmtStock->execute([$item['quantity'], $item['product_id'], $station_id]);
-                }
-                
-                $pdo->commit();
-                $msg = "✅ Transaction completed successfully. Stock deducted immediately for all items.";
-            }
-        } catch (Exception $e) {
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
-            }
-            $msg = "❌ Error: " . $e->getMessage();
-        }
-    }
+     } else {
+         try {
+             $pdo->beginTransaction();
+             
+             $total = 0;
+             $item_details = [];
+             $validation_error = '';
+             
+              // Validate and process each item
+              foreach ($items as $item) {
+                  if ($validation_error) break; // Exit loop if error found
+                  
+                  $product_id = (int)($item['product_id'] ?? 0);
+                  $quantity = (int)($item['quantity'] ?? 0);
+                  $pump_id = !empty($item['pump_id']) ? (int)$item['pump_id'] : null;
+                  $nozzle_id = !empty($item['nozzle_id']) ? (int)$item['nozzle_id'] : null;
+                  
+                  if ($product_id <= 0 || $quantity <= 0) {
+                      $validation_error = "❌ Error: Invalid product or quantity.";
+                      break;
+                  }
+                  
+                  // Get product details
+                  $stmt = $pdo->prepare("SELECT p.id as product_id, p.name, pt.name as type_name, si.unit, p.price, p.type_id FROM products p INNER JOIN product_types pt ON p.type_id = pt.id INNER JOIN station_inventory si ON p.id = si.product_id AND si.station_id = ? WHERE p.id = ?");
+                  $stmt->execute([$station_id, $product_id]);
+                  $product = $stmt->fetch(PDO::FETCH_ASSOC);
+                  
+                  if (!$product) {
+                      $validation_error = "❌ Error: Product not found (ID: $product_id)";
+                      break;
+                  }
+                  
+                  // Validate pump and nozzle for fuel products
+                  if ($product['type_name'] === 'fuel') {
+                      if (empty($pump_id)) {
+                          $validation_error = "❌ Error: Pump selection is required for {$product['name']}";
+                          break;
+                      } elseif (empty($nozzle_id)) {
+                          $validation_error = "❌ Error: Nozzle selection is required for {$product['name']}";
+                          break;
+                      }
+                      
+                      // Validate pump exists and belongs to this station
+                      $stmt = $pdo->prepare("SELECT id FROM fuel_pumps WHERE id = ? AND station_id = ? AND status = 'Active'");
+                      $stmt->execute([$pump_id, $station_id]);
+                      if (!$stmt->fetch()) {
+                          $validation_error = "❌ Error: Invalid pump selection for {$product['name']}";
+                          break;
+                      }
+                      
+                      // Validate nozzle exists and belongs to the pump
+                      $stmt = $pdo->prepare("SELECT id FROM nozzles WHERE id = ? AND pump_id = ? AND status = 'active'");
+                      $stmt->execute([$nozzle_id, $pump_id]);
+                      if (!$stmt->fetch()) {
+                          $validation_error = "❌ Error: Invalid nozzle selection for {$product['name']}";
+                          break;
+                      }
+                  }
+                  
+                  // Check stock availability
+                  $stmt = $pdo->prepare("SELECT stock_level FROM station_inventory WHERE product_id = ? AND station_id = ?");
+                  $stmt->execute([$product_id, $station_id]);
+                  $stock = $stmt->fetchColumn();
+                  
+                  if ($stock === null || $stock === false || $stock < $quantity) {
+                      $validation_error = "❌ Error: Insufficient stock for {$product['name']}. Available: {$stock} {$product['unit']}. Requested: {$quantity} {$product['unit']}.";
+                      break;
+                  }
+                  
+                  $item_price = $product['price'];
+                  $item_total = $quantity * $item_price;
+                  $total += $item_total;
+                  
+                  $item_details[] = [
+                      'product_id' => $product['product_id'],
+                      'name' => $product['name'],
+                      'type_name' => $product['type_name'],
+                      'quantity' => $quantity,
+                      'price' => $item_price,
+                      'unit_price' => $item_price,
+                      'total' => $item_total,
+                      'unit' => $product['unit'],
+                      'pump_id' => $pump_id,
+                      'nozzle_id' => $nozzle_id
+                  ];
+               }
+              
+              // Apply discount to total
+              $final_total = $total - $discount;
+              
+               if ($validation_error) {
+                   if ($pdo->inTransaction()) {
+                       $pdo->rollBack();
+                   }
+                   $msg = $validation_error;
+               } elseif ($final_total <= 0) {
+                   if ($pdo->inTransaction()) {
+                       $pdo->rollBack();
+                   }
+                   $msg = "❌ Error: Total amount must be greater than 0.";
+               } else {
+                 // Insert sale
+                 $initial_status = $isAdmin ? 'Completed' : 'Pending';
+                 $sale_id = uniqid('SALE-');
+                 $is_locked = $isAdmin ? 1 : 0;
+                 
+                 // Add pump_id column if it doesn't exist
+                 try {
+                     $pdo->exec("ALTER TABLE sales ADD COLUMN pump_id INT NULL");
+                 } catch (PDOException $e) {
+                     // Column already exists, ignore
+                 }
+                 
+                 $stmt = $pdo->prepare("INSERT INTO sales (id, station_id, user_id, sale_date, sale_time, payment_method, total, status, pump_id, created_at, gcash_ref_number) VALUES (?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, NOW(), ?)");
+                 $stmt->execute([$sale_id, $station_id, $me['id'], $payment_type, $final_total, $initial_status, $item_details[0]['pump_id'] ?? null, $gcash_ref_number]);
+                 $last_sale_id = $sale_id;
+                 
+                 // Add name column if it doesn't exist
+                 try {
+                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN name VARCHAR(255) NULL AFTER product_id");
+                 } catch (PDOException $e) {
+                     // Column already exists, ignore
+                 }
+                 
+                 // Add pump_id and nozzle_id columns if they don't exist
+                 try {
+                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN pump_id INT NULL");
+                     $pdo->exec("ALTER TABLE sale_items ADD COLUMN nozzle_id INT NULL");
+                 } catch (PDOException $e) {
+                     // Columns already exist, ignore
+                 }
+                 
+                 // Insert items
+                 $stmtItem = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, name, pump_id, nozzle_id, quantity, unit_price, total_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                 foreach ($item_details as $item) {
+                     $stmtItem->execute([$sale_id, $item['product_id'], $item['name'], $item['pump_id'], $item['nozzle_id'], $item['quantity'], $item['unit_price'], $item['total']]);
+                     
+                     // Deduct stock for each item
+                     $stmtStock = $pdo->prepare("UPDATE station_inventory SET stock_level = stock_level - ? WHERE product_id = ? AND station_id = ?");
+                     $stmtStock->execute([$item['quantity'], $item['product_id'], $station_id]);
+                 }
+                 
+                  $pdo->commit();
+                  $msg = "✅ Transaction completed successfully. Stock deducted immediately for all items.";
+              }
+         } catch (Exception $e) {
+             if ($pdo->inTransaction()) {
+                 $pdo->rollBack();
+             }
+             $msg = "❌ Error: " . $e->getMessage();
+         }
+     }
 }
 
 include __DIR__ . '/../partials/header.php';
@@ -225,8 +259,8 @@ include __DIR__ . '/../partials/header.php';
 <script>setTimeout(() => { const el = document.getElementById('toast'); if(el) el.remove(); }, <?php echo strpos($msg, 'Error') !== false ? '8000' : '3000'; ?>);</script>
 <?php endif; ?>
 
-<?php if (!$isAdmin): ?>
-<!-- STAFF VIEW: Multi-Product Encoding Form -->
+<?php if (true): ?>
+<!-- Multi-Product Transaction Form (for all users) -->
 <div class="card" style="padding: 20px; max-width: 1200px; margin: 0 auto;">
     <form method="post" id="posMultiForm">
         <div style="margin-bottom: 30px;">
@@ -251,32 +285,60 @@ include __DIR__ . '/../partials/header.php';
             <h3 style="margin: 0 0 20px 0; color: #003d7a;">Transaction Items</h3>
             
             <!-- Add New Item Section -->
-            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 15px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px dashed #ccc;">
-                <div>
-                    <div class="form-group mb-3">
-                        <label class="lbl">Product Type</label>
-                        <select name="new_item_type" id="add_product_type" class="inp full" required onchange="loadAddProducts()">
-                            <option value="">Select Type</option>
-                            <option value="fuel">Fuel</option>
-                            <option value="merch">Merchandise</option>
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <div class="form-group mb-3">
-                        <label class="lbl">Product</label>
-                        <select name="new_product_id" id="add_product_id" class="inp full" required onchange="prepareNewItem()">
-                            <option value="">Select Product</option>
-                        </select>
-                        <small class="muted" id="add_stock_info">Select a product type first</small>
-                    </div>
-                </div>
-                <div style="display: flex; align-items: flex-end;">
-                    <button type="button" onclick="addItem()" class="btn primary">
-                        <i class="fas fa-plus"></i> Add Item
-                    </button>
-                </div>
-            </div>
+             <div style="display: grid; grid-template-columns: 1fr 2fr 1fr 1fr; gap: 15px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px dashed #ccc;">
+                 <div>
+                      <div class="form-group mb-3">
+                          <label class="lbl">Type</label>
+                          <select id="add_product_type" class="inp full" onchange="loadProductsMulti()">
+                              <option value="">Select Type</option>
+                              <option value="fuel">Fuel</option>
+                              <option value="merch">Merchandise</option>
+                          </select>
+                      </div>
+                 </div>
+                 <div>
+                      <div class="form-group mb-3">
+                          <label class="lbl">Product</label>
+                          <select name="new_product_id" id="add_product_id" class="inp full" onchange="updateProductInfoMulti()">
+                              <option value="">Select Product</option>
+                          </select>
+                          <small class="muted" id="add_stock_info"></small>
+                      </div>
+                 </div>
+                 <div>
+                      <div class="form-group mb-3">
+                          <label class="lbl">Quantity</label>
+                          <input type="number" id="add_quantity" class="inp full" min="1" value="1">
+                      </div>
+                 </div>
+                 <div style="display: flex; align-items: flex-end;">
+                     <button type="button" onclick="addItemMulti()" class="btn primary">
+                         <i class="fas fa-plus"></i> Add
+                     </button>
+                 </div>
+             </div>
+             
+             <!-- Pump & Nozzle Selection (shown only for fuel) -->
+             <div id="pump_nozzle_section" style="display: none; background: #e8f4f8; padding: 15px; margin-bottom: 20px; border-radius: 4px; border-left: 4px solid #0066cc;">
+                 <h4 style="margin-top: 0;">Fuel Product Details</h4>
+                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                     <div class="form-group mb-3">
+                         <label class="lbl">Pump <span style="color: red;">*</span></label>
+                         <select id="add_pump_id" class="inp full" onchange="loadNozzlesMulti()">
+                             <option value="">Select Pump</option>
+                         </select>
+                         <small class="muted" id="add_pump_info"></small>
+                     </div>
+                     <div class="form-group mb-3">
+                         <label class="lbl">Nozzle <span style="color: red;">*</span></label>
+                         <select id="add_nozzle_id" class="inp full">
+                             <option value="">Select Nozzle</option>
+                         </select>
+                         <small class="muted" id="add_nozzle_info"></small>
+                     </div>
+                 </div>
+              </div>
+             </div>
             
             <!-- Items List Container -->
             <div id="items-container">
@@ -416,130 +478,303 @@ include __DIR__ . '/../partials/header.php';
 </style>
 
 <script>
-// Product data loaded from PHP
+// Product data loaded from PHP - supports both fuel and merchandise
 const inventoryData = <?php echo json_encode($inventory); ?>;
+console.log('Inventory Data:', inventoryData);
 let items = [];
 let itemIdCounter = 0;
+let currentFuelTypeId = null;
 
-function loadAddProducts() {
-    const type = document.getElementById('add_product_type').value;
-    const productSelect = document.getElementById('add_product_id');
-    const stockInfo = document.getElementById('add_stock_info');
-    
-    productSelect.innerHTML = '<option value="">Select Product</option>';
-    
-    if (type && inventoryData[type]) {
-        inventoryData[type].forEach(product => {
-            const option = document.createElement('option');
-            option.value = product.id;
-            
-            const stockLevel = parseFloat(product.stock_level) || 0;
-            const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
-            const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.inv_unit || 'pc'})`;
-            
-            option.textContent = `${product.name}${stockText}`;
-            option.dataset.price = product.price || 0;
-            option.dataset.stock = stockLevel;
-            option.dataset.unit = product.inv_unit || '';
-            option.style = stockClass;
-            
-            productSelect.appendChild(option);
-        });
-        stockInfo.textContent = `Found ${inventoryData[type].length} products`;
-    } else {
-        stockInfo.textContent = 'Select a product type first';
-    }
+// Load products based on type selection
+function loadProductsMulti() {
+     const typeSelect = document.getElementById('add_product_type');
+     const productSelect = document.getElementById('add_product_id');
+     const stockInfo = document.getElementById('add_stock_info');
+     const pumpNozzleSection = document.getElementById('pump_nozzle_section');
+     const type = typeSelect.value;
+     
+     productSelect.innerHTML = '<option value="">Select Product</option>';
+     
+     if (type && inventoryData[type]) {
+         inventoryData[type].forEach(product => {
+             const option = document.createElement('option');
+             option.value = product.id;
+             
+             const stockLevel = parseFloat(product.stock_level) || 0;
+             const stockClass = stockLevel <= 0 ? 'color: #dc3545; font-weight: bold;' : '';
+             const stockText = stockLevel <= 0 ? ' (OUT OF STOCK)' : ` (Stock: ${stockLevel} ${product.unit || 'pc'})`;
+             
+             option.textContent = `${product.name}${stockText}`;
+             option.dataset.price = product.price || 0;
+             option.dataset.stock = stockLevel;
+             option.dataset.unit = product.unit || '';
+             option.dataset.typeId = product.type_id || '';
+             option.style = stockClass;
+             
+             productSelect.appendChild(option);
+         });
+         
+         stockInfo.textContent = `${inventoryData[type].length} ${type} products available`;
+         
+         // Show pump/nozzle section for fuel products
+         if (type === 'fuel') {
+             pumpNozzleSection.style.display = 'block';
+         } else {
+             pumpNozzleSection.style.display = 'none';
+         }
+     } else {
+         stockInfo.textContent = 'Select a product type first';
+         pumpNozzleSection.style.display = 'none';
+     }
 }
 
-function prepareNewItem() {
-    const productSelect = document.getElementById('add_product_id');
-    const selectedOption = productSelect.options[productSelect.selectedIndex];
-    
-    if (selectedOption && selectedOption.value) {
-        const stockLevel = parseFloat(selectedOption.dataset.stock) || 0;
-        if (stockLevel <= 0) {
-            alert('This product is out of stock. Please select a different product.');
-            return false;
-        }
-    }
-    return true;
+// Update product info and load pumps if fuel
+function updateProductInfoMulti() {
+     const productSelect = document.getElementById('add_product_id');
+     const selectedOption = productSelect.options[productSelect.selectedIndex];
+     const typeSelect = document.getElementById('add_product_type');
+     const type = typeSelect.value;
+     
+     if (type === 'fuel' && selectedOption && selectedOption.value) {
+         currentFuelTypeId = selectedOption.dataset.typeId;
+         loadPumpsMulti(currentFuelTypeId);
+     }
 }
 
-function addItem() {
-    const productSelect = document.getElementById('add_product_id');
-    const selectedOption = productSelect.options[productSelect.selectedIndex];
-    
-    if (!selectedOption || !selectedOption.value) {
-        alert('Please select a product first.');
-        return;
-    }
-    
-    const stockLevel = parseFloat(selectedOption.dataset.stock) || 0;
-    if (stockLevel <= 0) {
-        alert('This product is out of stock. Please select a different product.');
-        return;
-    }
-    
-    const newItem = {
-        id: ++itemIdCounter,
-        product_id: parseInt(selectedOption.value),
-        name: selectedOption.textContent.split(' (')[0].trim(),
-        price: parseFloat(selectedOption.dataset.price) || 0,
-        unit: selectedOption.dataset.unit || '',
-        stock_level: stockLevel,
-        quantity: 1
-    };
-    
-    items.push(newItem);
-    renderItems();
-    calculateGrandTotal();
+// Load pumps for fuel type
+async function loadPumpsMulti(fuelTypeId) {
+     const pumpSelect = document.getElementById('add_pump_id');
+     const pumpInfo = document.getElementById('add_pump_info');
+     
+     // Reset nozzles when pump changes
+     document.getElementById('add_nozzle_id').innerHTML = '<option value="">Select Nozzle</option>';
+     
+     if (!fuelTypeId) {
+         pumpSelect.innerHTML = '<option value="">Select Pump</option>';
+         pumpInfo.textContent = 'Select fuel product first';
+         return;
+     }
+     
+     try {
+         const response = await fetch(`../backend/api/pumps.php?action=get_by_fuel_type&fuel_type_id=${fuelTypeId}`);
+         const data = await response.json();
+         
+         if (data.success) {
+             pumpSelect.innerHTML = '<option value="">Select Pump</option>';
+             
+             if (data.data.length === 0) {
+                 pumpInfo.textContent = '⚠️ No active pumps available for this fuel type';
+                 pumpSelect.disabled = true;
+             } else {
+                 data.data.forEach(pump => {
+                     const option = document.createElement('option');
+                     option.value = pump.id;
+                     option.textContent = `Pump ${pump.pump_number}`;
+                     pumpSelect.appendChild(option);
+                 });
+                 pumpInfo.textContent = `Found ${data.data.length} active pump(s)`;
+                 pumpSelect.disabled = false;
+             }
+         } else {
+             pumpInfo.textContent = '❌ Error loading pumps: ' + (data.error || 'Unknown error');
+             pumpSelect.disabled = true;
+         }
+     } catch (error) {
+         pumpInfo.textContent = '❌ Error: ' + error.message;
+         pumpSelect.disabled = true;
+     }
 }
+
+// Load nozzles for pump
+async function loadNozzlesMulti() {
+     const pumpId = document.getElementById('add_pump_id').value;
+     const nozzleSelect = document.getElementById('add_nozzle_id');
+     const nozzleInfo = document.getElementById('add_nozzle_info');
+     
+     if (!pumpId) {
+         nozzleSelect.innerHTML = '<option value="">Select Nozzle</option>';
+         nozzleInfo.textContent = 'Select pump first';
+         return;
+     }
+     
+     try {
+         const response = await fetch(`../backend/api/nozzles.php?action=get_by_pump&pump_id=${pumpId}`);
+         const data = await response.json();
+         
+         if (data.success) {
+             nozzleSelect.innerHTML = '<option value="">Select Nozzle</option>';
+             
+             if (data.data.length === 0) {
+                 nozzleInfo.textContent = '⚠️ No active nozzles available for this pump';
+                 nozzleSelect.disabled = true;
+             } else {
+                 data.data.forEach(nozzle => {
+                     const option = document.createElement('option');
+                     option.value = nozzle.id;
+                     option.textContent = `Nozzle ${nozzle.nozzle_number}`;
+                     nozzleSelect.appendChild(option);
+                 });
+                 nozzleInfo.textContent = `Found ${data.data.length} active nozzle(s)`;
+                 nozzleSelect.disabled = false;
+             }
+         } else {
+             nozzleInfo.textContent = '❌ Error loading nozzles: ' + (data.error || 'Unknown error');
+             nozzleSelect.disabled = true;
+         }
+     } catch (error) {
+         nozzleInfo.textContent = '❌ Error: ' + error.message;
+         nozzleSelect.disabled = true;
+     }
+}
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', function() {
+     // Initialize is handled by product type selection now
+});
+
+
+function addItemMulti() {
+     console.log('addItemMulti called, current items:', items);
+     const typeSelect = document.getElementById('add_product_type');
+     const productSelect = document.getElementById('add_product_id');
+     const quantityInput = document.getElementById('add_quantity');
+     const selectedOption = productSelect.options[productSelect.selectedIndex];
+     const type = typeSelect.value;
+     
+     // Validation
+     if (!type) {
+         alert('Please select a product type first.');
+         return;
+     }
+     
+     if (!selectedOption || !selectedOption.value) {
+         alert('Please select a product first.');
+         return;
+     }
+     
+     const quantity = parseInt(quantityInput.value) || 0;
+     if (quantity <= 0) {
+         alert('Quantity must be greater than 0.');
+         return;
+     }
+     
+     const stockLevel = parseFloat(selectedOption.dataset.stock) || 0;
+     if (stockLevel <= 0) {
+         alert('This product is out of stock. Please select a different product.');
+         return;
+     }
+     
+     if (quantity > stockLevel) {
+         alert(`Insufficient stock! Available: ${stockLevel} ${selectedOption.dataset.unit || 'pc'}`);
+         return;
+     }
+     
+     // For fuel products, validate pump and nozzle
+     if (type === 'fuel') {
+         const pumpId = document.getElementById('add_pump_id').value;
+         const nozzleId = document.getElementById('add_nozzle_id').value;
+         
+         if (!pumpId) {
+             alert('Pump selection is required for fuel products.');
+             return;
+         }
+         
+         if (!nozzleId) {
+             alert('Nozzle selection is required for fuel products.');
+             return;
+         }
+         
+         const newItem = {
+             id: ++itemIdCounter,
+             product_id: parseInt(selectedOption.value),
+             name: selectedOption.textContent.split(' (')[0].trim(),
+             price: parseFloat(selectedOption.dataset.price) || 0,
+             unit: selectedOption.dataset.unit || '',
+             stock_level: stockLevel,
+             quantity: quantity,
+             pump_id: parseInt(pumpId),
+             nozzle_id: parseInt(nozzleId),
+             type: 'fuel'
+         };
+         
+         console.log('Adding fuel item:', newItem);
+         items.push(newItem);
+     } else {
+         const newItem = {
+             id: ++itemIdCounter,
+             product_id: parseInt(selectedOption.value),
+             name: selectedOption.textContent.split(' (')[0].trim(),
+             price: parseFloat(selectedOption.dataset.price) || 0,
+             unit: selectedOption.dataset.unit || '',
+             stock_level: stockLevel,
+             quantity: quantity,
+             type: 'merch'
+         };
+         
+         console.log('Adding merchandise item:', newItem);
+         items.push(newItem);
+     }
+     
+     // Reset form
+     document.getElementById('add_product_type').value = '';
+     document.getElementById('add_product_id').innerHTML = '<option value="">Select Product</option>';
+     document.getElementById('add_quantity').value = '1';
+     document.getElementById('add_pump_id').innerHTML = '<option value="">Select Pump</option>';
+     document.getElementById('add_nozzle_id').innerHTML = '<option value="">Select Nozzle</option>';
+     document.getElementById('pump_nozzle_section').style.display = 'none';
+     
+     console.log('Items after push:', items);
+     renderItems();
+     calculateGrandTotal();
+ }
 
 function renderItems() {
-    const container = document.getElementById('items-container');
-    
-    if (items.length === 0) {
-        container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No items added yet. Click "Add Item" to add products to the transaction.</p>';
-        document.getElementById('total_items').textContent = '0';
-        return;
-    }
-    
-    container.innerHTML = '';
-    let grandTotal = 0;
-    
-    items.forEach((item, index) => {
-        const subtotal = item.quantity * item.price;
-        grandTotal += subtotal;
-        
-        const html = `
-            <div class="item-row" data-index="${index}">
-                <div class="item-info">
-                    <span class="item-name">${item.name}</span>
-                    <span class="item-stock">${item.stock_level} ${item.unit} available</span>
-                </div>
-                <div class="item-controls">
-                    <div style="display: flex; align-items: center; gap: 5px;">
-                        <label style="font-size: 12px;">Qty:</label>
-                        <input type="number" value="${item.quantity}" 
-                               onchange="updateItem(${index}, 'quantity', this.value)"
-                               min="1" class="item-qty">
-                    </div>
-                    <input type="number" value="${item.price}" 
-                           readonly
-                           class="item-price">
-                    <span class="item-subtotal">₱${subtotal.toFixed(2)}</span>
-                    <button type="button" onclick="removeItem(${index})" class="btn small danger">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-        `;
-        container.innerHTML += html;
-    });
-    
-    document.getElementById('total_items').textContent = items.length;
-    calculateGrandTotal();
-}
+     const container = document.getElementById('items-container');
+     
+     if (items.length === 0) {
+         container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No items added yet. Click "Add Item" to add products to the transaction.</p>';
+         document.getElementById('total_items').textContent = '0';
+         return;
+     }
+     
+     container.innerHTML = '';
+     let grandTotal = 0;
+     
+     items.forEach((item, index) => {
+         const subtotal = item.quantity * item.price;
+         grandTotal += subtotal;
+         
+         const fuelInfo = item.type === 'fuel' ? ` | Pump: ${item.pump_id}, Nozzle: ${item.nozzle_id}` : '';
+         
+         const html = `
+             <div class="item-row" data-index="${index}">
+                 <div class="item-info">
+                     <span class="item-name">${item.name}</span>
+                     <span class="item-stock">${item.stock_level} ${item.unit} available${fuelInfo}</span>
+                 </div>
+                 <div class="item-controls">
+                     <div style="display: flex; align-items: center; gap: 5px;">
+                         <label style="font-size: 12px;">Qty:</label>
+                         <input type="number" value="${item.quantity}" 
+                                onchange="updateItem(${index}, 'quantity', this.value)"
+                                min="1" class="item-qty">
+                     </div>
+                     <input type="number" value="${item.price}" 
+                            readonly
+                            class="item-price">
+                     <span class="item-subtotal">₱${subtotal.toFixed(2)}</span>
+                     <button type="button" onclick="removeItem(${index})" class="btn small danger">
+                         <i class="fas fa-times"></i>
+                     </button>
+                 </div>
+             </div>
+         `;
+         container.innerHTML += html;
+     });
+     
+     document.getElementById('total_items').textContent = items.length;
+     calculateGrandTotal();
+ }
 
 function updateItem(index, field, value) {
     const item = items[index];
@@ -573,8 +808,7 @@ function clearForm() {
     items = [];
     renderItems();
     document.getElementById('add_product_id').value = '';
-    document.getElementById('add_product_type').value = '';
-    document.getElementById('add_stock_info').textContent = 'Select a product type first';
+    document.getElementById('add_stock_info').textContent = '';
 }
 
 function calculateGrandTotal() {
@@ -605,6 +839,7 @@ function toggleGcashRef() {
 }
 
 function validateForm() {
+    const form = document.getElementById('posMultiForm');
     const customerName = document.querySelector('input[name="customer_name"]').value.trim();
     const paymentType = document.getElementById('payment_method_pos').value;
     const gcashRefInput = document.getElementById('gcash_ref_number');
@@ -628,6 +863,21 @@ function validateForm() {
         alert('GCash reference number is required for GCash payments.');
         return false;
     }
+    
+    // Serialize items array into hidden input field
+    // Remove any existing items input
+    const existingItemsInput = document.getElementById('items_input');
+    if (existingItemsInput) {
+        existingItemsInput.remove();
+    }
+    
+    // Create hidden input with JSON-encoded items
+    const itemsInput = document.createElement('input');
+    itemsInput.type = 'hidden';
+    itemsInput.id = 'items_input';
+    itemsInput.name = 'items';
+    itemsInput.value = JSON.stringify(items);
+    form.appendChild(itemsInput);
     
     return true;
 }

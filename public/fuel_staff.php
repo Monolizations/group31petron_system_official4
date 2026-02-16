@@ -1,8 +1,70 @@
 <?php
 $page_id = 'fuel_staff';
+session_start();
+
+// AJAX: Get previous reading for a pump (moved before require_login)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'get_previous_reading') {
+    require_once __DIR__ . '/../public/db_connect.php';
+    
+    $pump_id = $_GET['pump_id'] ?? 0;
+    
+    // Simple session check
+    if (!isset($_SESSION['user_id'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Not authenticated']);
+        exit;
+    }
+    
+    if ($pump_id) {
+        try {
+            // Get user's station_id
+            $stmt = $pdo->prepare("SELECT station_id FROM users WHERE id = ?");
+            $stmt->execute([$_SESSION['user_id']]);
+            $user = $stmt->fetch();
+            
+            if (!$user) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'User not found']);
+                exit;
+            }
+            
+            $station_id = $user['station_id'];
+            
+            // Verify pump belongs to user's station
+            $stmt = $pdo->prepare("SELECT station_id FROM fuel_pumps WHERE id = ?");
+            $stmt->execute([$pump_id]);
+            $pump = $stmt->fetch();
+            
+            if (!$pump || $pump['station_id'] != $station_id) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Pump not found or access denied']);
+                exit;
+            }
+            
+            // Get last reading
+            $stmt = $pdo->prepare("SELECT current_reading FROM fuel_daily_readings WHERE pump_id = ? ORDER BY reading_date DESC, shift DESC LIMIT 1");
+            $stmt->execute([$pump_id]);
+            $last_reading = $stmt->fetch();
+            
+            $previous_reading = $last_reading ? $last_reading['current_reading'] : 0;
+            header('Content-Type: application/json');
+            echo json_encode(['success' => true, 'previous_reading' => $previous_reading]);
+        } catch (PDOException $e) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+    } else {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Invalid pump ID']);
+    }
+    exit;
+}
+
 require_once __DIR__ . '/../backend/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
 require_once __DIR__ . '/../backend/fuel_pos_sync.php';
+require_once __DIR__ . '/../backend/inventory_automation.php';
+
 require_login();
 
 $me = current_user();
@@ -116,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         if (!$isStaff) {
             $msg = "❌ Error: Only authorized users can record pump readings.";
         } else {
-            $fuel_station_id = $_POST['fuel_station_id'] ?? $_POST['pump_id'] ?? '';
+            $pump_id = $_POST['pump_id'] ?? '';
             $reading_date = $_POST['reading_date'];
             $shift = $_POST['shift'];
             $previous_reading = (float)$_POST['previous_reading'];
@@ -127,13 +189,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             // Calculate sales liters
             $sales_liters = $current_reading - $previous_reading - $calibration;
             
-            if ($fuel_station_id && $reading_date && $shift) {
+            if ($pump_id && $reading_date && $shift) {
                 try {
-                    // Check if fuel_stations table uses 'fuel_station_id' or 'pump_id'
-                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, fuel_station_id, reading_date, shift, previous_reading, current_reading, calibration, sales_liters, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
-                    $stmt->execute([$station_id, $fuel_station_id, $reading_date, $shift, $previous_reading, $current_reading, $calibration, $sales_liters, $me['id'], $notes]);
+                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, calibration, sales_liters, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
+                    $stmt->execute([$station_id, $pump_id, $reading_date, $shift, $previous_reading, $current_reading, $calibration, $sales_liters, $me['id'], $notes]);
                     
-                    log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$fuel_station_id ($shift shift)", 'fuel_management');
+                    // Get pump details for stock update
+                    $stmtPump = $pdo->prepare("SELECT fuel_type_id FROM fuel_pumps WHERE id = ?");
+                    $stmtPump->execute([$pump_id]);
+                    $pump = $stmtPump->fetch(PDO::FETCH_ASSOC);
+                    
+                    // Update inventory in real-time
+                    if ($pump && $pump['fuel_type_id']) {
+                        $stock_result = recordStockMovement(
+                            $pdo, 
+                            $station_id, 
+                            $pump['fuel_type_id'], 
+                            -$sales_liters,  // Deduct stock
+                            'pump_reading', 
+                            'fuel_daily_readings', 
+                            $pdo->lastInsertId(), 
+                            $me['id'],
+                            "Shift: $shift, Pump: $pump_id"
+                        );
+                        
+                        if (!$stock_result['success']) {
+                            $msg .= " ⚠️ Warning: " . $stock_result['message'];
+                        }
+                    }
+                    
+                    log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$pump_id ($shift shift)", 'fuel_management');
                     $msg = "✅ Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters";
                 } catch (PDOException $e) {
                     if ($e->errorInfo[1] == 1062) { // Duplicate entry
@@ -243,6 +328,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $stmt->execute([$status, $me['id'], $notes, $id]);
                 
                 if ($stmt->rowCount() > 0) {
+                    // If delivery is finalized, update inventory in real-time
+                    if ($status === 'Finalized' || $status === 'finalized') {
+                        // Get fuel type ID
+                        $stmtFuel = $pdo->prepare("SELECT id FROM fuel_types WHERE name = ?");
+                        $stmtFuel->execute([$_POST['fuel_type']]);
+                        $fuel_type_id = $stmtFuel->fetchColumn();
+                        
+                        if ($fuel_type_id) {
+                            // Get delivery details
+                            $stmtDel = $pdo->prepare("SELECT delivery_liters FROM fuel_deliveries WHERE id = ?");
+                            $stmtDel->execute([$id]);
+                            $delivery = $stmtDel->fetch(PDO::FETCH_ASSOC);
+                            
+                            if ($delivery) {
+                                // Update inventory in real-time
+                                $stock_result = recordStockMovement(
+                                    $pdo,
+                                    $station_id,
+                                    $fuel_type_id,
+                                    $delivery['delivery_liters'],  // Add stock
+                                    'delivery_finalized',
+                                    'fuel_deliveries',
+                                    $id,
+                                    $me['id'],
+                                    "Delivery #$id finalized"
+                                );
+                                
+                                if (!$stock_result['success']) {
+                                    $msg .= " ⚠️ Warning: " . $stock_result['message'];
+                                }
+                            }
+                        }
+                    }
+                    
                     log_activity($pdo, $me['id'], 'Verify Delivery', "Verified delivery #$id as $status", 'fuel_management');
                     $msg = "✅ Delivery #$id has been $status.";
                 } else {
@@ -267,6 +386,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $stmt->execute([$status, $me['id'], $notes, $id]);
                 
                 if ($stmt->rowCount() > 0) {
+                    // If adjustment is approved, update inventory in real-time
+                    if ($status === 'Approved' || $status === 'approved') {
+                        // Get adjustment details
+                        $stmtAdj = $pdo->prepare("SELECT fuel_type_id, liters FROM fuel_adjustments WHERE id = ?");
+                        $stmtAdj->execute([$id]);
+                        $adjustment = $stmtAdj->fetch(PDO::FETCH_ASSOC);
+                        
+                        if ($adjustment) {
+                            // Determine if it's an addition or deduction based on adjustment type
+                            $stmtAdjType = $pdo->prepare("SELECT adjustment_type FROM fuel_adjustments WHERE id = ?");
+                            $stmtAdjType->execute([$id]);
+                            $adj_type_info = $stmtAdjType->fetch(PDO::FETCH_ASSOC);
+                            $adjustment_type = $adj_type_info['adjustment_type'] ?? '';
+                            
+                            // Determine transaction type (addition or deduction)
+                            $is_deduction = in_array(strtolower($adjustment_type), ['loss', 'consumption', 'theft']);
+                            $quantity = $is_deduction ? -$adjustment['liters'] : $adjustment['liters'];
+                            
+                            // Update inventory in real-time
+                            $stock_result = recordStockMovement(
+                                $pdo,
+                                $station_id,
+                                $adjustment['fuel_type_id'],
+                                $quantity,
+                                'adjustment_approved',
+                                'fuel_adjustments',
+                                $id,
+                                $me['id'],
+                                "Adjustment #$id approved: $adjustment_type"
+                            );
+                            
+                            if (!$stock_result['success']) {
+                                $msg .= " ⚠️ Warning: " . $stock_result['message'];
+                            }
+                        }
+                    }
+                    
                     log_activity($pdo, $me['id'], 'Approve Adjustment', "Approved adjustment #$id as $status", 'fuel_management');
                     $msg = "✅ Adjustment #$id has been $status.";
                 } else {
@@ -303,7 +459,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $deliveries = $deliveries_data['total'] ?? 0;
                     
                     // Get total sales for the day
-                    $stmt = $pdo->prepare("SELECT SUM(sales_liters) as total FROM fuel_daily_readings WHERE station_id = ? AND EXISTS (SELECT 1 FROM fuel_stations WHERE id = fuel_station_id AND fuel_type = ?) AND reading_date = ? AND status IN ('Verified', 'Finalized')");
+                    $stmt = $pdo->prepare("SELECT SUM(dr.sales_liters) as total FROM fuel_daily_readings dr LEFT JOIN fuel_pumps fp ON dr.fuel_station_id = fp.id LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE dr.station_id = ? AND ft.name = ? AND dr.reading_date = ? AND dr.status IN ('Verified', 'Finalized')");
                     $stmt->execute([$station_id, $fuel_type, $reconciliation_date]);
                     $sales_data = $stmt->fetch();
                     $sales = $sales_data['total'] ?? 0;
@@ -598,7 +754,7 @@ $fuel_pumps = [];
 if ($station_id) {
     try {
         // Fetch fuel stations/pumps
-        $stmt = $pdo->prepare("SELECT * FROM fuel_stations WHERE station_id = ? ORDER BY pump_number");
+        $stmt = $pdo->prepare("SELECT fp.id, fp.station_id, fp.pump_number, fp.fuel_type_id, fp.status, ft.name as fuel_type FROM fuel_pumps fp LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE fp.station_id = ? ORDER BY fp.pump_number");
         $stmt->execute([$station_id]);
         $fuel_stations = $stmt->fetchAll();
         
@@ -612,9 +768,10 @@ if ($station_id) {
         $filter_shift = $_GET['shift'] ?? '';
         $filter_status = $_GET['status'] ?? '';
         
-        $sql = "SELECT dr.*, fs.pump_number, fs.fuel_type, u.name as user_name 
+        $sql = "SELECT dr.*, fp.pump_number, ft.name as fuel_type, u.name as user_name 
                 FROM fuel_daily_readings dr 
-                LEFT JOIN fuel_stations fs ON dr.fuel_station_id = fs.id 
+                LEFT JOIN fuel_pumps fp ON dr.fuel_station_id = fp.id 
+                LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id 
                 LEFT JOIN users u ON dr.user_id = u.id 
                 WHERE dr.station_id = ?";
         $params = [$station_id];
@@ -631,14 +788,14 @@ if ($station_id) {
             $sql .= " AND dr.status = ?";
             $params[] = $filter_status;
         }
-        $sql .= " ORDER BY dr.reading_date DESC, dr.shift, fs.pump_number";
+        $sql .= " ORDER BY dr.reading_date DESC, dr.shift, fp.pump_number";
         
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $daily_readings = $stmt->fetchAll();
         
         // Get my recent readings for staff
-        $stmt = $pdo->prepare("SELECT dr.*, fs.pump_number, fs.fuel_type, u.name as user_name FROM fuel_daily_readings dr LEFT JOIN fuel_stations fs ON dr.fuel_station_id = fs.id LEFT JOIN users u ON dr.user_id = u.id WHERE dr.station_id = ? AND dr.user_id = ? ORDER BY dr.reading_date DESC LIMIT 20");
+        $stmt = $pdo->prepare("SELECT dr.*, fp.pump_number, ft.name as fuel_type, u.name as user_name FROM fuel_daily_readings dr LEFT JOIN fuel_pumps fp ON dr.fuel_station_id = fp.id LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id LEFT JOIN users u ON dr.user_id = u.id WHERE dr.station_id = ? AND dr.user_id = ? ORDER BY dr.reading_date DESC LIMIT 20");
         $stmt->execute([$station_id, $me['id']]);
         $my_readings = $stmt->fetchAll();
         
@@ -770,6 +927,192 @@ require_once __DIR__ . '/../partials/header.php';
 }
 .panel.hidden {
     display: none !important;
+}
+
+/* Form field styling improvements */
+.form-control[readonly] {
+    cursor: not-allowed;
+    color: #495057;
+}
+.form-control[readonly]:focus {
+    border-color: #ced4da;
+    box-shadow: none;
+}
+
+/* Loading animation */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.fa-spin {
+    animation: spin 1s linear infinite;
+}
+
+/* My Entries Tab Styles */
+.entry-card {
+    background: white;
+    border-radius: 12px;
+    padding: 25px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border: 1px solid #e9ecef;
+}
+.entry-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12);
+}
+.entry-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-bottom: 15px;
+}
+.entry-icon.blue { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+.entry-icon.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+.entry-icon.orange { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; }
+
+.entry-count {
+    font-size: 36px;
+    font-weight: 700;
+    color: #2d3748;
+    margin-bottom: 5px;
+}
+.entry-label {
+    font-size: 14px;
+    color: #718096;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+.entry-pending {
+    font-size: 12px;
+    color: #e53e3e;
+    background: #fed7d7;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 600;
+}
+
+/* Timeline Styles */
+.timeline {
+    position: relative;
+    padding-left: 30px;
+}
+.timeline::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    border-radius: 2px;
+}
+.timeline-item {
+    position: relative;
+    margin-bottom: 20px;
+    animation: slideIn 0.3s ease;
+}
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+.timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -38px;
+    top: 5px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border: 3px solid #667eea;
+    border-radius: 50%;
+    z-index: 1;
+}
+.timeline-content {
+    background: white;
+    padding: 15px 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border-left: 4px solid #667eea;
+}
+.timeline-content.reading { border-left-color: #667eea; }
+.timeline-content.delivery { border-left-color: #38ef7d; }
+.timeline-content.adjustment { border-left-color: #f5576c; }
+
+.timeline-details {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2d3748;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.timeline-type {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.timeline-type.reading { background: #e0e7ff; color: #4c51bf; }
+.timeline-type.delivery { background: #d1fae5; color: #276749; }
+.timeline-type.adjustment { background: #fed7e2; color: #9b2c2c; }
+
+.timeline-status {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 15px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.timeline-status.pending { background: #feebc8; color: #744210; }
+.timeline-status.verified { background: #c6f6d5; color: #44337a; }
+.timeline-status.finalized { background: #c6f6d5; color: #44337a; }
+.timeline-status.pending { background: #feebc8; color: #744210; }
+
+.timeline-date {
+    font-size: 13px;
+    color: #718096;
+    margin-top: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #718096;
+}
+.empty-state-icon {
+    font-size: 64px;
+    color: #cbd5e0;
+    margin-bottom: 20px;
+}
+.empty-state-text {
+    font-size: 18px;
+    font-weight: 600;
+    color: #4a5568;
+    margin-bottom: 10px;
+}
+.empty-state-subtext {
+    font-size: 14px;
+    color: #718096;
 }
 </style>
 
@@ -984,7 +1327,7 @@ require_once __DIR__ . '/../partials/header.php';
             
             <div class="mb-3">
               <label class="form-label">Select Pump *</label>
-              <select name="pump_id" class="form-control" required>
+              <select name="pump_id" id="pump_id" class="form-control" required>
                 <option value="">-- Choose Pump --</option>
                 <?php foreach($fuel_stations as $pump): ?>
                   <option value="<?php echo $pump['id']; ?>">
@@ -1014,8 +1357,12 @@ require_once __DIR__ . '/../partials/header.php';
             <div class="row">
               <div class="col-md-6">
                 <div class="mb-3">
-                  <label class="form-label">Previous Reading (L) *</label>
-                  <input type="number" step="0.01" name="previous_reading" class="form-control" placeholder="0.00" required>
+                  <label class="form-label">Previous Reading (L) * <span class="text-muted small">(Auto-fetched)</span></label>
+                  <div class="input-group">
+                    <input type="number" step="0.01" name="previous_reading" id="previous_reading" class="form-control" placeholder="0.00" required readonly style="background: #e9ecef;">
+                    <span class="input-group-text"><i class="fas fa-sync-alt" id="syncIcon" style="display:none;"></i></span>
+                  </div>
+                  <small class="text-muted">Auto-populated from database when pump is selected</small>
                 </div>
               </div>
               <div class="col-md-6">
@@ -1309,65 +1656,68 @@ require_once __DIR__ . '/../partials/header.php';
   </section>
 
    <!-- TAB 4: ALL MY ENTRIES -->
-   <section class="panel hidden" id="tab-myentries">
-    <div class="staff-card">
+    <section class="panel hidden" id="tab-myentries">
+     <div class="staff-card">
       <h4><i class="fas fa-clipboard-list"></i> All My Entries</h4>
       <div class="muted">Complete history of all your fuel entries</div>
-      
+
       <div class="row mt-4">
         <div class="col-md-4">
-          <div class="card text-center">
-            <div class="card-body">
-              <h5 class="card-title"><?php echo count($my_readings); ?></h5>
-              <p class="card-text">Pump Readings</p>
-              <div class="text-muted small">
-                Pending: <?php 
-                $pending_readings = array_filter($my_readings, function($r) { 
-                  return $r['status'] == 'Pending'; 
-                }); 
-                echo count($pending_readings);
-                ?>
-              </div>
+          <div class="entry-card text-center">
+            <div class="entry-icon blue">
+              <i class="fas fa-gas-pump"></i>
+            </div>
+            <div class="entry-count"><?php echo count($my_readings); ?></div>
+            <div class="entry-label">Pump Readings</div>
+            <div class="entry-pending">
+              <?php
+                $pending_readings = array_filter($my_readings, function($r) {
+                  return $r['status'] == 'Pending';
+                });
+                echo count($pending_readings) . ' Pending';
+              ?>
             </div>
           </div>
         </div>
         <div class="col-md-4">
-          <div class="card text-center">
-            <div class="card-body">
-              <h5 class="card-title"><?php echo count($my_deliveries); ?></h5>
-              <p class="card-text">Deliveries</p>
-              <div class="text-muted small">
-                Pending: <?php 
-                $pending_del = array_filter($my_deliveries, function($d) { 
-                  return $d['status'] == 'Pending'; 
-                }); 
-                echo count($pending_del);
-                ?>
-              </div>
+          <div class="entry-card text-center">
+            <div class="entry-icon green">
+              <i class="fas fa-truck"></i>
+            </div>
+            <div class="entry-count"><?php echo count($my_deliveries); ?></div>
+            <div class="entry-label">Deliveries</div>
+            <div class="entry-pending">
+              <?php
+                $pending_del = array_filter($my_deliveries, function($d) {
+                  return $d['status'] == 'Encoded' || $d['status'] == 'Pending';
+                });
+                echo count($pending_del) . ' Pending';
+              ?>
             </div>
           </div>
         </div>
         <div class="col-md-4">
-          <div class="card text-center">
-            <div class="card-body">
-              <h5 class="card-title"><?php echo count($my_adjustments); ?></h5>
-              <p class="card-text">Adjustments</p>
-              <div class="text-muted small">
-                Pending: <?php 
-                $pending_adj = array_filter($my_adjustments, function($a) { 
-                  return $a['status'] == 'Pending'; 
-                }); 
-                echo count($pending_adj);
-                ?>
-              </div>
+          <div class="entry-card text-center">
+            <div class="entry-icon orange">
+              <i class="fas fa-exchange-alt"></i>
+            </div>
+            <div class="entry-count"><?php echo count($my_adjustments); ?></div>
+            <div class="entry-label">Adjustments</div>
+            <div class="entry-pending">
+              <?php
+                $pending_adj = array_filter($my_adjustments, function($a) {
+                  return $a['status'] == 'Pending';
+                });
+                echo count($pending_adj) . ' Pending';
+              ?>
             </div>
           </div>
         </div>
       </div>
       
       <div class="mt-4">
-        <h6>Activity Timeline</h6>
-        <div style="max-height: 400px; overflow-y: auto;">
+        <h6><i class="fas fa-history"></i> Activity Timeline</h6>
+        <div style="max-height: 400px; overflow-y: auto; padding-right: 10px;">
           <?php
           // Get combined activity
           try {
@@ -1380,26 +1730,31 @@ require_once __DIR__ . '/../partials/header.php';
             $stmt = $pdo->prepare($sql);
             $stmt->execute([$me['id'], $station_id, $me['id'], $station_id, $me['id'], $station_id]);
             $all_entries = $stmt->fetchAll();
-            
+
             if (empty($all_entries)) {
-              echo '<div class="text-center py-4 text-muted">No entries found</div>';
+              echo '<div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
+                <div class="empty-state-text">No entries found</div>
+                <div class="empty-state-subtext">Start recording pump readings, deliveries, and adjustments</div>
+              </div>';
             } else {
               echo '<div class="timeline">';
               foreach($all_entries as $entry) {
-                $badge_color = $entry['type'] == 'Reading' ? 'primary' : ($entry['type'] == 'Delivery' ? 'success' : 'warning');
-                $status_color = $entry['status'] == 'Pending' ? 'warning' : ($entry['status'] == 'Verified' ? 'success' : 'danger');
+                $type_class = strtolower($entry['type']);
+                $status_class = strtolower($entry['status']);
                 echo '
-                <div class="timeline-item mb-3">
-                  <div class="d-flex">
-                    <div class="flex-shrink-0">
-                      <span class="badge bg-'.$badge_color.'">'.$entry['type'].'</span>
+                <div class="timeline-item">
+                  <div class="timeline-content '.$type_class.'">
+                    <div class="timeline-details">
+                      <span class="timeline-type '.$type_class.'">
+                        <i class="fas '.($type_class == 'reading' ? 'fa-gas-pump' : ($type_class == 'delivery' ? 'fa-truck' : 'fa-exchange-alt')).'"></i>
+                        '.$entry['type'].'
+                      </span>
+                      <span class="timeline-status '.$status_class.'">'.$entry['status'].'</span>
                     </div>
-                    <div class="flex-grow-1 ms-3">
-                      <div class="d-flex justify-content-between">
-                        <strong>'.$entry['details'].'</strong>
-                        <span class="badge bg-'.$status_color.'">'.$entry['status'].'</span>
-                      </div>
-                      <small class="text-muted">'.date('M d, Y', strtotime($entry['date'])).'</small>
+                    <div class="timeline-date">
+                      <i class="fas fa-clock"></i>
+                      '.date('M d, Y - g:i A', strtotime($entry['date'])).'
                     </div>
                   </div>
                 </div>';
@@ -2323,6 +2678,57 @@ document.addEventListener('DOMContentLoaded', function() {
             input.addEventListener('input', calculateSales);
         }
     });
+    
+    // Fetch previous reading when pump is selected
+    const pumpSelect = document.getElementById('pump_id');
+    if (pumpSelect) {
+        pumpSelect.addEventListener('change', function() {
+            const pumpId = this.value;
+            const previousReadingInput = document.getElementById('previous_reading');
+            const syncIcon = document.getElementById('syncIcon');
+            
+            if (pumpId && previousReadingInput) {
+                // Show loading state
+                previousReadingInput.value = 'Loading...';
+                if (syncIcon) {
+                    syncIcon.style.display = 'inline';
+                    syncIcon.classList.add('fa-spin');
+                }
+                
+                fetch(`fuel_staff.php?action=get_previous_reading&pump_id=${pumpId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Previous reading response:', data);
+                        if (data.success) {
+                            const prevReading = parseFloat(data.previous_reading);
+                            console.log('Setting previous reading to:', prevReading);
+                            previousReadingInput.value = prevReading.toFixed(2);
+                            // Recalculate sales with new previous reading
+                            calculateSales();
+                        } else {
+                            previousReadingInput.value = '0.00';
+                            console.error('Failed to fetch previous reading:', data.error);
+                        }
+                        // Hide loading indicator
+                        if (syncIcon) {
+                            syncIcon.style.display = 'none';
+                            syncIcon.classList.remove('fa-spin');
+                        }
+                    })
+                    .catch(error => {
+                        previousReadingInput.value = '0.00';
+                        console.error('Error fetching previous reading:', error);
+                        // Hide loading indicator
+                        if (syncIcon) {
+                            syncIcon.style.display = 'none';
+                            syncIcon.classList.remove('fa-spin');
+                        }
+                    });
+            } else if (previousReadingInput) {
+                previousReadingInput.value = '0.00';
+            }
+        });
+    }
     
     // Initial calculation
     calculateSales();

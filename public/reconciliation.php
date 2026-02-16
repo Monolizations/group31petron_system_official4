@@ -774,8 +774,9 @@ function setupStationSelector() {
                 this.classList.toggle('selected');
             }
             updateStationSelector();
+        });
     });
-});
+}
 </script>
 
 <script src="../assets/js/data_helper.js"></script>

@@ -8,8 +8,11 @@ $me = current_user();
 $station_id = user_station_id();
 
 // Filters
+$view = $_GET['view'] ?? 'all';
 $start = $_GET['start'] ?? date('Y-m-01');
-$end = $_GET['end'] ?? date('Y-m-d');
+// Use database date to avoid timezone issues
+$default_end = $pdo->query("SELECT DATE(NOW()) as today")->fetch(PDO::FETCH_ASSOC)['today'] ?? date('Y-m-d');
+$end = $_GET['end'] ?? $default_end;
 $customer = $_GET['customer'] ?? '';
 $payment = $_GET['payment'] ?? '';
 $category = $_GET['category'] ?? '';
@@ -42,6 +45,12 @@ $sql = "SELECT
         AND DATE(s.created_at) BETWEEN ? AND ?";
 
 $params = [$station_id, $start, $end];
+
+// Filter by current user if view is "my_history"
+if ($view === 'my_history') {
+    $sql .= " AND s.user_id = ?";
+    $params[] = $me['id'];
+}
 
 if ($customer) {
     $sql .= " AND c.name LIKE ?";
@@ -94,8 +103,8 @@ include __DIR__ . '/../partials/header.php';
 
 <div class="page-head">
     <div>
-        <h1 class="h1">Transaction History (Admin View)</h1>
-        <div class="sub">Record of all finalized transactions (Cash, Card, Credit)</div>
+        <h1 class="h1"><?php echo ($view === 'my_history') ? 'My Transaction History' : 'Transaction History (Admin View)'; ?></h1>
+        <div class="sub"><?php echo ($view === 'my_history') ? 'Your recorded transactions' : 'Record of all finalized transactions (Cash, Card, Credit)'; ?></div>
     </div>
     <div class="actions">
         <a href="?<?php echo http_build_query(array_merge($_GET, ['export'=>'excel'])); ?>" class="btn ghost"><i class="fas fa-file-excel"></i> Export Excel</a>
@@ -122,15 +131,14 @@ include __DIR__ . '/../partials/header.php';
                 <option value="">All</option>
             </select>
         </div>
-        <div>
-            <label class="lbl">Category</label>
-            <select name="category" class="inp">
-                <option value="">All</option>
-                <option value="Fuel" <?php echo $category=='Fuel'?'selected':''; ?>>Fuel</option>
-                <option value="Merchandise" <?php echo $category=='Merchandise'?'selected':''; ?>>Merchandise</option>
-                <option value="Services" <?php echo $category=='Services'?'selected':''; ?>>Services</option>
-            </select>
-        </div>
+         <div>
+             <label class="lbl">Category</label>
+             <select name="category" class="inp">
+                 <option value="">All</option>
+                 <option value="Merchandise" <?php echo $category=='Merchandise'?'selected':''; ?>>Merchandise</option>
+                 <option value="Services" <?php echo $category=='Services'?'selected':''; ?>>Services</option>
+             </select>
+         </div>
         <button type="submit" class="btn primary" style="padding:6px 15px;">Filter</button>
     </form>
 </div>
