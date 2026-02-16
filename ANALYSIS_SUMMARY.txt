@@ -1,0 +1,346 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    PETRON SYSTEM - DATA ANALYSIS SUMMARY                  ║
+║                         February 16, 2026                                 ║
+║                                                                            ║
+║  This document summarizes the database requirements for all priority      ║
+║  pages in the system. Use it as a guide for sample data generation.       ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+FILE LOCATIONS
+══════════════════════════════════════════════════════════════════════════════
+
+Source Code:     /opt/lampp/htdocs/group31petron_system_official4/public/
+Public Pages:    
+  - dashboard.php              (Super Admin/Admin nationwide view)
+  - manager_dashboard.php      (Manager station view)
+  - reports.php               (Multiple report types)
+  - customers.php             (Customer management)
+  - users.php                 (User management)
+  - joborder.php              (Job order tracking - HAS AUTO-SEED!)
+  - inventory_list.php        (Inventory display)
+  - compliance.php            (STUB - not implemented)
+  - reconciliation.php        (Fuel reconciliation - HAS SAMPLE DATA!)
+
+
+HIGH-IMPACT PAGES (Generate in this order)
+══════════════════════════════════════════════════════════════════════════════
+
+1. USERS.PHP (Priority: CRITICAL)
+   ────────────────────────────────
+   Path:       /opt/lampp/htdocs/group31petron_system_official4/public/users.php
+   Impact:     Foundation - everything depends on authentication
+   Complexity: SIMPLE (1 table only)
+   Status:     Fully working - needs sample data
+   
+   Database Tables:
+   └─ users (20-30 records)
+      ├─ 1 superadmin
+      ├─ 2 admin (per 3 stations)
+      ├─ 3-5 manager (per station)
+      └─ 15-20 staff (mechanics/attendants per station)
+   
+   Key Fields: id, name, username, password, email, role, station_id, status
+   Sample Roles: 'superadmin', 'admin', 'manager', 'staff'
+
+
+2. DASHBOARD.PHP (Priority: CRITICAL)
+   ──────────────────────────────────────
+   Path:       /opt/lampp/htdocs/group31petron_system_official4/public/dashboard.php
+   Impact:     Main monitoring page for all admin/super admin users
+   Complexity: HIGH (10+ tables with complex JOINs)
+   Status:     Partially working - has fallback data but shows sample values
+   
+   Database Tables Required:
+   ├─ stations (3-5 records)
+   ├─ products (30-50 items)
+   ├─ product_types (3 records: fuel, merch, service)
+   ├─ station_inventory (30-50 stock links)
+   ├─ sales (100+ transaction records)
+   ├─ sale_items (200+ line items)
+   ├─ job_orders (20-30 pending/in-progress)
+   ├─ customers (10-20 with credit balances)
+   ├─ users (from users.php data)
+   └─ activity_logs (audit trail)
+   
+   Key Metrics Calculated:
+   - Today's sales
+   - Total fuel inventory
+   - Merchandise count
+   - Active jobs
+   - Credit total
+   - Staff online
+   - Low stock items
+
+
+3. REPORTS.PHP (Priority: CRITICAL)
+   ───────────────────────────────────
+   Path:       /opt/lampp/htdocs/group31petron_system_official4/public/reports.php
+   Impact:     Business intelligence & compliance reporting
+   Complexity: VERY HIGH (12+ tables per report type)
+   Status:     Partially working but error-prone on complex reports
+   
+   Report Types:
+   ├─ Daily Sales      (requires: sales, sale_items, products)
+   ├─ Shift Reports    (requires: sales, users by shift)
+   ├─ Inventory Reports (requires: station_inventory, sales tracking)
+   ├─ Job Order Reports (requires: job_orders, mechanics, service_categories)
+   └─ Verification Logs (requires: activity_logs, users)
+   
+   Database Tables Required:
+   ├─ sales (100+ records, 3-month range)
+   ├─ sale_items (200+ line items)
+   ├─ job_orders (50+ completed jobs)
+   ├─ service_categories (10+ categories)
+   ├─ mechanics (5-10 mechanics)
+   ├─ products (from dashboard)
+   ├─ product_types (from dashboard)
+   └─ activity_logs (audit trail)
+
+
+4. CUSTOMERS.PHP (Priority: HIGH)
+   ───────────────────────────────────
+   Path:       /opt/lampp/htdocs/group31petron_system_official4/public/customers.php
+   Impact:     Required for sales/job orders - blocks other features
+   Complexity: SIMPLE (1 table)
+   Status:     Fully working - needs sample data
+   
+   Database Tables:
+   └─ customers (20-50 records)
+      ├─ 60% cash customers
+      ├─ 40% credit customers (5k-50k limits)
+      └─ Mix: individuals & companies
+   
+   Key Fields: id, name, contact_person, phone, email, address, 
+               type (cash/credit), credit_limit, current_balance, status
+
+
+5. JOBORDER.PHP (Priority: HIGH)
+   ────────────────────────────────
+   Path:       /opt/lampp/htdocs/group31petron_system_official4/public/joborder.php
+   Impact:     Operations tracking - UNIQUE AUTO-SEED feature
+   Complexity: HIGH (6+ tables)
+   Status:     Partially working + AUTO-CREATES staff & mechanics!
+   
+   SPECIAL FEATURE: 
+   ✓ Automatically creates 5 demo staff if missing (lines 24-37)
+   ✓ Automatically creates 4 demo mechanics if missing (lines 46-70)
+   ✓ Shows warning if products missing (products_warning)
+   
+   Database Tables Required:
+   ├─ job_orders (30-50 records)
+   ├─ service_categories (10+ categories)
+   ├─ mechanics (4+ mechanics - AUTO-CREATED!)
+   ├─ customers (from customers.php)
+   ├─ products (from dashboard)
+   ├─ station_inventory (stock/parts)
+   └─ users (from users.php - auto-creates staff!)
+   
+   Auto-Seed Data:
+   Staff Names: Juan Carlo, Carla, Miguel, Andrea, Mark
+   Mechanics: Paolo Reyes, Liza Cruz, Marco Dizon, Ana Santos
+   (With specializations: Engine, Brake, Electrical, Tire)
+
+
+REQUIRED SCHEMA FIXES (Before Data Generation)
+══════════════════════════════════════════════════════════════════════════════
+
+MUST EXIST with correct structure:
+
+1. product_types (Referenced by: dashboard, reports, joborder)
+   Columns: id, name
+   Data: 'fuel', 'merch', 'service'
+
+2. products (Referenced by: ALL pages)
+   Columns: id, name, sku, cost, price, type_id, status
+   Foreign Key: type_id → product_types(id)
+
+3. service_categories (Referenced by: joborder, reports)
+   Columns: id, name, description, default_parts_cost, default_labor_cost
+
+4. station_inventory (Referenced by: dashboard, reports, inventory_list, joborder)
+   Columns: id, station_id, product_id, stock_level, reorder_point, capacity
+   Foreign Keys: station_id → stations, product_id → products
+
+5. mechanics (Referenced by: joborder, reports)
+   Columns: id, station_id, full_name, specialization, status
+   Note: joborder.php AUTO-CREATES if missing
+
+
+FALLBACK MECHANISMS FOUND
+══════════════════════════════════════════════════════════════════════════════
+
+Pages with built-in fallback data:
+
+1. dashboard.php
+   - Line 68-70: Uses rand(15000, 35000) for sales if query fails
+   - Line 82-87: Uses rand(3000, 12000) for fuel stock
+   - Line 46: read_json('stations.json') fallback for stations
+
+2. manager_dashboard.php
+   - Line 47: read_json('fuel_readings.json', []) fallback
+
+3. reconciliation.php
+   - Line 137-162: GENERATES sample fuel data if no real data exists
+   - Creates random volumes per station/fuel type
+
+4. joborder.php
+   - Lines 19-40: AUTO-CREATES 5 demo staff if none exist
+   - Lines 46-70: AUTO-CREATES 4 demo mechanics if none exist
+
+
+DATA GENERATION QUANTITIES
+══════════════════════════════════════════════════════════════════════════════
+
+TIER 1 (Foundation):
+  users              20-30    (Must generate first)
+  stations            3-5     (Infrastructure)
+  product_types       3       (Hardcoded: fuel, merch, service)
+  products           30-50    (By type with cost/price)
+
+TIER 1.5 (Core):
+  customers          20-50    (Cash & credit mix)
+  station_inventory  30-50    (Links between products & stations)
+
+TIER 2 (Operations):
+  sales              100+     (3-month history)
+  sale_items         200+     (2-3 items per sale)
+  job_orders         30-50    (Various states)
+  activity_logs      50+      (Audit trail)
+
+TIER 3 (Specialized):
+  service_categories 10+      (Job types)
+  mechanics           4-10    (Note: joborder.php auto-creates 4)
+  fuel_deliveries    100+    (If using fuel module)
+  fuel_daily_readings 100+   (If using fuel module)
+  labor_logs         50+     (If tracking hours)
+
+
+COMMON SQL ERRORS & FIXES
+══════════════════════════════════════════════════════════════════════════════
+
+Error: "product_types table not found"
+Fix: Create product_types table with fuel, merch, service values
+     Before: dashboard, reports, joborder pages
+
+Error: "Column 'type_id' doesn't exist in 'products'"
+Fix: Ensure products.type_id foreign key exists
+     Used by: All pages that categorize products
+
+Error: "sale_items table doesn't exist"
+Fix: Create sale_items linking sales to products with quantities
+     Required by: reports.php (all report types)
+
+Error: "service_categories not found"
+Fix: Create service_categories for job order types
+     Required by: joborder.php, reports.php
+
+Error: "No mechanics found"
+Fix: joborder.php auto-creates, but if that fails:
+     Create mechanics table with station_id, full_name, specialization
+     Required by: joborder.php, reports.php
+
+
+TESTING CHECKLIST
+══════════════════════════════════════════════════════════════════════════════
+
+After data generation, test in this order:
+
+□ users.php
+  - Can see user list with roles
+  - Can add new user
+  - Can edit/delete users
+  - Station filtering works (super admin only)
+
+□ dashboard.php
+  - Displays KPI cards (not fallback values)
+  - Sales chart shows real data
+  - Fuel inventory has real values
+  - Job order stats are accurate
+  - No SQL errors in error log
+
+□ reports.php
+  - Daily Sales report loads with data
+  - Shift Reports shows staff sales
+  - Inventory Reports has movement data
+  - Job Order Reports shows completed jobs
+  - Verification shows activity logs
+
+□ customers.php
+  - Customer list displays with balances
+  - Can add/edit customers
+  - Credit account filtering works
+  - Outstanding balances calculated
+
+□ joborder.php
+  - Pending jobs list loads
+  - Can create new job order
+  - Mechanics list populated (auto-created or from DB)
+  - Service categories available
+  - Parts inventory warning appears if empty
+
+□ inventory_list.php
+  - Products display with stock quantities
+  - Cost and selling prices visible
+  - Margin percentages calculated correctly
+  - Search and sort functions work
+
+
+ESTIMATED EFFORT
+══════════════════════════════════════════════════════════════════════════════
+
+Phase 1: Schema Validation     1-2 hours
+Phase 2: Infrastructure Data   2-3 hours
+Phase 3: Transactional Data    3-4 hours
+Phase 4: Validation Testing    1-2 hours
+Total Estimated Time:         7-11 hours
+
+
+FILES TO MODIFY FOR DATA GENERATION
+══════════════════════════════════════════════════════════════════════════════
+
+Primary scripts to create:
+/opt/lampp/htdocs/group31petron_system_official4/scripts/generate_sample_data.php
+/opt/lampp/htdocs/group31petron_system_official4/scripts/seed_tier1_users.php
+/opt/lampp/htdocs/group31petron_system_official4/scripts/seed_tier1_infrastructure.php
+/opt/lampp/htdocs/group31petron_system_official4/scripts/seed_tier2_operations.php
+/opt/lampp/htdocs/group31petron_system_official4/scripts/validate_schema.php
+
+
+KEY INSIGHTS
+══════════════════════════════════════════════════════════════════════════════
+
+1. joborder.php is SPECIAL - it auto-creates demo staff & mechanics
+   Use this feature to save time on manual data generation
+
+2. reconciliation.php has BUILT-IN sample data generation
+   It generates realistic fuel reconciliation if no real data exists
+
+3. dashboard.php uses fallback VALUES (not fallback data)
+   It shows random numbers instead of actual data when tables missing
+   This is why dashboard works but shows incorrect metrics
+
+4. product_types is THE CRITICAL MISSING TABLE
+   It's referenced in queries for fuel vs merch categorization
+   Must exist before any product/inventory generation
+
+5. sale_items is THE SECOND CRITICAL TABLE
+   Reports.php JOINs to this table but it may not exist
+   Without it, report generation fails on complex JOINs
+
+6. ALL pages have graceful error handling
+   No crashes - they just return empty results when tables missing
+   This makes it hard to know what's missing without close inspection
+
+
+NEXT STEPS
+══════════════════════════════════════════════════════════════════════════════
+
+1. Verify database schema (run schema validation)
+2. Create any missing critical tables
+3. Start with TIER 1 data generation (users)
+4. Then TIER 1.5 (customers)
+5. Then TIER 2 (sales, job_orders)
+6. Test each page after generation
+7. Iterate and refine as needed
+8. Document any schema changes made
+
