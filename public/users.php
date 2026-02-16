@@ -329,7 +329,7 @@ include __DIR__ . '/../partials/header.php';
             <button class="modal-close" onclick="closeModal('addModal')">&times;</button>
         </div>
          <form method="post" onsubmit="return validatePasswords();">
-                
+            <div class="modal-body">
                 <div class="form-group mb-3">
                     <label class="lbl">Full Name</label>
                     <input type="text" name="name" class="inp full" required>
@@ -667,6 +667,12 @@ function generatePassword() {
         width: min(500px, 95vw);
     }
     
+    .modal-body {
+        padding: 24px 20px;
+        overflow-y: auto;
+        flex: 1;
+    }
+    
     .form-group {
         display: flex;
         flex-direction: column;
@@ -680,7 +686,7 @@ function generatePassword() {
     }
     
     .inp {
-        padding: 8px 12px;
+        padding: 10px 12px;
         border: 1px solid #d1d5db;
         border-radius: 6px;
         font-size: 14px;
@@ -702,6 +708,8 @@ function generatePassword() {
         display: flex;
         gap: 10px;
         justify-content: flex-end;
+        padding: 16px 20px;
+        border-top: 1px solid #e5e7eb;
     }
     
     .btn {
