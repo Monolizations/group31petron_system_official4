@@ -615,6 +615,12 @@ if (!isset($pdo) || !$pdo) {
 
        ['id'=>'pump_management','label'=>'Pump Management','ico'=>'fas fa-gas-pump','href'=>'admin_pump_management.php'],
 
+       ['id'=>'fuel_pricing','label'=>'Fuel Pricing','ico'=>'fas fa-dollar-sign','href'=>'#','sub_items' => [
+           ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'admin_set_prices.php'],
+           ['id'=>'propose_fuel_prices','label'=>'Propose Price Changes','href'=>'admin_propose_prices.php'],
+           ['id'=>'price_change_logs','label'=>'Price Change History','href'=>'price_change_logs.php']
+       ]],
+
        ['id'=>'audit_oversight','label'=>'Audit & Oversight','ico'=>'fas fa-clipboard-list','href'=>'#','sub_items' => [
           ['id'=>'audit_logs','label'=>'Audit Logs','href'=>'audit_logs.php'],
           ['id'=>'approval_history','label'=>'Approval History','href'=>'approval_history.php'],
@@ -643,13 +649,16 @@ if (!isset($pdo) || !$pdo) {
        ]],
 
        ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-           ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
-           ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
-           ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
-           ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
-           ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
-           ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
-       ]],
+            ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'admin_set_prices.php'],
+            ['id'=>'propose_fuel_prices','label'=>'Propose Price Changes','href'=>'admin_propose_prices.php'],
+            ['id'=>'price_change_logs','label'=>'Price Change History','href'=>'price_change_logs.php'],
+            ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
+            ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
+            ['id'=>'fuel_variance_reports','label'=>'Variance Reports','href'=>'variance_reports.php'],
+            ['id'=>'fuel_daily_readings','label'=>'Daily Readings Summary','href'=>'fuel_monitoring.php?view=daily'],
+            ['id'=>'fuel_shift_comparison','label'=>'Shift Comparison Reports','href'=>'fuel_monitoring.php?view=shift_compare'],
+            ['id'=>'fuel_calibration_logs','label'=>'Calibration Logs','href'=>'fuel_monitoring.php?view=calibration'],
+        ]],
 
         ['id'=>'reports','label'=>'Reports','ico'=>'fas fa-file-alt','href'=>'#','sub_items'=>[
             ['id'=>'shift_sales_reports','label'=>'Shift Sales Reports','href'=>'reports.php?view=shift_reports'],
