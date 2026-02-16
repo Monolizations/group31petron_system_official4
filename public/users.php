@@ -58,14 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Passwords do not match.");
             }
 
-            // Validate password strength (if provided)
-            if (!empty($password) && strlen($password) < 8) {
-                throw new Exception("Password must be at least 8 characters.");
-            }
-
-            // Generate password if empty
-            if (empty($password)) {
-                $password = generateSecurePassword();
+            // Validate password strength (minimum 6 characters for petronXXX format)
+            if (!empty($password) && strlen($password) < 6) {
+                throw new Exception("Password must be at least 6 characters.");
             }
 
             // Check username uniqueness
@@ -330,6 +325,8 @@ include __DIR__ . '/../partials/header.php';
         </div>
          <form method="post" onsubmit="return validatePasswords();">
             <div class="modal-body">
+                <input type="hidden" name="action" value="add_user">
+                
                 <div class="form-group mb-3">
                     <label class="lbl">Full Name</label>
                     <input type="text" name="name" class="inp full" required>
@@ -382,7 +379,7 @@ include __DIR__ . '/../partials/header.php';
                     </div>
                     <div class="form-group">
                         <label class="lbl">Email</label>
-                        <input type="email" name="email" class="inp full">
+                        <input type="email" name="email" class="inp full" required>
                     </div>
                 </div>
                 
