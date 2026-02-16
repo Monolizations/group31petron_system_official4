@@ -37,7 +37,7 @@ try {
             p.name as fuel_name, p.sku
         FROM fuel_inventory fi
         JOIN products p ON fi.product_id = p.id
-        WHERE fi.station_id = ? AND p.status = 'active'
+        WHERE fi.station_id = ?
         ORDER BY p.name
     ");
     $stmt->execute([$station_id]);
@@ -60,13 +60,15 @@ if ($view === 'daily') {
                 fdr.id, fdr.reading_date, fdr.shift, 
                 fdr.previous_reading, fdr.current_reading, fdr.sales_liters,
                 fdr.status, fdr.notes, fdr.created_at,
-                fs.fuel_type, fs.pump_number,
+                fp.pump_number,
+                ft.name as fuel_type,
                 u.username as recorded_by
             FROM fuel_daily_readings fdr
-            JOIN fuel_stations fs ON fdr.fuel_station_id = fs.id
+            JOIN fuel_pumps fp ON fdr.pump_id = fp.id
+            JOIN fuel_types ft ON fp.fuel_type_id = ft.id
             LEFT JOIN users u ON fdr.user_id = u.id
             WHERE fdr.station_id = ?
-            ORDER BY fdr.reading_date DESC, fdr.shift DESC, fs.pump_number
+            ORDER BY fdr.reading_date DESC, fdr.shift DESC, fp.pump_number
             LIMIT 50";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$station_id]);
@@ -80,15 +82,16 @@ if ($view === 'shift_compare') {
     try {
         $sql = "SELECT 
                 fdr.reading_date, fdr.shift,
-                fs.fuel_type,
+                ft.name as fuel_type,
                 SUM(fdr.current_reading - fdr.previous_reading) as total_dispensed,
                 SUM(fdr.sales_liters) as total_sales,
                 SUM((fdr.current_reading - fdr.previous_reading) - fdr.sales_liters) as variance,
-                COUNT(DISTINCT fdr.fuel_station_id) as pumps_recorded
+                COUNT(DISTINCT fdr.pump_id) as pumps_recorded
             FROM fuel_daily_readings fdr
-            JOIN fuel_stations fs ON fdr.fuel_station_id = fs.id
+            JOIN fuel_pumps fp ON fdr.pump_id = fp.id
+            JOIN fuel_types ft ON fp.fuel_type_id = ft.id
             WHERE fdr.station_id = ? AND fdr.reading_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-            GROUP BY fdr.reading_date, fdr.shift, fs.fuel_type
+            GROUP BY fdr.reading_date, fdr.shift, ft.name
             ORDER BY fdr.reading_date DESC, fdr.shift DESC";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$station_id]);
@@ -101,18 +104,20 @@ $calibration_logs = [];
 if ($view === 'calibration') {
     try {
         $sql = "SELECT 
-                fc.id, fc.calibration_date, fc.before_reading, fc.after_reading,
-                fc.adjustment_liters, fc.reason, fc.created_at,
-                fs.fuel_type, fs.pump_number,
-                u.username as performed_by
+                fc.id, fc.effective_date as calibration_date,
+                NULL as before_reading, NULL as after_reading,
+                fc.calibration_constant as adjustment_liters, 
+                fc.status as reason, fc.created_at,
+                ft.name as fuel_type,
+                '' as pump_number,
+                '' as performed_by
             FROM fuel_calibration fc
-            JOIN fuel_stations fs ON fc.fuel_station_id = fs.id
-            LEFT JOIN users u ON fc.performed_by = u.id
-            WHERE fc.station_id = ?
-            ORDER BY fc.calibration_date DESC, fc.created_at DESC
+            JOIN fuel_types ft ON fc.fuel_type = ft.name
+            WHERE fc.status = 'active'
+            ORDER BY fc.effective_date DESC, fc.created_at DESC
             LIMIT 30";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$station_id]);
+        $stmt->execute([]);
         $calibration_logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch(Exception $e) {}
 }
