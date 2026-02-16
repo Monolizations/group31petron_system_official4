@@ -735,23 +735,6 @@ include __DIR__ . '/../partials/header.php';
     gap: 10px;
 }
 
-.toast {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    padding: 15px 20px;
-    background: var(--blue);
-    color: white;
-    border-radius: 5px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-    z-index: 10001;
-    max-width: 380px;
-    font-size: 14px;
-    white-space: normal;
-    word-wrap: break-word;
-    line-height: 1.4;
-}
-
 /* Custom Confirm Modal */
 #confirmModal {
     z-index: 10000;
@@ -1367,9 +1350,6 @@ include __DIR__ . '/../partials/header.php';
     </div>
 </div>
 
-<!-- Toast Notification -->
-<div id="toast" class="toast" style="display: none;"></div>
-
 <!-- Custom Confirmation Modal -->
 <div id="confirmModal" class="modal" style="display: none; z-index: 10000;">
     <div class="modal-content" style="max-width: 500px;">
@@ -1460,13 +1440,13 @@ async function createJobOrder(event) {
             body: formData
         });
 
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-            const text = await response.text();
-            showToast('Server error while creating job order', 'error');
-            console.error('Non-JSON response:', text);
-            return;
-        }
+         const contentType = response.headers.get('content-type') || '';
+         if (!contentType.includes('application/json')) {
+             const text = await response.text();
+             alert('Server error while creating job order');
+             console.error('Non-JSON response:', text);
+             return;
+         }
 
         const result = await response.json();
 
@@ -1475,15 +1455,15 @@ async function createJobOrder(event) {
             if (result.requires_approval) {
                 message += ' (Pending admin approval)';
             }
-            showToast(message, 'success');
+            alert(message);
             event.target.reset();
             setTimeout(() => location.reload(), 1500);
         } else {
-            showToast(result.message, 'error');
+            alert(result.message);
         }
-    } catch (error) {
-        console.error('Error:', error);
-        showToast('Error creating job order', 'error');
+     } catch (error) {
+         console.error('Error:', error);
+         alert('Error creating job order');
     }
 }
 
@@ -1509,21 +1489,21 @@ async function adminReviewApprove(jobId) {
         const result = await response.json();
 
         if (result.success) {
-            showToast('Job order approved and validated!', 'success');
+            alert('Job order approved and validated!');
             setTimeout(() => location.reload(), 1000);
         } else {
-            showToast(result.message || 'Failed to approve job order', 'error');
+            alert(result.message || 'Failed to approve job order');
         }
     } catch (error) {
         console.error('Error:', error);
-        showToast('Error approving job order', 'error');
+        alert('Error approving job order');
     }
 }
 
 async function adminReviewReject(jobId) {
       const remarks = prompt('Enter rejection reason:');
       if (!remarks) {
-          showToast('Rejection reason is required', 'error');
+          alert('Rejection reason is required');
           return;
       }
 
@@ -1534,23 +1514,23 @@ async function adminReviewReject(jobId) {
       formData.append('job_id', jobId);
       formData.append('remarks', remarks);
 
-    try {
-        const response = await fetch('joborder.php', {
-            method: 'POST',
-            body: formData
-        });
+     try {
+         const response = await fetch('joborder.php', {
+             method: 'POST',
+             body: formData
+         });
 
-        const result = await response.json();
+         const result = await response.json();
 
-        if (result.success) {
-            showToast('Job order rejected', 'success');
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast(result.message || 'Failed to reject job order', 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        showToast('Error rejecting job order', 'error');
+         if (result.success) {
+             alert('Job order rejected');
+             setTimeout(() => location.reload(), 1000);
+         } else {
+             alert(result.message || 'Failed to reject job order');
+         }
+     } catch (error) {
+         console.error('Error:', error);
+         alert('Error rejecting job order');
     }
 }
 
@@ -1586,17 +1566,17 @@ async function confirmApproveJobOrder(jobId) {
         });
 
         const result = await response.json();
-        console.log('Approve response:', result);
+         console.log('Approve response:', result);
 
-        if (result.success) {
-            showToast('Job order approved and started!', 'success');
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast(result.message || 'Failed to approve job order', 'error');
-        }
-    } catch (error) {
-        console.error('Error in confirmApproveJobOrder:', error);
-        showToast('Error approving job order', 'error');
+         if (result.success) {
+             alert('Job order approved and started!');
+             setTimeout(() => location.reload(), 1000);
+         } else {
+             alert(result.message || 'Failed to approve job order');
+         }
+     } catch (error) {
+         console.error('Error in confirmApproveJobOrder:', error);
+         alert('Error approving job order');
     }
 }
 
@@ -1605,45 +1585,45 @@ async function confirmRejectJobOrder(jobId) {
 
     try {
         const remarks = prompt('Enter rejection reason:');
-        console.log('Remarks entered:', remarks);
+         console.log('Remarks entered:', remarks);
 
-        if (!remarks) {
-            showToast('Rejection reason is required', 'error');
-            return;
-        }
+         if (!remarks) {
+             alert('Rejection reason is required');
+             return;
+         }
 
-        const confirmed = confirm('Are you sure you want to reject this job order?\n\nThis will return to job to staff with your rejection reason.');
-        console.log('Confirm dialog returned:', confirmed);
+         const confirmed = confirm('Are you sure you want to reject this job order?\n\nThis will return to job to staff with your rejection reason.');
+         console.log('Confirm dialog returned:', confirmed);
 
-        if (!confirmed) {
-            console.log('User cancelled rejection');
-            return;
-        }
+         if (!confirmed) {
+             console.log('User cancelled rejection');
+             return;
+         }
 
-        const formData = new FormData();
-        formData.append('action', 'manager_review_reject');
-        formData.append('job_id', jobId);
-        formData.append('remarks', remarks);
+         const formData = new FormData();
+         formData.append('action', 'manager_review_reject');
+         formData.append('job_id', jobId);
+         formData.append('remarks', remarks);
 
-        console.log('Submitting reject request...');
+         console.log('Submitting reject request...');
 
-        const response = await fetch('joborder.php', {
-            method: 'POST',
-            body: formData
-        });
+         const response = await fetch('joborder.php', {
+             method: 'POST',
+             body: formData
+         });
 
-        const result = await response.json();
-        console.log('Reject response:', result);
+         const result = await response.json();
+         console.log('Reject response:', result);
 
-        if (result.success) {
-            showToast('Job order rejected', 'success');
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast(result.message || 'Failed to reject job order', 'error');
-        }
-    } catch (error) {
-        console.error('Error in confirmRejectJobOrder:', error);
-        showToast('Error rejecting job order', 'error');
+         if (result.success) {
+             alert('Job order rejected');
+             setTimeout(() => location.reload(), 1000);
+         } else {
+             alert(result.message || 'Failed to reject job order');
+         }
+     } catch (error) {
+         console.error('Error in confirmRejectJobOrder:', error);
+         alert('Error rejecting job order');
     }
 }
 
@@ -1765,18 +1745,18 @@ async function submitJobCompletion() {
             body: formData
         });
 
-        const result = await response.json();
+         const result = await response.json();
 
-        if (result.success) {
-            showToast(`Job completed! Total: ₱${result.billing.total_cost.toFixed(2)}`, 'success');
-            document.getElementById('completionModal').style.display = 'none';
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(result.message || 'Failed to complete job order', 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        showToast('Error completing job order', 'error');
+         if (result.success) {
+             alert(`Job completed! Total: ₱${result.billing.total_cost.toFixed(2)}`);
+             document.getElementById('completionModal').style.display = 'none';
+             setTimeout(() => location.reload(), 1500);
+         } else {
+             alert(result.message || 'Failed to complete job order');
+         }
+     } catch (error) {
+         console.error('Error:', error);
+         alert('Error completing job order');
     }
 }
 
@@ -1793,16 +1773,16 @@ async function approveJobOrder(jobId) {
             body: formData
         });
 
-        const result = await response.json();
+         const result = await response.json();
 
-        if (result.success) {
-            showToast('Job order approved!', 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(result.message, 'error');
-        }
-    } catch (error) {
-        showToast('Error approving job order', 'error');
+         if (result.success) {
+             alert('Job order approved!');
+             setTimeout(() => location.reload(), 1500);
+         } else {
+             alert(result.message);
+         }
+     } catch (error) {
+         alert('Error approving job order');
     }
 }
 
@@ -1819,16 +1799,16 @@ async function rejectJobOrder(jobId) {
             body: formData
         });
 
-        const result = await response.json();
+         const result = await response.json();
 
-        if (result.success) {
-            showToast('Job order rejected!', 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(result.message, 'error');
-        }
-    } catch (error) {
-        showToast('Error rejecting job order', 'error');
+         if (result.success) {
+             alert('Job order rejected!');
+             setTimeout(() => location.reload(), 1500);
+         } else {
+             alert(result.message);
+         }
+     } catch (error) {
+         alert('Error rejecting job order');
     }
 }
 
@@ -1898,18 +1878,18 @@ async function submitStatusUpdate(jobId, status, notes) {
         const text = await response.text();
         console.log('Response text:', text);
         
-        const result = JSON.parse(text);
-        console.log('Parsed result:', result);
+         const result = JSON.parse(text);
+         console.log('Parsed result:', result);
 
-        if (result.success) {
-            showToast('Job status updated!', 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(result.message || 'Failed to update status', 'error');
-        }
-    } catch (error) {
-        console.error('Error updating job status:', error);
-        showToast('Error updating job status: ' + error.message, 'error');
+         if (result.success) {
+             alert('Job status updated!');
+             setTimeout(() => location.reload(), 1500);
+         } else {
+             alert(result.message || 'Failed to update status');
+         }
+     } catch (error) {
+         console.error('Error updating job status:', error);
+         alert('Error updating job status: ' + error.message);
     }
 }
 
@@ -2224,7 +2204,7 @@ function exportCompletedJobs(format) {
         tab: 'history'
     });
 
-    showToast('Exporting ' + format.toUpperCase() + '...', 'info');
+    alert('Exporting ' + format.toUpperCase() + '...');
     window.location.href = 'job_orders_export.php?' + params.toString();
 }
 
@@ -2251,27 +2231,6 @@ function filterCompletedJobs() {
 
         job.style.display = matchesSearch && matchesStaff && matchesService ? 'block' : 'none';
     });
-}
-
-function showToast(message, type = 'info') {
-    const toast = document.getElementById('toast');
-    if (toast) {
-        toast.textContent = message;
-
-        if (type === 'success') {
-            toast.style.background = '#28A745';
-        } else if (type === 'error') {
-            toast.style.background = '#DC3545';
-        } else if (type === 'info') {
-            toast.style.background = '#007bff';
-        }
-
-        toast.style.display = 'block';
-
-        setTimeout(() => {
-            toast.style.display = 'none';
-        }, 3000);
-    }
 }
 
 window.addEventListener('click', function(event) {
