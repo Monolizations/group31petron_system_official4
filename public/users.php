@@ -338,62 +338,68 @@ include __DIR__ . '/../partials/header.php';
                     <label class="lbl">Username</label>
                     <input type="text" name="username" class="inp full" required>
                 </div>
-                <div class="form-group mb-3">
-                    <label class="lbl">Role</label>
-                    <select name="role" id="user_role_add" class="inp full" required>
-                        <option value="">Select role</option>
-                        <?php 
-                        // Show only roles that current user can create
-                        if ($my_role === 'superadmin'): ?>
-                            <option value="staff">Staff</option>
-                            <option value="manager">Manager</option>
-                            <option value="admin">Admin</option>
-                            <option value="superadmin">Super Admin</option>
-                        <?php elseif ($my_role === 'admin'): ?>
-                            <option value="staff">Staff</option>
-                            <option value="manager">Manager</option>
-                        <?php elseif ($my_role === 'manager'): ?>
-                            <option value="staff">Staff</option>
-                        <?php endif; ?>
-                    </select>
-                </div>
+                
                 <div class="grid-2 mb-3" style="gap:10px;">
-                    <div>
+                    <div class="form-group">
+                        <label class="lbl">Role</label>
+                        <select name="role" id="user_role_add" class="inp full" required>
+                            <option value="">Select role</option>
+                            <?php 
+                            // Show only roles that current user can create
+                            if ($my_role === 'superadmin'): ?>
+                                <option value="staff">Staff</option>
+                                <option value="manager">Manager</option>
+                                <option value="admin">Admin</option>
+                                <option value="superadmin">Super Admin</option>
+                            <?php elseif ($my_role === 'admin'): ?>
+                                <option value="staff">Staff</option>
+                                <option value="manager">Manager</option>
+                            <?php elseif ($my_role === 'manager'): ?>
+                                <option value="staff">Staff</option>
+                            <?php endif; ?>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="lbl">Station</label>
+                        <?php if($my_role === 'admin'): ?>
+                            <input type="hidden" name="station_id" value="<?php echo $my_station_id; ?>">
+                            <input type="text" value="<?php echo htmlspecialchars($station_name ?? 'Station ' . $my_station_id); ?>" class="inp full" readonly style="background: #f0f0f0; cursor: not-allowed;">
+                        <?php elseif($my_role === 'superadmin'): ?>
+                            <select name="station_id" class="inp full" required>
+                                <option value="">Select station</option>
+                                <?php foreach($stations as $s): ?>
+                                    <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <div class="grid-2 mb-3" style="gap:10px;">
+                    <div class="form-group">
                         <label class="lbl">Phone</label>
                         <input type="text" name="phone" class="inp full">
                     </div>
-                    <div>
+                    <div class="form-group">
                         <label class="lbl">Email</label>
                         <input type="email" name="email" class="inp full">
                     </div>
                 </div>
-                 <div class="form-group mb-3">
-                     <label class="lbl">Station</label>
-                     <?php if($my_role === 'admin'): ?>
-                         <input type="hidden" name="station_id" value="<?php echo $my_station_id; ?>">
-                         <input type="text" value="<?php echo htmlspecialchars($station_name ?? 'Station ' . $my_station_id); ?>" class="inp full" readonly style="background: #f0f0f0; cursor: not-allowed;">
-                     <?php elseif($my_role === 'superadmin'): ?>
-                         <select name="station_id" class="inp full" required>
-                             <option value="">Select a station</option>
-                             <?php foreach($stations as $s): ?>
-                                 <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
-                             <?php endforeach; ?>
-                         </select>
-                     <?php endif; ?>
-                 </div>
+                
                 <div class="form-group mb-3">
                     <label class="lbl">Password</label>
-                    <div style="display:flex; gap:10px; align-items:center;">
-                        <input type="text" name="password" id="new_password" class="inp full" placeholder="Leave empty to auto-generate (petronXXX)">
-                        <button type="button" class="btn small ghost" onclick="generateSimplePassword()" title="Generate petron password">
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <input type="text" name="password" id="new_password" class="inp full" placeholder="Leave empty to auto-generate">
+                        <button type="button" class="btn small ghost" onclick="generateSimplePassword()" title="Generate petronXXX" style="margin-top: 2px; flex-shrink: 0;">
                             <i class="fas fa-dice"></i>
                         </button>
                     </div>
+                    <small class="muted" style="margin-top: 4px;">Auto-generates petronXXX if left empty</small>
                 </div>
+                
                 <div class="form-group mb-3">
                     <label class="lbl">Confirm Password</label>
                     <input type="password" name="confirm_password" id="confirm_password" class="inp full" placeholder="Re-enter password">
-                    <small class="muted">Both passwords must match</small>
                 </div>
             </div>
             <div class="modal-footer">
@@ -652,6 +658,87 @@ function generatePassword() {
     .inp.full { width: 100%; }
     .mb-3 { margin-bottom: 1rem; }
     .mt-3 { margin-top: 1rem; }
+    
+    /* Modal improvements */
+    #addModal .modal-content,
+    #editModal .modal-content,
+    #resetModal .modal-content {
+        max-width: 500px;
+        width: min(500px, 95vw);
+    }
+    
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .lbl {
+        font-size: 13px;
+        font-weight: 600;
+        color: #1f2937;
+    }
+    
+    .inp {
+        padding: 8px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        font-family: inherit;
+    }
+    
+    .inp:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    
+    .muted {
+        font-size: 12px;
+        color: #6b7280;
+    }
+    
+    .modal-footer {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+    }
+    
+    .btn {
+        padding: 8px 16px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    
+    .btn:hover {
+        background: #f3f4f6;
+    }
+    
+    .btn.primary {
+        background: #3b82f6;
+        color: white;
+        border-color: #3b82f6;
+    }
+    
+    .btn.primary:hover {
+        background: #2563eb;
+    }
+    
+    .btn.ghost {
+        background: transparent;
+        border: none;
+        color: #6b7280;
+    }
+    
+    .btn.ghost:hover {
+        background: #f3f4f6;
+        color: #1f2937;
+    }
 </style>
 
 <?php include __DIR__ . '/../partials/footer.php'; ?>
