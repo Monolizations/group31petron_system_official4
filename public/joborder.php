@@ -265,7 +265,6 @@ try {
         INNER JOIN station_inventory i ON i.product_id = p.id AND i.station_id = ?
         WHERE i.status = 'active'
           AND i.stock_level > 0
-          AND p.type_id = 2
         ORDER BY p.name
     ");
     $stmt->execute([$station_id]);
