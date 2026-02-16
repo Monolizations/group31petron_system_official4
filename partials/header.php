@@ -616,8 +616,7 @@ if (!isset($pdo) || !$pdo) {
        ['id'=>'pump_management','label'=>'Pump Management','ico'=>'fas fa-gas-pump','href'=>'admin_pump_management.php'],
 
        ['id'=>'fuel_pricing','label'=>'Fuel Pricing','ico'=>'fas fa-dollar-sign','href'=>'#','sub_items' => [
-           ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'admin_set_prices.php'],
-           ['id'=>'propose_fuel_prices','label'=>'Propose Price Changes','href'=>'admin_propose_prices.php'],
+           ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'fuel_pricing_manager.php'],
            ['id'=>'price_change_logs','label'=>'Price Change History','href'=>'price_change_logs.php']
        ]],
 
@@ -649,8 +648,7 @@ if (!isset($pdo) || !$pdo) {
        ]],
 
        ['id'=>'fuel_management','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','sub_items'=>[
-            ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'admin_set_prices.php'],
-            ['id'=>'propose_fuel_prices','label'=>'Propose Price Changes','href'=>'admin_propose_prices.php'],
+            ['id'=>'set_fuel_prices','label'=>'Set Fuel Prices','href'=>'fuel_pricing_manager.php'],
             ['id'=>'price_change_logs','label'=>'Price Change History','href'=>'price_change_logs.php'],
             ['id'=>'fuel_reconciliation_validate','label'=>'Validate Reconciliation','href'=>'fuel_reconciliation_validation.php'],
             ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php'],
