@@ -93,108 +93,89 @@ if ($start_date && $end_date) {
     try {
         switch($log_type) {
             case 'user':
-                // Get user logs from users table
+                // Get user logs from audit_logs table - user management and login actions
                 $sql = "SELECT 
-                        u.id, u.username, u.role, u.email, u.phone, u.status,
-                        u.created_at as created_at,
-                        u.last_login as last_login,
-                        'user' as log_type,
-                        'Login' as action_type,
-                        'User logged in' as action_details,
-                        u.last_login_ip as ip_address,
-                        u.last_login_agent as user_agent,
-                        CASE WHEN u.status = 'active' THEN 'Success' ELSE 'Failed' END as status
-                        FROM users u
-                        WHERE (DATE(u.created_at) BETWEEN ? AND ? OR DATE(u.last_login) BETWEEN ? AND ?)";
-                $params = [$start_date, $end_date, $start_date, $end_date];
+                        al.id, al.user_id, al.log_type, al.action_type, al.action_details,
+                        al.status, al.ip_address, al.user_agent, al.created_at,
+                        u.username as user_name, u.role as user_role
+                        FROM audit_logs al
+                        LEFT JOIN users u ON al.user_id = u.id
+                        WHERE DATE(al.created_at) BETWEEN ? AND ? 
+                        AND al.log_type IN ('user_management', 'login', 'permission_change')";
+                $params = [$start_date, $end_date];
                 
                 if (!empty($users)) {
                     $placeholders = str_repeat('?,', count($users) - 1) . '?';
-                    $sql .= " AND u.id IN ($placeholders)";
+                    $sql .= " AND al.user_id IN ($placeholders)";
                     $params = array_merge($params, $users);
                 }
                 
-                $sql .= " ORDER BY u.created_at DESC, u.last_login DESC";
+                $sql .= " ORDER BY al.created_at DESC LIMIT 100";
                 break;
                 
             case 'transaction':
-                // Get transaction logs from sales table
+                // Get transaction logs from audit_logs table
                 $sql = "SELECT 
-                        s.id, s.total as amount, s.payment_method, s.customer_name,
-                        s.created_at, s.cashier as user_name,
-                        s.station_id,
-                        'transaction' as log_type,
-                        'Sale' as action_type,
-                        CONCAT('Sale of ', s.total, ' to ', s.customer_name) as action_details,
-                        '192.168.1.' . rand(1, 254) as ip_address,
-                        'POS Terminal' as user_agent,
-                        'Success' as status
-                        FROM sales s
-                        WHERE DATE(s.created_at) BETWEEN ? AND ?";
+                        al.id, al.user_id, al.log_type, al.action_type, al.action_details,
+                        al.status, al.ip_address, al.user_agent, al.created_at,
+                        u.username as user_name, u.role as user_role
+                        FROM audit_logs al
+                        LEFT JOIN users u ON al.user_id = u.id
+                        WHERE DATE(al.created_at) BETWEEN ? AND ? 
+                        AND al.log_type = 'transaction'";
                 $params = [$start_date, $end_date];
                 
                 if (!empty($transaction_types)) {
                     $placeholders = str_repeat('?,', count($transaction_types) - 1) . '?';
-                    $sql .= " AND s.payment_method IN ($placeholders)";
+                    $sql .= " AND al.action_type IN ($placeholders)";
                     $params = array_merge($params, $transaction_types);
                 }
                 
-                $sql .= " ORDER BY s.created_at DESC";
+                $sql .= " ORDER BY al.created_at DESC LIMIT 100";
                 break;
                 
             case 'inventory':
-                // Get inventory logs from inventory and fuel tables
+                // Get inventory logs from inventory_logs table
                 $sql = "SELECT 
-                        i.id, i.product_name, i.stock_level, i.type,
-                        i.created_at,
-                        i.station_id,
-                        u.username as user_name,
+                        il.id, il.user_id, il.action, il.quantity_before, il.quantity_after,
+                        il.quantity_change, il.reference_type, il.notes, il.created_at,
+                        u.username as user_name, u.role as user_role,
+                        p.name as product_name, s.name as station_name,
                         'inventory' as log_type,
-                        CASE 
-                            WHEN i.type = 'fuel' THEN 'Stock Adjustment'
-                            WHEN i.stock_level > 0 THEN 'Stock In'
-                            ELSE 'Stock Out'
-                        END as action_type,
-                        CONCAT('Stock level updated to ', i.stock_level, ' for ', i.product_name) as action_details,
-                        '192.168.1.' . rand(1, 254) as ip_address,
-                        'Inventory System' as user_agent,
-                        'Success' as status
-                        FROM station_inventory i
-                        LEFT JOIN users u ON i.user_id = u.id
-                        WHERE DATE(i.created_at) BETWEEN ? AND ?";
+                        il.action as action_type
+                        FROM inventory_logs il
+                        LEFT JOIN users u ON il.user_id = u.id
+                        LEFT JOIN products p ON il.product_id = p.id
+                        LEFT JOIN stations s ON il.station_id = s.id
+                        WHERE DATE(il.created_at) BETWEEN ? AND ?";
                 $params = [$start_date, $end_date];
                 
                 if (!empty($branches)) {
                     $placeholders = str_repeat('?,', count($branches) - 1) . '?';
-                    $sql .= " AND i.station_id IN ($placeholders)";
+                    $sql .= " AND il.station_id IN ($placeholders)";
                     $params = array_merge($params, $branches);
                 }
                 
                 if (!empty($items)) {
                     $placeholders = str_repeat('?,', count($items) - 1) . '?';
-                    $sql .= " AND i.product_name IN ($placeholders)";
+                    $sql .= " AND p.name IN ($placeholders)";
                     $params = array_merge($params, $items);
                 }
                 
-                $sql .= " ORDER BY i.created_at DESC";
+                $sql .= " ORDER BY il.created_at DESC LIMIT 100";
                 break;
                 
             default:
-                // Default: get all activity from recent tables
+                // Default: get all audit logs
                 $sql = "SELECT 
-                        u.id, u.username, u.role, u.email, u.status,
-                        u.created_at as created_at,
-                        u.last_login as last_login,
-                        'user' as log_type,
-                        'Login' as action_type,
-                        'User logged in' as action_details,
-                        u.last_login_ip as ip_address,
-                        u.last_login_agent as user_agent,
-                        CASE WHEN u.status = 'active' THEN 'Success' ELSE 'Failed' END as status
-                        FROM users u
-                        WHERE DATE(u.created_at) BETWEEN ? AND ? OR DATE(u.last_login) BETWEEN ? AND ?";
-                $params = [$start_date, $end_date, $start_date, $end_date];
-                $sql .= " ORDER BY u.created_at DESC, u.last_login DESC";
+                        al.id, al.user_id, al.log_type, al.action_type, al.action_details,
+                        al.status, al.ip_address, al.user_agent, al.created_at,
+                        u.username as user_name, u.role as user_role
+                        FROM audit_logs al
+                        LEFT JOIN users u ON al.user_id = u.id
+                        WHERE DATE(al.created_at) BETWEEN ? AND ?";
+                $params = [$start_date, $end_date];
+                $sql .= " ORDER BY al.created_at DESC LIMIT 100";
         }
         
         $stmt = $pdo->prepare($sql);
@@ -204,7 +185,7 @@ if ($start_date && $end_date) {
         // Ensure all records have required fields
         foreach ($audit_logs as &$log) {
             $log['id'] = $log['id'] ?? 0;
-            $log['log_type'] = $log['log_type'] ?? 'user';
+            $log['log_type'] = $log['log_type'] ?? 'audit';
             $log['user_name'] = $log['user_name'] ?? 'Unknown';
             $log['user_role'] = $log['user_role'] ?? 'Unknown';
             $log['action_type'] = $log['action_type'] ?? 'Unknown';
