@@ -28,11 +28,16 @@ include __DIR__ . '/../partials/header.php';
 $view = $_GET['view'] ?? 'all';
 $status_filter = $_GET['status'] ?? '';
 
-// Build query
-$where = "WHERE log_type = 'approval'";
-if ($status_filter) {
-    $where .= " AND status = '" . $pdo->quote($status_filter) . "'";
+// Build query with parameterized statements
+$where_conditions = array("a.log_type = 'approval'");
+$params = array();
+
+if ($status_filter && in_array($status_filter, ['Success', 'Failed'])) {
+    $where_conditions[] = "a.status = ?";
+    $params[] = $status_filter;
 }
+
+$where = "WHERE " . implode(" AND ", $where_conditions);
 
 // Get approval records from audit_logs
 $sql = "SELECT a.*, u.name as approved_by FROM audit_logs a
@@ -40,10 +45,12 @@ $sql = "SELECT a.*, u.name as approved_by FROM audit_logs a
         $where
         ORDER BY a.created_at DESC";
 
-$approvals = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$approvals = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get summary stats
-$total = count($approvals);
+$total = $pdo->query("SELECT COUNT(*) FROM audit_logs WHERE log_type='approval'")->fetchColumn();
 $approved = $pdo->query("SELECT COUNT(*) FROM audit_logs WHERE log_type='approval' AND status='Success'")->fetchColumn();
 $rejected = $pdo->query("SELECT COUNT(*) FROM audit_logs WHERE log_type='approval' AND status='Failed'")->fetchColumn();
 ?>
