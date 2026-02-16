@@ -19,8 +19,8 @@ try {
     } else {
         // Insert Petron Supplier
         $stmt = $pdo->prepare("
-            INSERT INTO suppliers (name, contact_person, phone, email, status)
-            VALUES (?, ?, ?, ?, 'active')
+            INSERT INTO suppliers (name, contact_person, phone, email)
+            VALUES (?, ?, ?, ?)
         ");
         $stmt->execute([
             'Petron Supplier',
@@ -32,14 +32,18 @@ try {
         echo "✓ Inserted Petron Supplier (ID: {$supplier_id})\n";
     }
     
-    // Set as default supplier
-    $stmt = $pdo->prepare("
-        INSERT INTO system_settings (setting_key, setting_value, description)
-        VALUES ('default_supplier_id', ?, 'Default supplier for receiving staff')
-        ON DUPLICATE KEY UPDATE setting_value = ?
-    ");
-    $stmt->execute([(string)$supplier_id, (string)$supplier_id]);
-    echo "✓ Set Petron Supplier as default supplier\n";
+    // Set as default supplier (optional - only if system_settings table exists)
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO system_settings (setting_key, setting_value, description)
+            VALUES ('default_supplier_id', ?, 'Default supplier for receiving staff')
+            ON DUPLICATE KEY UPDATE setting_value = ?
+        ");
+        $stmt->execute([(string)$supplier_id, (string)$supplier_id]);
+        echo "✓ Set Petron Supplier as default supplier\n";
+    } catch (Exception $e) {
+        echo "⚠ Note: system_settings table not found - skipping default supplier setting\n";
+    }
     
     // Verify
     $stmt = $pdo->prepare("SELECT name FROM suppliers WHERE id = ?");
