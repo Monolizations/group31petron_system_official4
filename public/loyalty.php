@@ -53,40 +53,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Fetch data based on view
-$customers = [];
-$transactions = [];
-$rewards = [];
-$points_issued = 0;
-$redemptions = 0;
-
-try {
-    // Fetch customers for dropdown
-    $stmt = $pdo->prepare("SELECT id, name, points FROM customers WHERE station_id = ? ORDER BY name");
-    $stmt->execute([$station_id]);
-    $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Fetch data based on view
+    $customers = [];
+    $transactions = [];
+    $rewards = [];
+    $redemption_history = [];
+    $points_issued = 0;
+    $redemptions = 0;
     
-    // Fetch loyalty transactions
-    $stmt = $pdo->prepare("SELECT lt.*, c.name as customer_name FROM loyalty_transactions lt LEFT JOIN customers c ON lt.customer_id = c.id WHERE c.station_id = ? ORDER BY lt.created_at DESC LIMIT 50");
-    $stmt->execute([$station_id]);
-    $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Calculate points issued today
-    $stmt = $pdo->prepare("SELECT SUM(points) FROM loyalty_transactions lt LEFT JOIN customers c ON lt.customer_id = c.id WHERE c.station_id = ? AND lt.type='earn' AND DATE(lt.created_at) = CURDATE()");
-    $points_issued = $stmt->fetchColumn() ?: 0;
-    
-    // Calculate redemptions
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM loyalty_transactions lt LEFT JOIN customers c ON lt.customer_id = c.id WHERE c.station_id = ? AND lt.type='redeem'");
-    $redemptions = $stmt->fetchColumn();
-    
-    // Mock rewards data
-    $rewards = [
-        ['name' => 'Free Car Wash', 'points' => 500, 'category' => 'Service'],
-        ['name' => '10% Discount', 'points' => 300, 'category' => 'Discount'],
-        ['name' => 'Free Oil Change', 'points' => 800, 'category' => 'Service'],
-        ['name' => 'Fuel Voucher ₱100', 'points' => 1000, 'category' => 'Fuel'],
-    ];
-} catch (Exception $e) {}
+    try {
+        // Fetch customers for dropdown
+        $stmt = $pdo->prepare("SELECT id, name, points FROM customers WHERE station_id = ? ORDER BY name");
+        $stmt->execute([$station_id]);
+        $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Fetch loyalty transactions
+        $stmt = $pdo->prepare("SELECT lt.*, c.name as customer_name FROM loyalty_transactions lt LEFT JOIN customers c ON lt.customer_id = c.id WHERE c.station_id = ? ORDER BY lt.created_at DESC LIMIT 50");
+        $stmt->execute([$station_id]);
+        $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Calculate points issued today
+        $stmt = $pdo->prepare("SELECT SUM(points) FROM loyalty_transactions lt LEFT JOIN customers c ON lt.customer_id = c.id WHERE c.station_id = ? AND lt.type='earn' AND DATE(lt.created_at) = CURDATE()");
+        $points_issued = $stmt->fetchColumn() ?: 0;
+        
+        // Calculate redemptions
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM loyalty_transactions lt LEFT JOIN customers c ON lt.customer_id = c.id WHERE c.station_id = ? AND lt.type='redeem'");
+        $redemptions = $stmt->fetchColumn();
+        
+        // Fetch available rewards
+        $stmt = $pdo->prepare("SELECT id, name, points_required as points, category FROM rewards WHERE is_active = 1 ORDER BY points_required ASC");
+        $stmt->execute();
+        $rewards = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Fetch redemption history
+        $stmt = $pdo->prepare(
+            "SELECT lt.id, c.name as customer_name, r.name as reward_name, lt.points, lt.created_at,
+                    CASE 
+                        WHEN DATE(lt.created_at) = CURDATE() THEN 'Today'
+                        WHEN DATE(lt.created_at) = DATE(DATE_SUB(NOW(), INTERVAL 1 DAY)) THEN 'Yesterday'
+                        ELSE 'Completed'
+                    END as status
+             FROM loyalty_transactions lt
+             JOIN customers c ON lt.customer_id = c.id
+             LEFT JOIN rewards r ON lt.points = r.points_required
+             WHERE c.station_id = ? AND lt.type = 'redeem'
+             ORDER BY lt.created_at DESC
+             LIMIT 100"
+        );
+        $stmt->execute([$station_id]);
+        $redemption_history = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {}
 ?>
 <div class="page-head">
     <div>
@@ -244,9 +260,25 @@ try {
                 </tr>
             </thead>
             <tbody>
-                <tr>
-                    <td colspan="5" style="text-align:center; padding:20px; color:#888;">No redemption history found.</td>
-                </tr>
+                <?php if(empty($redemption_history)): ?>
+                    <tr>
+                        <td colspan="5" style="text-align:center; padding:20px; color:#888;">No redemption history found.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach($redemption_history as $redemption): ?>
+                        <tr>
+                            <td><?php echo date('M d, Y g:i A', strtotime($redemption['created_at'])); ?></td>
+                            <td><?php echo htmlspecialchars($redemption['customer_name']); ?></td>
+                            <td><?php echo htmlspecialchars($redemption['reward_name'] ?? 'Custom Redemption'); ?></td>
+                            <td><?php echo number_format($redemption['points']); ?></td>
+                            <td>
+                                <span class="badge" style="background:#28a745; color:white; padding:2px 8px; border-radius:12px; font-size:12px;">
+                                    <?php echo htmlspecialchars($redemption['status']); ?>
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>

@@ -208,7 +208,7 @@ require_once __DIR__ . '/../partials/header.php';
 
 .modal-title {
     font-size: 20px;
-    font    : 600;
+    font-weight: 600;
     color: var(--text);
 }
 
@@ -501,15 +501,15 @@ function editRole(role) {
     
     // Load role data
     const roleData = {
-        'superadmin' => 'Super Administrator',
-        'admin' => 'Administrator',
-        'manager' => 'Station Manager',
-        'staff' => 'Station Staff',
-        'operations' => 'Operations Staff'
+        'superadmin': 'Super Administrator',
+        'admin': 'Administrator',
+        'manager': 'Station Manager',
+        'staff': 'Station Staff',
+        'operations': 'Operations Staff'
     };
     
     document.getElementById('edit_role_name').value = roleData[role] || role;
-    document.getElementById('edit_description').value = 'Role description for ' + roleData[role];
+    document.getElementById('edit_description').value = 'Role description for ' + (roleData[role] || role);
     
     // Load permissions
     const permissions = [
@@ -524,12 +524,7 @@ function editRole(role) {
     permissions.forEach(permission => {
         const div = document.createElement('div');
         div.style.marginBottom = '8px';
-        div.innerHTML = `
-            <label style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" name="permissions[]" value="${permission}" ${permission === 'ALL_ACCESS' ? 'checked' : ''}>
-                <span>${permission.replace('_', ' ')}</span>
-            </label>
-        `;
+        div.innerHTML = '<label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" name="permissions[]" value="' + permission + '" ' + (permission === 'ALL_ACCESS' ? 'checked' : '') + '><span>' + permission.replace(/_/g, ' ') + '</span></label>';
         container.appendChild(div);
     });
 }
@@ -548,14 +543,14 @@ function saveRole() {
 }
 
 // View Role Users
-function viewUsers(role) {
+function viewRoleUsers(role) {
     openModal('viewUsersModal');
     
     // Load users for this role
     const userList = document.getElementById('roleUsersList');
     userList.innerHTML = '<div class="alert alert-info">Loading users...</div>';
     
-    // Simulate loading users
+    // Simulate loading users (in real implementation, fetch from database)
     setTimeout(() => {
         const users = [
             {id: 1, name: 'John Doe', username: 'johndoe', email: 'john@example.com'},
@@ -565,11 +560,7 @@ function viewUsers(role) {
         
         let html = '<div class="user-list">';
         users.forEach(user => {
-            html += `
-                <div class="user-chip">
-                    ${user.name} (${user.username})
-                </div>
-            `;
+            html += '<div class="user-chip">' + user.name + ' (' + user.username + ')</div>';
         });
         html += '</div>';
         

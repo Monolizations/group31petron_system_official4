@@ -32,12 +32,21 @@ try {
     $stmt->execute([$me['id']]);
     $shift_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Upcoming shifts (mock data for now)
-    $upcoming_shifts = [
-        ['date' => date('Y-m-d', strtotime('+1 day')), 'shift' => 'Morning', 'time' => '6:00 AM - 2:00 PM'],
-        ['date' => date('Y-m-d', strtotime('+2 days')), 'shift' => 'Afternoon', 'time' => '2:00 PM - 10:00 PM'],
-        ['date' => date('Y-m-d', strtotime('+3 days')), 'shift' => 'Morning', 'time' => '6:00 AM - 2:00 PM'],
-    ];
+    // Upcoming shifts (future shifts without end_time yet)
+    $stmt = $pdo->prepare("SELECT DATE(start_time) as shift_date, TIME(start_time) as shift_start, TIME(end_time) as shift_end FROM labor_sessions WHERE user_id = ? AND start_time > NOW() AND end_time IS NOT NULL ORDER BY start_time ASC LIMIT 10");
+    $stmt->execute([$me['id']]);
+    $upcoming_shifts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Format upcoming shifts for display
+    $upcoming_shifts_formatted = [];
+    foreach ($upcoming_shifts as $shift) {
+        $upcoming_shifts_formatted[] = [
+            'date' => $shift['shift_date'],
+            'shift' => $shift['shift_start'] <= '14:00:00' ? 'Morning' : ($shift['shift_start'] < '22:00:00' ? 'Afternoon' : 'Night'),
+            'time' => date('g:i A', strtotime($shift['shift_start'])) . ' - ' . date('g:i A', strtotime($shift['shift_end']))
+        ];
+    }
+    $upcoming_shifts = $upcoming_shifts_formatted;
     
     // Hours worked this week
     $stmt = $pdo->prepare("SELECT SUM(hours_worked) as total_hours FROM labor_sessions WHERE user_id = ? AND YEARWEEK(start_time) = YEARWEEK(NOW()) AND end_time IS NOT NULL");
