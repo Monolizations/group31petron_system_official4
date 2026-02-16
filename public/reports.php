@@ -96,11 +96,11 @@ try {
         $stmt->execute([$station_id]);
         $inventory = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        foreach ($inventory as $item) {
-            // Calculate Out (Sales)
-            $stmtOut = $pdo->prepare("SELECT SUM(qty) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE si.name = ? AND (s.station_id = ? OR s.station_id IS NULL) AND s.sale_date BETWEEN ? AND ?");
-            $stmtOut->execute([$item['product_name'], $station_id, $start, $end]);
-            $out = $stmtOut->fetchColumn() ?: 0;
+         foreach ($inventory as $item) {
+             // Calculate Out (Sales)
+             $stmtOut = $pdo->prepare("SELECT SUM(quantity) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE si.name = ? AND (s.station_id = ? OR s.station_id IS NULL) AND s.sale_date BETWEEN ? AND ?");
+             $stmtOut->execute([$item['product_name'], $station_id, $start, $end]);
+             $out = $stmtOut->fetchColumn() ?: 0;
             
             // Calculate In (Deliveries)
             $in = 0;
