@@ -4,7 +4,7 @@
  * Allows managers to verify fuel deliveries recorded by staff
  */
 
-require_once __DIR__ . '/../lib.php';
+require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
 
 // Check if user is logged in and has manager role
@@ -13,6 +13,7 @@ $me = current_user();
 
 if (!in_array($me['role'], ['manager', 'admin', 'superadmin'])) {
     echo '<div class="alert alert-danger">Access denied. Only managers, admins, or superadmins can verify deliveries. (Role: '.htmlspecialchars($me['role']).')</div>';
+    exit;
 }
 
 $id = $_GET['id'] ?? 0;
@@ -40,7 +41,7 @@ try {
     }
     
     // Check if delivery is already verified
-    if ($delivery['status'] !== 'Pending') {
+    if ($delivery['status'] !== 'Pending Review' && $delivery['status'] !== 'Pending') {
         echo '<div class="alert alert-warning">This delivery has already been ' . strtolower($delivery['status']) . '.</div>';
         exit;
     }
@@ -51,295 +52,295 @@ try {
 }
 ?>
 
-<div class="modal-dialog modal-lg">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h5 class="modal-title">🚛 Verify Fuel Delivery</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        
-        <div class="modal-body">
-            <!-- Delivery Details -->
-            <div class="card mb-3">
-                <div class="card-header">
-                    <strong>📋 Delivery Information</strong>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <p><strong>Delivery Date:</strong> <?php echo date('M d, Y', strtotime($delivery['delivery_date'])); ?></p>
-                            <p><strong>Fuel Type:</strong> <span class="badge bg-primary"><?php echo htmlspecialchars($delivery['fuel_type']); ?></span></p>
-                            <p><strong>Supplier:</strong> <?php echo htmlspecialchars($delivery['supplier']); ?></p>
-                            <p><strong>Invoice No:</strong> <?php echo htmlspecialchars($delivery['invoice_no'] ?: 'N/A'); ?></p>
-                        </div>
-                        <div class="col-md-6">
-                            <p><strong>Tanker Number:</strong> <?php echo htmlspecialchars($delivery['tanker_number'] ?: 'N/A'); ?></p>
-                            <p><strong>Received By:</strong> <?php echo htmlspecialchars($delivery['receiver_name']); ?></p>
-                            <p><strong>Recorded:</strong> <?php echo date('M d, Y H:i', strtotime($delivery['created_at'])); ?></p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Delivery Volume -->
-            <div class="card mb-3">
-                <div class="card-header">
-                    <strong>⛽ Delivery Volume</strong>
-                </div>
-                <div class="card-body text-center">
-                    <div class="metric">
-                        <div class="metric-value text-primary"><?php echo number_format($delivery['delivery_liters'], 2); ?> Liters</div>
-                        <div class="metric-label">Total Delivered</div>
-                    </div>
-                    
-                    <?php if ($delivery['notes']): ?>
-                    <div class="mt-3 text-start">
-                        <strong>Delivery Notes:</strong>
-                        <p class="text-muted"><?php echo nl2br(htmlspecialchars($delivery['notes'])); ?></p>
-                    </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            
-            <!-- Current Inventory Check -->
-            <div class="card mb-3">
-                <div class="card-header">
-                    <strong>📊 Current Inventory Status</strong>
-                </div>
-                <div class="card-body">
-                    <?php
-                    // Get current inventory for this fuel type
-                    try {
-                        $stmt = $pdo->prepare("
-                            SELECT p.name, i.stock_level, i.capacity, i.unit
-                            FROM inventory i
-                            JOIN products p ON i.product_id = p.id
-                            WHERE i.station_id = ? AND p.name LIKE ?
-                            LIMIT 1
-                        ");
-                        $stmt->execute([user_station_id(), '%' . $delivery['fuel_type'] . '%']);
-                        $inventory = $stmt->fetch();
-                        
-                        if ($inventory) {
-                            $capacity_percent = ($inventory['stock_level'] / $inventory['capacity']) * 100;
-                    ?>
-                    <div class="row">
-                        <div class="col-md-4">
-                            <div class="metric">
-                                <div class="metric-value"><?php echo number_format($inventory['stock_level'], 2); ?></div>
-                                <div class="metric-label">Current Stock (<?php echo $inventory['unit']; ?>)</div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="metric">
-                                <div class="metric-value"><?php echo number_format($inventory['capacity'], 2); ?></div>
-                                <div class="metric-label">Tank Capacity (<?php echo $inventory['unit']; ?>)</div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="metric">
-                                <div class="metric-value <?php echo $capacity_percent > 90 ? 'text-warning' : 'text-success'; ?>"><?php echo number_format($capacity_percent, 1); ?>%</div>
-                                <div class="metric-label">Current Fill Level</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <?php
-                            $new_level = $inventory['stock_level'] + $delivery['delivery_liters'];
-                            $new_percent = ($new_level / $inventory['capacity']) * 100;
-                            
-                            if ($new_level > $inventory['capacity']) {
-                                echo '<div class="alert alert-danger mt-3">';
-                                echo '<i class="fas fa-exclamation-triangle"></i> ';
-                                echo '<strong>Warning:</strong> This delivery would exceed tank capacity! ';
-                                echo 'New level would be ' . number_format($new_level, 2) . ' ' . $inventory['unit'];
-                                echo ' (' . number_format($new_percent, 1) . '% of capacity)';
-                                echo '</div>';
-                            } else if ($new_percent > 95) {
-                                echo '<div class="alert alert-warning mt-3">';
-                                echo '<i class="fas fa-exclamation-circle"></i> ';
-                                echo '<strong>Caution:</strong> Tank will be nearly full after delivery ';
-                                echo '(' . number_format($new_percent, 1) . '% of capacity)';
-                                echo '</div>';
-                            }
-                        } else {
-                            echo '<div class="alert alert-info">No inventory record found for ' . htmlspecialchars($delivery['fuel_type']) . '</div>';
-                        }
-                    } catch (Exception $e) {
-                        echo '<div class="alert alert-warning">Could not retrieve inventory information</div>';
-                    }
-                    ?>
-                </div>
-            </div>
-            
-            <!-- Verification Form -->
-            <form id="verifyDeliveryForm" method="POST" action="../backend/fuel_process_verification.php">
-                <input type="hidden" name="action" value="verify_delivery">
-                <input type="hidden" name="id" value="<?php echo $id; ?>">
-                
-                <div class="card">
-                    <div class="card-header">
-                        <strong>✅ Manager Verification</strong>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label class="form-label"><strong>Verification Status *</strong></label>
-                            <div class="d-flex gap-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="status" id="statusVerified" value="Verified" required>
-                                    <label class="form-check-label text-success" for="statusVerified">
-                                        <i class="fas fa-check-circle"></i> Verified
-                                    </label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="status" id="statusRejected" value="Rejected" required>
-                                    <label class="form-check-label text-danger" for="statusRejected">
-                                        <i class="fas fa-times-circle"></i> Rejected
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="actualLiters" class="form-label">Actual Liters Received</label>
-                                    <input type="number" step="0.01" class="form-control" id="actualLiters" name="actual_liters" 
-                                           value="<?php echo $delivery['delivery_liters']; ?>" min="0">
-                                    <small class="form-text text-muted">Adjust if different from recorded amount</small>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="deliveryQuality" class="form-label">Fuel Quality</label>
-                                    <select class="form-control" id="deliveryQuality" name="quality">
-                                        <option value="Good">Good - No issues</option>
-                                        <option value="Fair">Fair - Minor concerns</option>
-                                        <option value="Poor">Poor - Quality issues</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="verificationNotes" class="form-label">Manager Notes</label>
-                            <textarea class="form-control" id="verificationNotes" name="notes" rows="3" 
-                                      placeholder="Enter verification notes, quality observations, or reasons for rejection..."></textarea>
-                        </div>
-                        
-                        <div id="rejectionReason" style="display: none;" class="mb-3">
-                            <label for="rejectionSelect" class="form-label text-danger">Reason for Rejection *</label>
-                            <select class="form-control" id="rejectionSelect" name="rejection_reason">
-                                <option value="">Select reason...</option>
-                                <option value="Quantity Mismatch">Quantity mismatch with invoice</option>
-                                <option value="Quality Issues">Fuel quality problems</option>
-                                <option value="Documentation Issues">Missing or incorrect documentation</option>
-                                <option value="Delivery Issues">Delivery procedure not followed</option>
-                                <option value="Tank Overflow">Would exceed tank capacity</option>
-                                <option value="Other">Other (specify in notes)</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-            </form>
-        </div>
-        
-        <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                <i class="fas fa-times"></i> Cancel
-            </button>
-            <button type="submit" form="verifyDeliveryForm" class="btn btn-success" id="submitBtn">
-                <i class="fas fa-check"></i> Verify Delivery
-            </button>
-        </div>
-    </div>
-</div>
-
 <style>
-.metric {
+.modal-delivery-review {
     padding: 20px;
-    border-radius: 8px;
-    background: #f8f9fa;
-    margin-bottom: 15px;
-    text-align: center;
 }
-.metric-value {
-    font-size: 24px;
-    font-weight: bold;
+.modal-delivery-review .review-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #e0e0e0;
+}
+.modal-delivery-review .review-header h4 {
+    margin: 0;
+    color: #333;
+}
+.modal-delivery-review .pending-badge {
+    background: #fff3cd;
+    color: #856404;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.modal-delivery-review .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+.modal-delivery-review .info-card {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+}
+.modal-delivery-review .info-card label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: block;
     margin-bottom: 5px;
 }
-.metric-label {
-    font-size: 12px;
-    color: #6c757d;
+.modal-delivery-review .info-card .value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+.modal-delivery-review .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin: 20px 0;
+}
+.modal-delivery-review .metric-box {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+}
+.modal-delivery-review .metric-box .metric-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #003366;
+}
+.modal-delivery-review .metric-box .metric-label {
+    font-size: 11px;
+    color: #666;
     text-transform: uppercase;
+    margin-top: 5px;
+}
+.modal-delivery-review .metric-box.highlight {
+    background: #e3f2fd;
+    border-color: #1976d2;
+}
+.modal-delivery-review .metric-box.highlight .metric-value {
+    color: #1976d2;
+}
+.modal-delivery-review .notes-section {
+    background: #fff8e1;
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 15px;
+    border-left: 4px solid #ffc107;
+}
+.modal-delivery-review .notes-section label {
+    font-size: 12px;
+    color: #666;
+    font-weight: 600;
+}
+.modal-delivery-review .notes-section p {
+    margin: 5px 0 0 0;
+    color: #333;
+}
+.modal-delivery-review .review-form {
+    margin-top: 25px;
+    padding-top: 20px;
+    border-top: 2px dashed #e0e0e0;
+}
+.modal-delivery-review .review-form .form-label {
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 10px;
+    display: block;
+}
+.modal-delivery-review .action-buttons {
+    display: flex;
+    gap: 15px;
+    margin-top: 20px;
+}
+.modal-delivery-review .btn-approve {
+    flex: 1;
+    background: #28a745;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.modal-delivery-review .btn-approve:hover {
+    background: #218838;
+}
+.modal-delivery-review .btn-reject {
+    flex: 1;
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.modal-delivery-review .btn-reject:hover {
+    background: #c82333;
+}
+.modal-delivery-review .rejection-fields {
+    display: none;
+    margin-top: 20px;
+    padding: 15px;
+    background: #ffebee;
+    border-radius: 8px;
+    border: 1px solid #ffcdd2;
+}
+.modal-delivery-review .rejection-fields.show {
+    display: block;
+}
+.modal-delivery-review .rejection-fields label {
+    font-weight: 600;
+    color: #c62828;
+    display: block;
+    margin-bottom: 8px;
+}
+.modal-delivery-review .rejection-fields select,
+.modal-delivery-review .rejection-fields textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+}
+.modal-delivery-review .rejection-fields textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+.modal-delivery-review .verification-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-top: 15px;
+}
+.modal-delivery-review .verification-inputs label {
+    font-size: 12px;
+    color: #666;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 5px;
+}
+.modal-delivery-review .verification-inputs input,
+.modal-delivery-review .verification-inputs select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
 }
 </style>
 
-<script>
-// Show/hide rejection reason field
-document.querySelectorAll('input[name="status"]').forEach(radio => {
-    radio.addEventListener('change', function() {
-        const rejectionDiv = document.getElementById('rejectionReason');
-        const rejectionSelect = document.getElementById('rejectionSelect');
-        const submitBtn = document.getElementById('submitBtn');
-        
-        if (this.value === 'Rejected') {
-            rejectionDiv.style.display = 'block';
-            rejectionSelect.required = true;
-            submitBtn.innerHTML = '<i class="fas fa-times"></i> Reject Delivery';
-            submitBtn.className = 'btn btn-danger';
-        } else {
-            rejectionDiv.style.display = 'none';
-            rejectionSelect.required = false;
-            rejectionSelect.value = '';
-            submitBtn.innerHTML = '<i class="fas fa-check"></i> Verify Delivery';
-            submitBtn.className = 'btn btn-success';
-        }
-    });
-});
+<div class="modal-delivery-review">
+    <div class="review-header">
+        <h4><i class="fas fa-truck"></i> Verify Fuel Delivery</h4>
+        <span class="pending-badge"><i class="fas fa-clock"></i> Pending Review</span>
+    </div>
 
-// Form submission
-document.getElementById('verifyDeliveryForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    const status = document.querySelector('input[name="status"]:checked')?.value;
-    const rejectionReason = document.getElementById('rejectionSelect').value;
-    const actualLiters = document.getElementById('actualLiters').value;
-    
-    if (status === 'Rejected' && !rejectionReason) {
-        alert('Please select a reason for rejection.');
-        return;
-    }
-    
-    if (!actualLiters || actualLiters <= 0) {
-        alert('Please enter a valid amount for actual liters received.');
-        return;
-    }
-    
-    // Confirm action
-    const action = status === 'Verified' ? 'verify' : 'reject';
-    const confirmMsg = `Are you sure you want to ${action} this fuel delivery?`;
-    
-    if (confirm(confirmMsg)) {
-        const formData = new FormData(this);
+    <div class="info-grid">
+        <div class="info-card">
+            <label>Delivery Date</label>
+            <div class="value"><?php echo date('M d, Y', strtotime($delivery['delivery_date'])); ?></div>
+        </div>
+        <div class="info-card">
+            <label>Fuel Type</label>
+            <div class="value"><?php echo htmlspecialchars($delivery['fuel_type']); ?></div>
+        </div>
+        <div class="info-card">
+            <label>Supplier</label>
+            <div class="value"><?php echo htmlspecialchars($delivery['supplier']); ?></div>
+        </div>
+        <div class="info-card">
+            <label>Invoice No.</label>
+            <div class="value"><?php echo htmlspecialchars($delivery['invoice_no'] ?: 'N/A'); ?></div>
+        </div>
+        <div class="info-card">
+            <label>Tanker Number</label>
+            <div class="value"><?php echo htmlspecialchars($delivery['tanker_number'] ?: 'N/A'); ?></div>
+        </div>
+        <div class="info-card">
+            <label>Recorded By</label>
+            <div class="value"><?php echo htmlspecialchars($delivery['receiver_name']); ?></div>
+        </div>
+    </div>
+
+    <div class="metrics-row">
+        <div class="metric-box highlight">
+            <div class="metric-value"><?php echo number_format($delivery['delivery_liters'], 2); ?> L</div>
+            <div class="metric-label">Delivery Volume</div>
+        </div>
+    </div>
+
+    <?php if ($delivery['notes']): ?>
+    <div class="notes-section">
+        <label><i class="fas fa-sticky-note"></i> Staff Notes</label>
+        <p><?php echo nl2br(htmlspecialchars($delivery['notes'])); ?></p>
+    </div>
+    <?php endif; ?>
+
+    <form id="verifyDeliveryForm">
+        <input type="hidden" name="id" value="<?php echo $id; ?>">
         
-        fetch('../backend/fuel_process_verification.php', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert(`Delivery ${action}ed successfully!`);
-                location.reload();
-            } else {
-                alert('Error: ' + (data.message || 'Unknown error occurred'));
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Network error occurred. Please try again.');
-        });
-    }
-});
-</script>
+        <div class="review-form">
+            <label class="form-label"><i class="fas fa-tasks"></i> Manager Verify Action</label>
+            
+            <div class="verification-inputs">
+                <div>
+                    <label>Actual Liters Received</label>
+                    <input type="number" step="0.01" id="actualLiters" name="actual_liters" value="<?php echo $delivery['delivery_liters']; ?>" min="0">
+                </div>
+                <div>
+                    <label>Fuel Quality</label>
+                    <select id="deliveryQuality" name="quality">
+                        <option value="Good">Good - No issues</option>
+                        <option value="Fair">Fair - Minor concerns</option>
+                        <option value="Poor">Poor - Quality issues</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="action-buttons">
+                <button type="button" class="btn-approve" onclick="var id=<?php echo $id; ?>; var action='Verified'; var actualLiters=document.getElementById('actualLiters').value; var quality=document.getElementById('deliveryQuality').value; var reason=''; var notes=''; if(!actualLiters || actualLiters<=0){alert('Please enter valid actual liters.');return;} if(!confirm('Are you sure you want to VERIFY this fuel delivery?')){return;} var fd=new FormData(); fd.append('action','verify_delivery'); fd.append('id',id); fd.append('status',action); fd.append('actual_liters',actualLiters); fd.append('quality',quality); fd.append('reason',reason); fd.append('notes',notes); fetch('../backend/fuel_process_verification.php',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();}).catch(e=>alert('Error:'+e));">
+                    <i class="fas fa-check-circle"></i> Approve
+                </button>
+                <button type="button" class="btn-reject" onclick="document.getElementById('rejectionFields').classList.add('show');">
+                    <i class="fas fa-times-circle"></i> Reject
+                </button>
+            </div>
+
+            <div class="rejection-fields" id="rejectionFields">
+                <label><i class="fas fa-exclamation-triangle"></i> Reason for Rejection *</label>
+                <select id="rejectionReason" required>
+                    <option value="">Select a reason...</option>
+                    <option value="Quantity Mismatch">Quantity mismatch with invoice</option>
+                    <option value="Quality Issues">Fuel quality problems</option>
+                    <option value="Documentation Issues">Missing or incorrect documentation</option>
+                    <option value="Delivery Issues">Delivery procedure not followed</option>
+                    <option value="Tank Overflow">Would exceed tank capacity</option>
+                    <option value="Other">Other (specify below)</option>
+                </select>
+                
+                <label style="margin-top: 15px;">Additional Notes</label>
+                <textarea id="verificationNotes" placeholder="Provide additional details about the rejection..."></textarea>
+                
+                <button type="button" class="btn-reject" style="margin-top: 15px; width: 100%;" onclick="var id=<?php echo $id; ?>; var action='Rejected'; var actualLiters=document.getElementById('actualLiters').value; var quality=document.getElementById('deliveryQuality').value; var reason=document.getElementById('rejectionReason').value; var notes=document.getElementById('verificationNotes').value; if(!reason){alert('Please select a reason for rejection.');return;} if(!confirm('Are you sure you want to REJECT this fuel delivery? This action cannot be undone.')){return;} var fd=new FormData(); fd.append('action','verify_delivery'); fd.append('id',id); fd.append('status',action); fd.append('actual_liters',actualLiters); fd.append('quality',quality); fd.append('reason',reason); fd.append('notes',notes); fetch('../backend/fuel_process_verification.php',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();}).catch(e=>alert('Error:'+e));">
+                    <i class="fas fa-times-circle"></i> Confirm Rejection
+                </button>
+            </div>
+        </div>
+    </form>
+</div>

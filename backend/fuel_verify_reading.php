@@ -4,7 +4,7 @@
  * Allows managers to verify pump readings recorded by staff
  */
 
-require_once __DIR__ . '/../lib.php';
+require_once __DIR__ . './lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
 
 // Check if user is logged in and has manager role

@@ -56,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             
             if ($fuel_station_id && $reading_date && $shift) {
                 try {
-                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, fuel_station_id, reading_date, shift, previous_reading, current_reading, sales_liters, calibration, user_id, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, fuel_station_id, reading_date, shift, previous_reading, current_reading, sales_liters, calibration, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
                     $stmt->execute([$station_id, $fuel_station_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $calibration, $me['id'], $notes]);
                     
                     log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$fuel_station_id ($shift shift). Sales: $sales_liters L (Calibration: $calibration L excluded)", 'fuel_management');
@@ -88,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             
             if ($delivery_date && $fuel_type && $supplier && $delivery_liters > 0) {
                 try {
-                    $stmt = $pdo->prepare("INSERT INTO fuel_deliveries (station_id, delivery_date, fuel_type, supplier, invoice_no, delivery_liters, tanker_number, received_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt = $pdo->prepare("INSERT INTO fuel_deliveries (station_id, delivery_date, fuel_type, supplier, invoice_no, delivery_liters, tanker_number, received_by, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending Review')");
                     $stmt->execute([$station_id, $delivery_date, $fuel_type, $supplier, $invoice_no, $delivery_liters, $tanker_number, $me['id'], $notes]);
                     
                     log_activity($pdo, $me['id'], 'Record Delivery', "Recorded delivery of " . number_format($delivery_liters, 2) . " liters of $fuel_type", 'fuel_management');
@@ -431,6 +431,9 @@ require_once __DIR__ . '/../partials/header.php';
 ?>
 <style>
 .fuel-badge { display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600; }
+.fuel-badge.pending_review { background:#fff3cd;color:#856404; }
+.fuel-badge.approved { background:rgba(40,167,69,.1);color:#28a745; }
+.fuel-badge.rejected { background:rgba(220,53,69,.1);color:#dc3545; }
 .fuel-badge.pending { background:#fff3cd;color:#856404; }
 .fuel-badge.verified, .fuel-badge.approved { background:rgba(0,51,102,.08);color:var(--blue); }
 .fuel-badge.encoded { background:#e3f2fd;color:#0d47a1; }
@@ -494,7 +497,7 @@ require_once __DIR__ . '/../partials/header.php';
           <small>Review and verify recorded fuel deliveries</small>
           <?php
             try {
-              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Encoded'");
+              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_deliveries WHERE station_id = ? AND status = 'Pending Review'");
               $stmt->execute([$station_id]);
               $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
               echo "<span class='wf-count'>" . intval($count) . " pending</span>";
@@ -511,7 +514,7 @@ require_once __DIR__ . '/../partials/header.php';
           <small>Approve pump readings & deduct sales</small>
           <?php
             try {
-              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending'");
+              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending Review'");
               $stmt->execute([$station_id]);
               $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
               echo "<span class='wf-count'>" . intval($count) . " readings</span>";
@@ -573,7 +576,7 @@ require_once __DIR__ . '/../partials/header.php';
         <div class="metric-value">
           <?php 
           $pending_deliveries = array_filter($deliveries, function($d) {
-              return $d['status'] == 'Pending';
+              return $d['status'] == 'Pending Review';
           });
           echo count($pending_deliveries);
           ?>
@@ -634,9 +637,9 @@ require_once __DIR__ . '/../partials/header.php';
         <label>Status</label>
         <select id="filterStatus" class="select" style="width:140px;" onchange="applyFilters()">
           <option value="">All Status</option>
-          <option value="Pending" <?php echo $filter_status == 'Pending' ? 'selected' : ''; ?>>Pending</option>
+          <option value="Pending Review" <?php echo $filter_status == 'Pending Review' ? 'selected' : ''; ?>>Pending Review</option>
           <option value="Verified" <?php echo $filter_status == 'Verified' ? 'selected' : ''; ?>>Verified</option>
-          <option value="Finalized" <?php echo $filter_status == 'Finalized' ? 'selected' : ''; ?>>Finalized</option>
+          <option value="Rejected" <?php echo $filter_status == 'Rejected' ? 'selected' : ''; ?>>Rejected</option>
         </select>
       </div>
       <div class="filter-group" style="justify-content:flex-end;">
@@ -684,13 +687,13 @@ require_once __DIR__ . '/../partials/header.php';
               </span>
             </td>
             <td class="right">
-              <?php if($reading['status'] == 'Pending' && $isManager): ?>
-                <button class="btn ghost small" style="color:var(--blue);" onclick="openVerifyReadingModal(<?php echo $reading['id']; ?>)">
-                  <i class="fas fa-check"></i> Verify
+              <?php if($reading['status'] == 'Pending Review' && $isManager): ?>
+                <button class="btn primary small" style="background:var(--blue);" onclick="openReviewReadingModal(<?php echo $reading['id']; ?>)">
+                  <i class="fas fa-check-circle"></i> Verify
                 </button>
               <?php endif; ?>
-              <button class="btn ghost small" onclick="viewReadingDetails(<?php echo $reading['id']; ?>)">
-                <i class="fas fa-eye"></i>
+              <button class="btn ghost small" onclick="openViewReadingModal(<?php echo $reading['id']; ?>)">
+                <i class="fas fa-eye"></i> View
               </button>
             </td>
           </tr>
@@ -756,13 +759,13 @@ require_once __DIR__ . '/../partials/header.php';
               </span>
             </td>
             <td class="right">
-              <?php if($delivery['status'] == 'Pending' && $isManager): ?>
-                <button class="btn ghost small" style="color:var(--blue);" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>)">
-                  <i class="fas fa-check"></i> Verify
+              <?php if($delivery['status'] == 'Pending Review' && $isManager): ?>
+                <button class="btn primary small" style="background:var(--blue);" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>)">
+                  <i class="fas fa-check-circle"></i> Verify
                 </button>
               <?php endif; ?>
               <button class="btn ghost small" onclick="viewDeliveryDetails(<?php echo $delivery['id']; ?>)">
-                <i class="fas fa-eye"></i>
+                <i class="fas fa-eye"></i> View
               </button>
             </td>
           </tr>
@@ -1320,9 +1323,11 @@ require_once __DIR__ . '/../partials/header.php';
   </div>
 </div>
 
-<!-- Verification/Approval Modals (populated by JavaScript) -->
-<div class="modal" id="modalVerifyReading"></div>
+<!-- View/Review Modals (populated by JavaScript) -->
+<div class="modal" id="modalViewReading"></div>
+<div class="modal" id="modalReviewReading"></div>
 <div class="modal" id="modalVerifyDelivery"></div>
+<div class="modal" id="modalViewDelivery"></div>
 <div class="modal" id="modalApproveAdjustment"></div>
 <div class="modal" id="modalInvestigateVariance"></div>
 
@@ -1394,19 +1399,30 @@ function setupTableSearch(inputId, tableId) {
 setupTableSearch('deliverySearch', 'deliveryTable');
 setupTableSearch('adjustmentSearch', 'adjustmentTable');
 
-// Open Verification Modals (AJAX)
-function openVerifyReadingModal(id) {
-    fetch(`backend/fuel_verify_reading.php?id=${id}`)
+// Open View Modal (Staff - Read Only)
+function openViewReadingModal(id) {
+    fetch(`../backend/fuel_reading_view.php?id=${id}`)
         .then(response => response.text())
         .then(html => {
-            const modal = document.getElementById('modalVerifyReading');
+            const modal = document.getElementById('modalViewReading');
+            modal.innerHTML = '<div class="modal-card">' + html + '</div>';
+            modal.classList.add('show');
+        });
+}
+
+// Open Review Modal (Manager - Approve/Reject)
+function openReviewReadingModal(id) {
+    fetch(`../backend/fuel_reading_review.php?id=${id}`)
+        .then(response => response.text())
+        .then(html => {
+            const modal = document.getElementById('modalReviewReading');
             modal.innerHTML = '<div class="modal-card">' + html + '</div>';
             modal.classList.add('show');
         });
 }
 
 function openVerifyDeliveryModal(id) {
-    fetch(`backend/fuel_verify_delivery.php?id=${id}`)
+    fetch(`../backend/fuel_verify_delivery.php?id=${id}`)
         .then(response => response.text())
         .then(html => {
             const modal = document.getElementById('modalVerifyDelivery');
@@ -1416,7 +1432,7 @@ function openVerifyDeliveryModal(id) {
 }
 
 function openApproveAdjustmentModal(id) {
-    fetch(`backend/fuel_approve_adjustment.php?id=${id}`)
+    fetch(`../backend/fuel_approve_adjustment.php?id=${id}`)
         .then(response => response.text())
         .then(html => {
             const modal = document.getElementById('modalApproveAdjustment');
@@ -1426,7 +1442,7 @@ function openApproveAdjustmentModal(id) {
 }
 
 function openInvestigateVarianceModal(id) {
-    fetch(`backend/fuel_investigate_variance.php?id=${id}`)
+    fetch(`../backend/fuel_investigate_variance.php?id=${id}`)
         .then(response => response.text())
         .then(html => {
             const modal = document.getElementById('modalInvestigateVariance');
@@ -1440,13 +1456,75 @@ function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('show');
 }
 
+// Close View modal and open Review modal
+function closeViewModalAndReview(id) {
+    document.getElementById('modalViewReading').classList.remove('show');
+    setTimeout(() => {
+        openReviewReadingModal(id);
+    }, 150);
+}
+
+// Submit Review (for verify reading modal)
+function submitReview(id, action) {
+    const reason = document.getElementById('rejectionReason')?.value || '';
+    const notes = document.getElementById('rejectionNotes')?.value || '';
+    
+    if (action === 'Rejected' && !reason) {
+        alert('Please select a reason for rejection.');
+        return;
+    }
+    
+    const confirmMsg = action === 'Approved' 
+        ? 'Are you sure you want to APPROVE this pump reading?' 
+        : 'Are you sure you want to REJECT this pump reading? This action cannot be undone.';
+    
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'review_reading');
+    formData.append('id', id);
+    formData.append('status', action);
+    formData.append('reason', reason);
+    formData.append('notes', notes);
+    
+    fetch('../backend/fuel_process_review.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Network error. Please try again.');
+    });
+}
+
+function showRejectionFields() {
+    document.getElementById('rejectionFields').classList.add('show');
+}
+
 // View Details Functions
 function viewReadingDetails(id) {
     window.location.href = `fuel_reading_details.php?id=${id}`;
 }
 
 function viewDeliveryDetails(id) {
-    window.open(`fuel_delivery_details.php?id=${id}`, '_blank');
+    fetch(`../backend/fuel_delivery_view.php?id=${id}`)
+        .then(response => response.text())
+        .then(html => {
+            const modal = document.getElementById('modalViewDelivery');
+            modal.innerHTML = '<div class="modal-card">' + html + '</div>';
+            modal.classList.add('show');
+        });
 }
 
 function viewAdjustmentDetails(id) {

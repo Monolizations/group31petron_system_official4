@@ -1,5 +1,4 @@
-console.log('=== APP.JS LOADED ===');
-console.log('Current URL:', window.location.href);
+
 
 const $ = (q, el=document)=>el.querySelector(q);
 const $$ = (q, el=document)=>Array.from(el.querySelectorAll(q));

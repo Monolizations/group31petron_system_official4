@@ -8,7 +8,7 @@ $action = $_GET['action'] ?? 'list';
 switch($action) {
     case 'list':
         try {
-            $stmt = $pdo->query("SELECT * FROM payment_methods WHERE is_active = 1 ORDER BY name");
+            $stmt = $pdo->query("SELECT * FROM payment_methods WHERE status = 'Active' ORDER BY name");
             $methods = $stmt->fetchAll(PDO::FETCH_ASSOC);
             echo json_encode(['success' => true, 'data' => $methods]);
         } catch (Exception $e) {
@@ -54,7 +54,7 @@ switch($action) {
         $id = $_POST['id'] ?? 0;
         $name = trim($_POST['name'] ?? '');
         $description = trim($_POST['description'] ?? '');
-        $is_active = isset($_POST['is_active']) ? 1 : 0;
+        $is_active = isset($_POST['is_active']) ? 'Active' : 'Inactive';
 
         if (empty($id) || empty($name)) {
             echo json_encode(['success' => false, 'error' => 'ID and name are required']);
@@ -62,7 +62,7 @@ switch($action) {
         }
 
         try {
-            $stmt = $pdo->prepare("UPDATE payment_methods SET name = ?, description = ?, is_active = ? WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE payment_methods SET name = ?, description = ?, status = ? WHERE id = ?");
             $stmt->execute([$name, $description, $is_active, $id]);
             echo json_encode(['success' => true, 'message' => 'Payment method updated successfully']);
         } catch (Exception $e) {

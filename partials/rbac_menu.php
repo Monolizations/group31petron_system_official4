@@ -10,7 +10,6 @@ $master_menu = [
         ['id'=>'pos_approval','label'=>'Transaction Approval','href'=>'pos.php?view=approval','permissions'=>['handle_approvals']],
         ['id'=>'txn_view','label'=>'Transaction View','href'=>'transactions.php','permissions'=>['view_transactions', 'create_transactions', 'approve_transactions']],
         ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php','permissions'=>['create_transactions']],
-        ['id'=>'receipt_reprint','label'=>'Receipt Reprint','href'=>'transactions.php?view=reprint','permissions'=>['create_transactions']],
     ]],
     
     // Job Orders - Managers handle operations, Staff create
@@ -24,9 +23,6 @@ $master_menu = [
     ['id'=>'fuel','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','permissions'=>['manage_fuel', 'encode_fuel', 'view_fuel_variance'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'fuel_encode','label'=>'Encode Fuel Reading','href'=>'fuel_staff.php','permissions'=>['encode_fuel']],
         ['id'=>'fuel_delivery','label'=>'Fuel Delivery','href'=>'fuel_management.php','permissions'=>['manage_fuel']],
-        ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php','permissions'=>['manage_fuel']],
-        ['id'=>'fuel_pricing','label'=>'Fuel Pricing','href'=>'fuel_pricing_manager.php','permissions'=>['manage_fuel']],
-        ['id'=>'fuel_variance','label'=>'Fuel Variance','href'=>'variance_reports.php','permissions'=>['manage_fuel', 'view_fuel_variance']],
     ]],
     
     // Inventory - All roles have some level of access

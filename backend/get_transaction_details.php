@@ -22,8 +22,13 @@ try {
         exit;
     }
 
-    // Get sale items
-    $itemsStmt = $pdo->prepare("SELECT * FROM sale_items WHERE sale_id = ?");
+    // Get sale items with product names
+    $itemsStmt = $pdo->prepare("
+        SELECT si.*, p.name as product_name 
+        FROM sale_items si 
+        LEFT JOIN products p ON si.product_id = p.id 
+        WHERE si.sale_id = ?
+    ");
     $itemsStmt->execute([$transaction_id]);
     $items = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
 

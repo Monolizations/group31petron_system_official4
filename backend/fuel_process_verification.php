@@ -192,9 +192,9 @@ function handleVerifyReading() {
 function handleVerifyDelivery() {
     global $pdo, $me, $response;
     
-    // Check role permission
-    if ($me['role'] !== 'manager') {
-        throw new Exception('Only managers can verify deliveries');
+    // Check role permission (allow manager, admin, superadmin)
+    if (!in_array(strtolower($me['role']), ['manager', 'admin', 'superadmin'])) {
+        throw new Exception('Only managers, admins, or superadmins can verify deliveries');
     }
     
     $id = $_POST['id'] ?? 0;
@@ -232,13 +232,22 @@ function handleVerifyDelivery() {
     $pdo->beginTransaction();
     
     try {
+        // Get current delivery details first
+        $stmt = $pdo->prepare("SELECT * FROM fuel_deliveries WHERE id = ? AND station_id = ?");
+        $stmt->execute([$id, user_station_id()]);
+        $delivery = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$delivery) {
+            throw new Exception('Delivery not found or access denied');
+        }
+        
         // Update delivery with actual amount and verification details
         $stmt = $pdo->prepare("
             UPDATE fuel_deliveries 
             SET status = ?, verified_by = ?, verified_at = NOW(),
                 delivery_liters = ?, 
                 notes = CONCAT(COALESCE(notes,''), ?, '\n')
-            WHERE id = ? AND station_id = ? AND status = 'Pending'
+            WHERE id = ? AND station_id = ? AND status IN ('Pending', 'Pending Review')
         ");
         $stmt->execute([$status, $me['id'], 
                        $status === 'Verified' ? $actual_liters : null, 
@@ -246,6 +255,59 @@ function handleVerifyDelivery() {
         
         if ($stmt->rowCount() === 0) {
             throw new Exception('Delivery not found or already processed');
+        }
+        
+        // ADD STOCK ON VERIFICATION
+        if ($status === 'Verified') {
+            // Get fuel_type_id from fuel_types table by matching fuel type name
+            $stmt = $pdo->prepare("SELECT id, name FROM fuel_types WHERE name = ?");
+            $stmt->execute([$delivery['fuel_type']]);
+            $fuel_type = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$fuel_type) {
+                $pdo->rollBack();
+                throw new Exception('Fuel type not found in system: ' . $delivery['fuel_type']);
+            }
+            
+            $fuel_type_id = $fuel_type['id'];
+            
+            // Check if stock already added for this delivery (prevent duplicates)
+            $stmt = $pdo->prepare("
+                SELECT id FROM inventory_transactions 
+                WHERE reference_type = 'fuel_deliveries' AND reference_id = ? AND transaction_type = 'delivery_verified'
+            ");
+            $stmt->execute([$id]);
+            if ($stmt->fetch()) {
+                $pdo->rollBack();
+                throw new Exception('Stock already added for this delivery');
+            }
+            
+            // Include inventory_automation functions
+            require_once __DIR__ . '/inventory_automation.php';
+            
+            // Add stock (positive quantity = add stock)
+            $result = recordStockMovement(
+                $pdo,
+                user_station_id(),
+                $fuel_type_id,
+                $actual_liters,  // positive = add stock
+                'delivery_verified',
+                'fuel_deliveries',
+                $id,
+                $me['id'],
+                "Stock added from verified delivery - {$actual_liters} L of {$delivery['fuel_type']}"
+            );
+            
+            if (!$result['success']) {
+                $pdo->rollBack();
+                throw new Exception('Failed to add stock: ' . $result['message']);
+            }
+            
+            // Add stock info to response
+            $response['stock_added'] = true;
+            $response['stock_before'] = $result['stock_before'];
+            $response['stock_after'] = $result['stock_after'];
+            $response['fuel_type'] = $delivery['fuel_type'];
         }
         
         // Log the activity
@@ -260,7 +322,8 @@ function handleVerifyDelivery() {
         $pdo->commit();
         
         $response['success'] = true;
-        $response['message'] = "Delivery $status successfully";
+        $response['message'] = "Delivery $status successfully" . 
+            (isset($response['stock_added']) ? ". Stock updated: {$response['stock_before']}L → {$response['stock_after']}L" : '');
         
     } catch (Exception $e) {
         $pdo->rollBack();

@@ -202,14 +202,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             
             if ($pump_id && $reading_date && $shift) {
                 try {
-                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, sales_liters, calibration, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
+                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, sales_liters, calibration, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
                     $stmt->execute([$station_id, $pump_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $calibration, $me['id'], $notes]);
                     
                     // NOTE: Stock deduction is NOT done here. It happens at verification
                     // time (verify_reading action) so rejected readings don't affect inventory.
                     
                     log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$pump_id ($shift shift). Sales: $sales_liters L (Calibration: $calibration L excluded)", 'fuel_management');
-                    $msg = "Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters (Calibration: " . number_format($calibration, 2) . " L excluded). Awaiting manager verification.";
+                    $msg = "Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters (Calibration: " . number_format($calibration, 2) . " L excluded). Awaiting manager review.";
                 } catch (PDOException $e) {
                     if ($e->errorInfo[1] == 1062) { // Duplicate entry
                         $msg = "❌ Error: Reading already recorded for this pump, date, and shift.";
@@ -957,7 +957,7 @@ require_once __DIR__ . '/../partials/header.php';
 
 <style>
 .fuel-badge { display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600; }
-.fuel-badge.pending { background:#fff3cd;color:#856404; }
+.fuel-badge.pending, .fuel-badge.pending_review { background:#fff3cd;color:#856404; }
 .fuel-badge.verified, .fuel-badge.approved { background:rgba(0,51,102,.08);color:var(--blue); }
 .fuel-badge.encoded { background:#e3f2fd;color:#0d47a1; }
 .fuel-badge.finalized { background:var(--blue);color:#fff; }
@@ -1068,7 +1068,7 @@ require_once __DIR__ . '/../partials/header.php';
         <small>Approve pump readings & deduct sales</small>
         <?php
           try {
-            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending'");
+              $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM fuel_daily_readings WHERE station_id = ? AND DATE(reading_date) = CURDATE() AND status = 'Pending Review'");
             $stmt->execute([$station_id]);
             $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
             echo "<span class='wf-count'>" . intval($count) . " readings</span>";
@@ -1255,9 +1255,9 @@ require_once __DIR__ . '/../partials/header.php';
         <label>Status</label>
         <select id="pumpFilterStatus" class="select" style="width:140px;" onchange="applyPumpFilters()">
           <option value="">All Status</option>
-          <option value="Pending" <?php echo $filter_status == 'Pending' ? 'selected' : ''; ?>>Pending</option>
-          <option value="Verified" <?php echo $filter_status == 'Verified' ? 'selected' : ''; ?>>Verified</option>
-          <option value="Finalized" <?php echo $filter_status == 'Finalized' ? 'selected' : ''; ?>>Finalized</option>
+          <option value="pending" <?php echo $filter_status == 'pending' ? 'selected' : ''; ?>>Pending</option>
+          <option value="approved" <?php echo $filter_status == 'approved' ? 'selected' : ''; ?>>Approved</option>
+          <option value="rejected" <?php echo $filter_status == 'rejected' ? 'selected' : ''; ?>>Rejected</option>
         </select>
       </div>
       <div class="filter-group" style="justify-content:flex-end;">
@@ -1315,11 +1315,14 @@ require_once __DIR__ . '/../partials/header.php';
                 </span>
               </td>
               <td class="right">
-                <?php if($reading['status'] == 'Pending' && $isManager): ?>
-                  <button class="btn ghost small" style="color:var(--blue);" onclick="openVerifyReadingModal(<?php echo $reading['id']; ?>, '<?php echo htmlspecialchars($reading['reading_date']); ?>', '<?php echo htmlspecialchars(addslashes($reading['pump_number'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['shift']); ?>', '<?php echo $reading['previous_reading']; ?>', '<?php echo $reading['current_reading']; ?>', '<?php echo $reading['sales_liters']; ?>', '<?php echo htmlspecialchars(addslashes($reading['user_name'] ?? '')); ?>')">
-                    <i class="fas fa-check"></i> Approve
+                <?php if($reading['status'] == 'pending' && $isManager): ?>
+                  <button class="btn primary small" style="background:var(--blue);" onclick="openReviewReadingModal(<?php echo $reading['id']; ?>)">
+                    <i class="fas fa-clipboard-check"></i> Review
                   </button>
                 <?php endif; ?>
+                <button class="btn ghost small" onclick="openViewReadingModal(<?php echo $reading['id']; ?>)">
+                  <i class="fas fa-eye"></i> View
+                </button>
               </td>
             </tr>
             <?php endforeach; ?>
@@ -1523,7 +1526,7 @@ require_once __DIR__ . '/../partials/header.php';
       <!-- Summary Metrics -->
       <div class="workflow-grid" style="padding:12px 16px;">
         <?php
-          $pending_readings = array_filter($my_readings, function($r) { return $r['status'] == 'Pending'; });
+          $pending_readings = array_filter($my_readings, function($r) { return $r['status'] == 'Pending Review'; });
           $pending_del = array_filter($my_deliveries, function($d) { return $d['status'] == 'Encoded' || $d['status'] == 'Pending'; });
           $pending_adj = array_filter($my_adjustments, function($a) { return $a['status'] == 'Pending'; });
         ?>
@@ -1531,7 +1534,7 @@ require_once __DIR__ . '/../partials/header.php';
           <div class="wf-icon"><i class="fas fa-gas-pump"></i></div>
           <div class="wf-count"><?php echo count($my_readings); ?></div>
           <div class="muted">Pump Readings</div>
-          <div class="muted" style="font-size:11px;"><?php echo count($pending_readings); ?> Pending</div>
+          <div class="muted" style="font-size:11px;"><?php echo count($pending_readings); ?> Pending Review</div>
         </div>
         <div class="workflow-link">
           <div class="wf-icon"><i class="fas fa-truck"></i></div>
@@ -1688,13 +1691,13 @@ require_once __DIR__ . '/../partials/header.php';
               </span>
             </td>
             <td class="right">
-              <?php if($reading['status'] == 'Pending'): ?>
-                <button class="btn ghost small" onclick="openVerifyReadingModal(<?php echo $reading['id']; ?>, '<?php echo htmlspecialchars($reading['reading_date']); ?>', '<?php echo htmlspecialchars(addslashes($reading['pump_number'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['shift']); ?>', '<?php echo $reading['previous_reading']; ?>', '<?php echo $reading['current_reading']; ?>', '<?php echo $reading['sales_liters']; ?>', '<?php echo htmlspecialchars(addslashes($reading['user_name'] ?? '')); ?>')">
-                  <i class="fas fa-check"></i> Verify
+              <?php if($reading['status'] == 'pending' && $isManager): ?>
+                <button class="btn primary small" style="background:var(--blue);" onclick="openReviewReadingModal(<?php echo $reading['id']; ?>)">
+                  <i class="fas fa-clipboard-check"></i> Review
                 </button>
               <?php endif; ?>
-              <button class="btn ghost small" onclick="viewReadingDetails(<?php echo $reading['id']; ?>, '<?php echo htmlspecialchars($reading['reading_date']); ?>', '<?php echo htmlspecialchars(addslashes($reading['pump_number'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['shift']); ?>', '<?php echo $reading['previous_reading']; ?>', '<?php echo $reading['current_reading']; ?>', '<?php echo $reading['sales_liters']; ?>', '<?php echo htmlspecialchars(addslashes($reading['user_name'] ?? '')); ?>', '<?php echo htmlspecialchars($reading['status']); ?>')">
-                <i class="fas fa-eye"></i>
+              <button class="btn ghost small" onclick="openViewReadingModal(<?php echo $reading['id']; ?>)">
+                <i class="fas fa-eye"></i> View
               </button>
             </td>
           </tr>
@@ -2166,110 +2169,8 @@ require_once __DIR__ . '/../partials/header.php';
 <div class="modal" id="modalRecordReading"></div>
 <div class="modal" id="modalRecordDelivery"></div>
 <div class="modal" id="modalRecordAdjustment"></div>
-<div class="modal" id="modalVerifyReading">
-  <div class="modal-card">
-    <div class="modal-head">
-      <div class="card-title">Verify Pump Reading</div>
-      <button type="button" class="close" onclick="this.closest('.modal').classList.remove('show')">&times;</button>
-    </div>
+<div class="modal" id="modalViewReading"></div>
 
-    <!-- Reading details (populated by JS) -->
-    <div id="verifyReadingDetails" style="padding:16px;"></div>
-
-    <form method="post" id="verifyReadingForm">
-      <input type="hidden" name="action" value="verify_reading">
-      <input type="hidden" name="id" id="verifyReadingId">
-
-      <div style="padding:0 16px;">
-        <label class="pay-label">Verification Status *</label>
-        <div style="display:flex;gap:20px;margin:8px 0 16px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="radio" name="status" value="Verified" checked onchange="toggleVerifyBtn()">
-            <span class="fuel-badge verified">Verified</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="radio" name="status" value="Rejected" onchange="toggleVerifyBtn()">
-            <span class="fuel-badge rejected">Rejected</span>
-          </label>
-        </div>
-
-        <div id="rejectReasonWrap" style="display:none;margin-bottom:12px;">
-          <label class="pay-label">Reason for Rejection *</label>
-          <select class="select" name="rejection_reason" id="rejectReasonSelect" style="width:100%;">
-            <option value="">Select reason...</option>
-            <option value="Incorrect Reading">Incorrect meter reading</option>
-            <option value="Negative Sales">Negative sales calculation</option>
-            <option value="Incomplete Information">Incomplete information provided</option>
-            <option value="Other">Other (specify in notes)</option>
-          </select>
-        </div>
-
-        <div style="margin-bottom:16px;">
-          <label class="pay-label">Manager Notes</label>
-          <textarea class="input" name="notes" id="verifyNotes" rows="3" style="width:100%;resize:vertical;" placeholder="Enter any comments..."></textarea>
-        </div>
-      </div>
-
-      <div class="modal-actions">
-        <button type="button" class="btn ghost" onclick="document.getElementById('modalVerifyReading').classList.remove('show')">Cancel</button>
-        <button type="submit" class="btn primary" id="verifySubmitBtn"><i class="fas fa-check"></i> Verify Reading</button>
-      </div>
-    </form>
-  </div>
-</div>
-<!-- Modal: Verify Delivery -->
-<div class="modal" id="modalVerifyDelivery">
-  <div class="modal-card">
-    <div class="modal-head">
-      <div class="card-title">Verify Delivery</div>
-      <button type="button" class="close" onclick="this.closest('.modal').classList.remove('show')">&times;</button>
-    </div>
-
-    <div id="verifyDeliveryDetails" style="padding:16px;"></div>
-
-    <form method="post" id="verifyDeliveryForm">
-      <input type="hidden" name="action" value="verify_delivery">
-      <input type="hidden" name="id" id="verifyDeliveryId">
-      <input type="hidden" name="fuel_type" id="verifyDeliveryFuelType">
-
-      <div style="padding:0 16px;">
-        <label class="pay-label">Verification Status *</label>
-        <div style="display:flex;gap:20px;margin:8px 0 16px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="radio" name="status" value="Finalized" checked onchange="toggleDeliveryBtn()">
-            <span class="fuel-badge finalized">Finalized</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="radio" name="status" value="Rejected" onchange="toggleDeliveryBtn()">
-            <span class="fuel-badge rejected">Rejected</span>
-          </label>
-        </div>
-
-        <div id="deliveryRejectReasonWrap" style="display:none;margin-bottom:12px;">
-          <label class="pay-label">Reason for Rejection *</label>
-          <select class="select" name="rejection_reason" id="deliveryRejectReasonSelect" style="width:100%;">
-            <option value="">Select reason...</option>
-            <option value="Incorrect Volume">Incorrect volume received</option>
-            <option value="Wrong Fuel Type">Wrong fuel type delivered</option>
-            <option value="Quality Issue">Fuel quality issue</option>
-            <option value="Documentation Missing">Missing documentation</option>
-            <option value="Other">Other (specify in notes)</option>
-          </select>
-        </div>
-
-        <div style="margin-bottom:16px;">
-          <label class="pay-label">Manager Notes</label>
-          <textarea class="input" name="notes" id="verifyDeliveryNotes" rows="3" style="width:100%;resize:vertical;" placeholder="Enter any comments..."></textarea>
-        </div>
-      </div>
-
-      <div class="modal-actions">
-        <button type="button" class="btn ghost" onclick="document.getElementById('modalVerifyDelivery').classList.remove('show')">Cancel</button>
-        <button type="submit" class="btn primary" id="verifyDeliverySubmitBtn"><i class="fas fa-check"></i> Finalize Delivery</button>
-      </div>
-    </form>
-  </div>
-</div>
 
 <!-- Modal: Approve Adjustment -->
 <div class="modal" id="modalApproveAdjustment">
@@ -2776,34 +2677,26 @@ function closeModal(id) {
     document.getElementById(id).classList.remove('show');
 }
 
-// ── Verify Reading Modal ──
-function openVerifyReadingModal(id, date, pump, shift, prev, curr, sales, staff) {
-    document.getElementById('verifyReadingId').value = id;
+// ── View Reading Modal (Staff - Read Only) ──
+function openViewReadingModal(id) {
+    fetch(`backend/fuel_reading_view.php?id=${id}`)
+        .then(response => response.text())
+        .then(html => {
+            const modal = document.getElementById('modalViewReading');
+            modal.innerHTML = '<div class="modal-card">' + html + '</div>';
+            modal.classList.add('show');
+        });
+}
 
-    // Build details summary
-    const details = document.getElementById('verifyReadingDetails');
-    const fmtDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    details.innerHTML =
-        '<div class="form-grid">' +
-            '<div><label class="pay-label">Date</label><div class="input" style="background:var(--bg);">' + fmtDate + '</div></div>' +
-            '<div><label class="pay-label">Pump</label><div class="input" style="background:var(--bg);">' + pump + '</div></div>' +
-            '<div><label class="pay-label">Shift</label><div class="input" style="background:var(--bg);">' + shift + '</div></div>' +
-            '<div><label class="pay-label">Staff</label><div class="input" style="background:var(--bg);">' + staff + '</div></div>' +
-            '<div><label class="pay-label">Previous</label><div class="input" style="background:var(--bg);">' + parseFloat(prev).toFixed(2) + '</div></div>' +
-            '<div><label class="pay-label">Current</label><div class="input" style="background:var(--bg);">' + parseFloat(curr).toFixed(2) + '</div></div>' +
-            '<div><label class="pay-label">Sales (L)</label><div class="input" style="background:var(--bg);font-weight:600;">' + parseFloat(sales).toFixed(2) + ' L</div></div>' +
-        '</div>';
-
-    // Reset form state
-    document.querySelector('#verifyReadingForm input[name="status"][value="Verified"]').checked = true;
-    document.getElementById('rejectReasonWrap').style.display = 'none';
-    document.getElementById('rejectReasonSelect').value = '';
-    document.getElementById('verifyNotes').value = '';
-    const btn = document.getElementById('verifySubmitBtn');
-    btn.innerHTML = '<i class="fas fa-check"></i> Verify Reading';
-    btn.style.background = '';
-
-    document.getElementById('modalVerifyReading').classList.add('show');
+// ── Review Reading Modal (Manager - Approve/Reject) ──
+function openReviewReadingModal(id) {
+    fetch(`backend/fuel_reading_review.php?id=${id}`)
+        .then(response => response.text())
+        .then(html => {
+            const modal = document.getElementById('modalReviewReading');
+            modal.innerHTML = '<div class="modal-card">' + html + '</div>';
+            modal.classList.add('show');
+        });
 }
 
 function toggleVerifyBtn() {

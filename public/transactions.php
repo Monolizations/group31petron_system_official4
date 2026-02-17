@@ -184,9 +184,6 @@ include __DIR__ . '/../partials/header.php';
                             <?php echo htmlspecialchars($t['status']); ?>
                         </span>
                     </td>
-                    <td>
-                        <button class="btn small ghost" onclick="viewTransaction(<?php echo $t['transaction_id']; ?>)" title="View">👁️</button>
-                    </td>
                 </tr>
                 <?php endforeach; ?>
                 <?php if(empty($transactions)): ?>
@@ -196,48 +193,6 @@ include __DIR__ . '/../partials/header.php';
         </table>
     </div>
 </div>
-
-<!-- View Transaction Modal -->
-<div class="modal" id="viewModal">
-    <div class="modal-content" style="max-width: 600px;">
-        <div class="modal-header">
-            <h3 class="modal-title">Transaction Details</h3>
-            <button class="modal-close" onclick="closeModal('viewModal')">&times;</button>
-        </div>
-        <div class="modal-body" id="transactionDetails">
-            <!-- Details loaded here -->
-        </div>
-        <div class="modal-footer">
-            <button class="btn primary" onclick="closeModal('viewModal')">Close</button>
-        </div>
-    </div>
-</div>
-
-<script>
-function viewTransaction(id) {
-    // Fetch details via AJAX or load statically for now
-    fetch('backend/get_transaction_details.php?id=' + id)
-        .then(response => response.json())
-        .then(data => {
-            document.getElementById('transactionDetails').innerHTML = `
-                <p><strong>Customer:</strong> ${data.customer}</p>
-                <p><strong>Staff:</strong> ${data.staff_name}</p>
-                <p><strong>Payment:</strong> ${data.payment_method}</p>
-                <p><strong>Status:</strong> ${data.status}</p>
-                <p><strong>Date:</strong> ${data.created_at}</p>
-                <p><strong>Products:</strong></p>
-                <ul>${data.items.map(item => `<li>${item.name} - ${item.quantity} x ₱${item.unit_price} = ₱${item.total_amount}</li>`).join('')}</ul>
-                <p><strong>Audit Log:</strong></p>
-                <ul>${data.logs ? data.logs.map(log => `<li>${log.created_at}: ${log.action} - ${log.details}</li>`).join('') : 'No logs available'}</ul>
-            `;
-            document.getElementById('viewModal').classList.add('show');
-        });
-}
-
-function closeModal(id) {
-    document.getElementById(id).classList.remove('show');
-}
-</script>
 
 <script src="../assets/js/data_helper.js"></script>
 

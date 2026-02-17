@@ -243,14 +243,6 @@ require_once __DIR__ . '/../partials/header.php';
              <option value="cash">Cash</option>
              <option value="credit">Credit</option>
            </select>
-           <select id="filterMerchType" class="inp" style="width:auto;">
-             <option value="">All Merchandise</option>
-             <option value="oil_lube_grease">A. Oil/Lube/Grease</option>
-             <option value="car_accessories">B. Car Accessories</option>
-             <option value="oil_fuel_filter">C. Oil/Fuel Filter</option>
-             <option value="others">D. Others</option>
-             <option value="multiple">Multiple Types</option>
-           </select>
            <select id="filterStatus" class="inp" style="width:auto;">
              <option value="">All Status</option>
              <option value="active">Active</option>
@@ -601,17 +593,15 @@ function deleteCustomer(id, name) {
 
 function filterCustomers() {
     const type = document.getElementById('filterType').value.toLowerCase();
-    const merchType = document.getElementById('filterMerchType').value.toLowerCase();
     const status = document.getElementById('filterStatus').value.toLowerCase();
     const search = document.getElementById('custSearch').value.toLowerCase();
 
     document.querySelectorAll('.cust-row').forEach(row => {
         const rType = row.dataset.type.toLowerCase();
-        const rMerch = (row.dataset.merch || '').toLowerCase();
         const rStatus = row.dataset.status.toLowerCase();
         const rName = row.dataset.name;
 
-        const show = (!type || rType === type) && (!merchType || rMerch === merchType) && (!status || rStatus === status) && (!search || rName.includes(search));
+        const show = (!type || rType === type) && (!status || rStatus === status) && (!search || rName.includes(search));
         row.style.display = show ? '' : 'none';
     });
 }
@@ -619,7 +609,6 @@ function filterCustomers() {
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('custSearch').addEventListener('input', filterCustomers);
     document.getElementById('filterType').addEventListener('change', filterCustomers);
-    document.getElementById('filterMerchType').addEventListener('change', filterCustomers);
     document.getElementById('filterStatus').addEventListener('change', filterCustomers);
 
     // Close modal when clicking outside
