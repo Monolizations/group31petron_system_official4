@@ -344,7 +344,7 @@ include __DIR__ . '/../partials/header.php';
         <select class="filter-select" id="locationFilter">
             <option value="">All Locations</option>
             <?php 
-            $locations = array_unique(array_filter(array_column($stations, 'location')));
+            $locations = array_unique(array_filter(array_column($stations, 'name')));
             foreach($locations as $location): ?>
                 <option value="<?php echo htmlspecialchars($location); ?>"><?php echo htmlspecialchars($location); ?></option>
             <?php endforeach; ?>
@@ -359,14 +359,13 @@ include __DIR__ . '/../partials/header.php';
             <?php endforeach; ?>
         </select>
         
-        <input type="text" class="filter-input" placeholder="🔍 Search Station Name / Code" id="searchInput">
+        <input type="text" class="filter-input" placeholder="🔍 Search Station Code / Location" id="searchInput">
     </div>
 
     <div class="table-container">
         <table class="stations-table">
             <thead>
                 <tr>
-                    <th>Station Name</th>
                     <th>Station Code</th>
                     <th>Location</th>
                     <th>Manager</th>
@@ -377,13 +376,12 @@ include __DIR__ . '/../partials/header.php';
             <tbody id="stationsTableBody">
                 <?php foreach($stations as $station): ?>
                 <tr data-status="<?php echo htmlspecialchars($station['status']); ?>" 
-                    data-location="<?php echo htmlspecialchars($station['location'] ?? ''); ?>" 
+                    data-location="<?php echo htmlspecialchars($station['name']); ?>" 
                     data-manager="<?php echo htmlspecialchars($station['admin_name'] ?? ''); ?>"
                     data-name="<?php echo htmlspecialchars($station['name']); ?>"
                     data-code="<?php echo str_pad($station['id'], 4, '0', STR_PAD_LEFT); ?>">
-                    <td><?php echo htmlspecialchars($station['name']); ?></td>
                     <td><?php echo str_pad($station['id'], 4, '0', STR_PAD_LEFT); ?></td>
-                    <td><?php echo htmlspecialchars($station['location'] ?? 'Not Set'); ?></td>
+                    <td><?php echo htmlspecialchars($station['name']); ?></td>
                     <td><?php echo htmlspecialchars($station['admin_name'] ?? 'Not Assigned'); ?></td>
                     <td>
                         <span class="status-badge status-<?php echo htmlspecialchars($station['status']); ?>">
@@ -419,10 +417,6 @@ include __DIR__ . '/../partials/header.php';
             <h3 class="modal-title" id="viewModalTitle">Station Details</h3>
         </div>
         <div class="modal-body">
-            <div class="form-group">
-                <label>Station Name</label>
-                <input type="text" id="viewName" readonly>
-            </div>
             <div class="form-group">
                 <label>Station Code</label>
                 <input type="text" id="viewCode" readonly>
@@ -462,16 +456,12 @@ include __DIR__ . '/../partials/header.php';
             <input type="hidden" id="editId" name="id">
             
             <div class="form-group">
-                <label>Station Name</label>
-                <input type="text" id="editName" name="name" required>
-            </div>
-            <div class="form-group">
                 <label>Station Code</label>
-                <input type="text" id="editCode" name="code" required>
+                <input type="text" id="editCode" name="code" readonly>
             </div>
             <div class="form-group">
                 <label>Location</label>
-                <input type="text" id="editLocation" name="location">
+                <input type="text" id="editLocation" name="name" required>
             </div>
             <div class="form-group">
                 <label>Manager</label>
@@ -539,11 +529,10 @@ function viewStation(id) {
     const row = document.querySelector(`tr:has(button[onclick="viewStation(${id})"])`);
     if (!row) return;
     
-    document.getElementById('viewName').value = row.cells[0].textContent;
-    document.getElementById('viewCode').value = row.cells[1].textContent;
-    document.getElementById('viewLocation').value = row.cells[2].textContent;
-    document.getElementById('viewManager').value = row.cells[3].textContent;
-    document.getElementById('viewStatus').value = row.cells[4].textContent.trim();
+    document.getElementById('viewCode').value = row.cells[0].textContent;
+    document.getElementById('viewLocation').value = row.cells[1].textContent;
+    document.getElementById('viewManager').value = row.cells[2].textContent;
+    document.getElementById('viewStatus').value = row.cells[3].textContent.trim();
     document.getElementById('viewLastUpdated').value = new Date().toLocaleDateString();
     
     document.getElementById('viewModalTitle').textContent = `Station Details - ${row.cells[0].textContent}`;
@@ -555,12 +544,11 @@ function editStation(id) {
     if (!row) return;
     
     document.getElementById('editId').value = id;
-    document.getElementById('editName').value = row.cells[0].textContent;
-    document.getElementById('editCode').value = row.cells[1].textContent;
-    document.getElementById('editLocation').value = row.cells[2].textContent;
-    document.getElementById('editManager').value = row.cells[3].textContent;
+    document.getElementById('editCode').value = row.cells[0].textContent;
+    document.getElementById('editLocation').value = row.cells[1].textContent;
+    document.getElementById('editManager').value = row.cells[2].textContent;
     
-    const statusText = row.cells[4].textContent.trim().toLowerCase();
+    const statusText = row.cells[3].textContent.trim().toLowerCase();
     document.getElementById('editStatus').value = statusText;
     
     document.getElementById('editModalTitle').textContent = `Edit Station - ${row.cells[0].textContent}`;

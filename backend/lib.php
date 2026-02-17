@@ -178,7 +178,7 @@ function get_user_permissions($role) {
                 'view_dashboard',
                 
                 // Transaction permissions
-                'create_transactions', 'approve_transactions',
+                'create_transactions',
                 
                 // Job order permissions  
                 'create_job_orders', 'manage_job_orders',
@@ -187,7 +187,7 @@ function get_user_permissions($role) {
                 'encode_fuel', 'manage_fuel',
                 
                 // Inventory permissions
-                'manage_inventory', 'view_inventory', 'receive_inventory',
+                'manage_inventory', 'view_inventory',
                 
                 // Customer management permissions
                 'manage_customers', 'manage_customers_basic',
@@ -203,7 +203,7 @@ function get_user_permissions($role) {
                 
                 // Additional operational permissions
                 'export_data', 'audit_oversight', 'manage_pricing', 'manage_pricing_station',
-                'handle_approvals', 'unlock_records', 'view_audit_logs_station',
+                'unlock_records', 'view_audit_logs_station',
                 
                 // Purchase order permissions
                 'create_po', 'view_own_pos'

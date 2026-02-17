@@ -1115,38 +1115,47 @@ let customerCache = [];
 
 async function loadCustomers(){
   const res = await api('../backend/customers.php');
-  customerCache = res.customers || [];
+  customerCache = res.data?.customers || res.customers || [];
   // metrics
   $('#cTotal').textContent = String(customerCache.length);
   const credits = customerCache.filter(c=>String(c.type||'').toLowerCase()==='credit');
   $('#cCredit').textContent = String(credits.length);
-  const outstanding = customerCache.reduce((a,c)=>a+Number(c.balance||0),0);
+  const outstanding = customerCache.reduce((a,c)=>a+Number(c.current_balance||c.balance||0),0);
   $('#cOutstanding').textContent = fmtMoney(outstanding);
 }
 
 function renderCustomers(){
   const q = ($('#custSearch')?.value||'').toLowerCase();
   const tb = $('#custTbody'); tb.innerHTML='';
+  const merchLabels = {
+    'oil_lube_grease': 'A. Oil/Lube/Grease',
+    'car_accessories': 'B. Car Accessories',
+    'oil_fuel_filter': 'C. Oil/Fuel Filter',
+    'others': 'D. Others',
+    'multiple': 'Multiple Types'
+  };
   customerCache.filter(c=>{
-    const st = `${c.company||''} ${c.contact||''} ${c.phone||''} ${c.email||''} ${c.type||''}`;
+    const st = `${c.name||c.company||''} ${c.contact_person||c.contact||''} ${c.phone||''} ${c.email||''} ${c.type||''}`;
     return st.toLowerCase().includes(q);
   }).forEach(c=>{
-    const typePill = `<span class="pill">${c.type||'cash'}</span>`;
-    const creditLimit = (String(c.type||'')==='credit') ? fmtMoney(c.credit_limit||0) : '—';
+    const customerName = c.name || c.company || '';
+    const contactPerson = c.contact_person || c.contact || '';
+    const balance = c.current_balance || c.balance || 0;
+    const merchLabel = merchLabels[c.merchandise_type] || '';
+    const creditLimit = (String(c.type||'')==='credit') ? '₱' + fmtMoney(c.credit_limit||0) : '₱0.00';
+    const balanceColor = balance > 0 ? 'red' : 'green';
     const tr=document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${c.company||''}</strong><div class="muted">${c.contact||''}</div></td>
-      <td class="muted">
-        <div><i class="fas fa-phone"></i> ${c.phone||''}</div>
-        <div><i class="fas fa-envelope"></i> ${c.email||''}</div>
-      </td>
-      <td>${typePill}</td>
+      <td><b>${customerName}</b></td>
+      <td>${contactPerson}<br>${c.phone||''}<br>${c.email||''}</td>
+      <td><span style="text-transform:capitalize;">${c.type||'cash'}</span></td>
+      <td>${merchLabel ? merchLabel : '<span class="muted">—</span>'}</td>
       <td>${creditLimit}</td>
-      <td class="muted">${fmtMoney(c.balance||0)}</td>
-      <td>${statusBadge(c.status||'active')}</td>
+      <td style="color:${balanceColor}">₱${fmtMoney(balance)}</td>
+      <td>${c.status||'active'}</td>
       <td>
-        <button class="icon-btn" data-edit-cust="${c.id}" title="Edit">✎</button>
-        <button class="icon-btn danger" data-del-cust="${c.id}" title="Delete"><i class="fas fa-trash"></i></button>
+        <button class="btn ghost small" data-edit-cust="${c.id}" title="Edit">Edit</button>
+        <button class="btn ghost small red" data-del-cust="${c.id}" title="Delete">Delete</button>
       </td>
     `;
     tb.appendChild(tr);
@@ -1186,8 +1195,8 @@ async function initCustomers(){
     try{
       const payload = {
         id: $('#custId').value || undefined,
-        company: $('#custCompany').value.trim(),
-        contact: $('#custContact').value.trim(),
+        name: $('#custCompany').value.trim(),
+        contact_person: $('#custContact').value.trim(),
         phone: $('#custPhone').value.trim(),
         email: $('#custEmail').value.trim(),
         address: $('#custAddress').value.trim(),
@@ -1210,11 +1219,11 @@ async function initCustomers(){
     const del = e.target.closest('[data-del-cust]');
     if(edit){
       const id = edit.getAttribute('data-edit-cust');
-      const c = customerCache.find(x=>x.id===id);
+      const c = customerCache.find(x=>String(x.id)===String(id));
       if(!c) return;
       $('#custId').value=c.id;
-      $('#custCompany').value=c.company||'';
-      $('#custContact').value=c.contact||'';
+      $('#custCompany').value=c.name||c.company||'';
+      $('#custContact').value=c.contact_person||c.contact||'';
       $('#custPhone').value=c.phone||'';
       $('#custEmail').value=c.email||'';
       $('#custAddress').value=c.address||'';
@@ -1252,7 +1261,8 @@ async function initCustomers(){
       await initInventory();
     }
     if(page === 'joborder') await initJobOrder().catch(()=>{});
-    if(page === 'customers') await initCustomers();
+    // Skip initCustomers for PHP-rendered customers page - the table is already rendered
+    // if(page === 'customers') await initCustomers();
   }catch(err){
     // Don't show errors on joborder page
     const page = document.body.getAttribute('data-page');

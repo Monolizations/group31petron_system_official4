@@ -7,6 +7,7 @@ require_login();
 $me = current_user();
 $role = $me['role'] ?? 'staff';
 $isAdminOrSuper = in_array($role, ['admin', 'superadmin']);
+$canEdit = in_array($role, ['admin', 'superadmin', 'manager']);
 $station_id = user_station_id();
 
 // Get current view
@@ -28,23 +29,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $type = $_POST['type'] ?? 'cash';
         $limit = $_POST['credit_limit'] ?? 0;
         $status = $_POST['status'] ?? 'active';
+        $merchandise_type = $_POST['merchandise_type'] ?? null;
 
         if ($name) {
             try {
                 if ($id) {
                     // Update
-                    if (!$isAdminOrSuper) {
-                        $msg = "❌ Error: Only Admin or Super Admin can edit customers.";
+                    if (!$canEdit) {
+                        $msg = "❌ Error: Only Manager, Admin, or Super Admin can edit customers.";
                     } else {
-                        $stmt = $pdo->prepare("UPDATE customers SET name=?, contact_person=?, phone=?, email=?, address=?, type=?, credit_limit=?, status=? WHERE id=?");
-                        $stmt->execute([$name, $contact, $phone, $email, $address, $type, $limit, $status, $id]);
+                        $stmt = $pdo->prepare("UPDATE customers SET name=?, contact_person=?, phone=?, email=?, address=?, type=?, credit_limit=?, merchandise_type=?, status=? WHERE id=?");
+                        $stmt->execute([$name, $contact, $phone, $email, $address, $type, $limit, $merchandise_type, $status, $id]);
                         $msg = "✅ Customer updated successfully.";
                         log_activity($pdo, $me['id'], 'Update Customer', "Updated customer ID $id");
                     }
                 } else {
                     // Insert
-                    $stmt = $pdo->prepare("INSERT INTO customers (name, contact_person, phone, email, address, type, credit_limit, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([$name, $contact, $phone, $email, $address, $type, $limit, $status]);
+                    $stmt = $pdo->prepare("INSERT INTO customers (name, contact_person, phone, email, address, type, credit_limit, merchandise_type, status, station_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$name, $contact, $phone, $email, $address, $type, $limit, $merchandise_type, $status, $station_id]);
                     $msg = "✅ Customer added successfully.";
                     log_activity($pdo, $me['id'], 'Create Customer', "Created customer $name");
                 }
@@ -120,7 +122,7 @@ require_once __DIR__ . '/../partials/header.php';
       <?php endif; ?>
     </div>
     <div class="actions" style="display:flex; align-items:center; gap:1rem;">
-      <?php if ($isAdminOrSuper): ?>
+      <?php if ($canEdit): ?>
         <button class="btn dark" onclick="openCustomerModal()"><i class="fas fa-plus"></i> Add Customer</button>
       <?php endif; ?>
       <?php if (!$isAdminOrSuper): ?>
@@ -177,6 +179,17 @@ require_once __DIR__ . '/../partials/header.php';
           </div>
         </div>
         <div style="margin-top:20px;">
+          <label class="lbl">Merchandise Type</label>
+          <select name="merchandise_type" class="inp full">
+            <option value="">-- Select Type --</option>
+            <option value="oil_lube_grease">A. Oil/Lube/Grease</option>
+            <option value="car_accessories">B. Car Accessories</option>
+            <option value="oil_fuel_filter">C. Oil/Fuel Filter</option>
+            <option value="others">D. Others</option>
+            <option value="multiple">Multiple Types</option>
+          </select>
+        </div>
+        <div style="margin-top:20px;">
           <label class="lbl">Address</label>
           <textarea name="address" class="inp full" rows="3"></textarea>
         </div>
@@ -224,23 +237,31 @@ require_once __DIR__ . '/../partials/header.php';
         <div class="panel-title">
           <?php echo $view === 'my_customers' ? 'My Customers' : 'Customer Directory'; ?>
         </div>
-        <div style="display:flex; gap:10px; align-items:center;">
-          <select id="filterType" class="inp" style="width:auto;">
-            <option value="">All Types</option>
-            <option value="cash">Cash</option>
-            <option value="credit">Credit</option>
-          </select>
-          <select id="filterStatus" class="inp" style="width:auto;">
-            <option value="">All Status</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="inactive">Inactive</option>
-          </select>
-          <div class="search">
-            <span class="ico"><i class="fas fa-search"></i></span>
-            <input id="custSearch" placeholder="Search customers..." />
-          </div>
-        </div>
+         <div style="display:flex; gap:10px; align-items:center;">
+           <select id="filterType" class="inp" style="width:auto;">
+             <option value="">All Types</option>
+             <option value="cash">Cash</option>
+             <option value="credit">Credit</option>
+           </select>
+           <select id="filterMerchType" class="inp" style="width:auto;">
+             <option value="">All Merchandise</option>
+             <option value="oil_lube_grease">A. Oil/Lube/Grease</option>
+             <option value="car_accessories">B. Car Accessories</option>
+             <option value="oil_fuel_filter">C. Oil/Fuel Filter</option>
+             <option value="others">D. Others</option>
+             <option value="multiple">Multiple Types</option>
+           </select>
+           <select id="filterStatus" class="inp" style="width:auto;">
+             <option value="">All Status</option>
+             <option value="active">Active</option>
+             <option value="suspended">Suspended</option>
+             <option value="inactive">Inactive</option>
+           </select>
+           <div class="search">
+             <span class="ico"><i class="fas fa-search"></i></span>
+             <input id="custSearch" placeholder="Search customers..." />
+           </div>
+         </div>
       </div>
 
     <div class="table-wrap">
@@ -250,6 +271,7 @@ require_once __DIR__ . '/../partials/header.php';
             <th>Customer</th>
             <th>Contact</th>
             <th>Account Type</th>
+            <th>Merchandise Type</th>
             <th>Credit Limit</th>
             <th>Balance</th>
             <th>Status</th>
@@ -258,8 +280,21 @@ require_once __DIR__ . '/../partials/header.php';
         </thead>
         <tbody id="custTbody">
             <?php foreach($customers as $c): ?>
-            <tr data-name="<?php echo htmlspecialchars(strtolower($c['name'])); ?>" data-type="<?php echo htmlspecialchars($c['type']); ?>" data-status="<?php echo htmlspecialchars($c['status']); ?>" class="cust-row">
-                <td><b><?php echo htmlspecialchars($c['name']); ?></b></td>
+            <?php 
+            $merchLabel = '';
+            if (!empty($c['merchandise_type'])) {
+                $merchLabels = [
+                    'oil_lube_grease' => 'A. Oil/Lube/Grease',
+                    'car_accessories' => 'B. Car Accessories',
+                    'oil_fuel_filter' => 'C. Oil/Fuel Filter',
+                    'others' => 'D. Others',
+                    'multiple' => 'Multiple Types'
+                ];
+                $merchLabel = $merchLabels[$c['merchandise_type']] ?? $c['merchandise_type'];
+            }
+            ?>
+            <tr data-name="<?php echo htmlspecialchars(strtolower($c['name'] ?? '')); ?>" data-type="<?php echo htmlspecialchars($c['type']); ?>" data-status="<?php echo htmlspecialchars($c['status']); ?>" data-merch="<?php echo htmlspecialchars($c['merchandise_type'] ?? ''); ?>" class="cust-row">
+                <td><b><?php echo !empty($c['name']) ? htmlspecialchars($c['name']) : '<span class="muted" style="color:#999;">— No Name —</span>'; ?></b></td>
                 <td>
                     <?php
                     $contact_parts = [];
@@ -276,16 +311,29 @@ require_once __DIR__ . '/../partials/header.php';
                     ?>
                 </td>
                 <td><span style="text-transform:capitalize;"><?php echo htmlspecialchars($c['type']); ?></span></td>
+                <td><?php echo $merchLabel ? htmlspecialchars($merchLabel) : '<span class="muted">—</span>'; ?></td>
                 <td>₱<?php echo number_format($c['credit_limit'], 2); ?></td>
                 <td style="color:<?php echo $c['current_balance']>0?'red':'green'; ?>">₱<?php echo number_format($c['current_balance'], 2); ?></td>
                 <td><?php echo htmlspecialchars($c['status']); ?></td>
                 <td>
-                    <?php if ($isAdminOrSuper): ?>
-                        <button class="btn ghost small" onclick="editCustomer(<?php echo $c['id']; ?>)">Edit</button>
-                        <button class="btn ghost small red" onclick="deleteCustomer(<?php echo $c['id']; ?>, '<?php echo htmlspecialchars($c['name']); ?>')">Delete</button>
-                    <?php else: ?>
-                        <span class="muted">No actions</span>
-                    <?php endif; ?>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <?php if ($isAdminOrSuper): ?>
+                            <button class="btn ghost small" onclick="editCustomer(<?php echo $c['id']; ?>)" title="Edit Customer">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button class="btn ghost small red" onclick="deleteCustomer(<?php echo $c['id']; ?>, '<?php echo htmlspecialchars(addslashes($c['name'])); ?>')" title="Delete Customer">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                        <?php elseif ($canEdit): ?>
+                            <button class="btn ghost small" onclick="editCustomer(<?php echo $c['id']; ?>)" title="Edit Customer">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                        <?php else: ?>
+                            <button class="btn ghost small" onclick="viewCustomer(<?php echo $c['id']; ?>)" title="View Customer">
+                                <i class="fas fa-eye"></i> View
+                            </button>
+                        <?php endif; ?>
+                    </div>
                 </td>
             </tr>
             <?php endforeach; ?>
@@ -298,67 +346,135 @@ require_once __DIR__ . '/../partials/header.php';
 
 <!-- Add/Edit Customer Modal -->
 <div class="modal" id="modalCustomer" aria-hidden="true">
-  <div class="modal-card">
+  <div class="modal-card modal-card-customer">
     <div class="modal-head">
       <div class="modal-title" id="custModalTitle">Add New Customer</div>
-      <button class="icon-btn" onclick="document.getElementById('modalCustomer').classList.remove('active')">✕</button>
+      <button class="icon-btn" onclick="document.getElementById('modalCustomer').classList.remove('show')" title="Close">
+        <i class="fas fa-times"></i>
+      </button>
     </div>
     <form method="post">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="id" value="">
-    <div class="modal-body">
-      <div class="field">
-        <label>Customer/Company Name</label>
-        <input name="name" required class="inp" />
-      </div>
+    <div class="modal-body modal-body-customer">
 
-      <div class="form-grid two" style="margin-top:12px">
-        <div class="field">
-          <label>Contact Person</label>
-          <input name="contact_person" class="inp" />
+      <!-- Basic Information -->
+      <div class="field-section">
+        <div class="field-section-title">
+          <i class="fas fa-info-circle"></i> Basic Information
         </div>
+
         <div class="field">
-          <label>Phone</label>
-          <input name="phone" class="inp" />
+          <label>Customer/Company Name <span class="required">*</span></label>
+          <div class="field-with-icon">
+            <i class="fas fa-building icon"></i>
+            <input name="name" required class="inp" placeholder="Enter customer or company name" />
+          </div>
+        </div>
+
+        <div class="form-grid two">
+          <div class="field">
+            <label>Contact Person</label>
+            <div class="field-with-icon">
+              <i class="fas fa-user icon"></i>
+              <input name="contact_person" class="inp" placeholder="Primary contact" />
+            </div>
+          </div>
+          <div class="field">
+            <label>Phone <span class="required">*</span></label>
+            <div class="field-with-icon">
+              <i class="fas fa-phone icon"></i>
+              <input name="phone" required class="inp" placeholder="09XX XXX XXXX" />
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Email Address</label>
+          <div class="field-with-icon">
+            <i class="fas fa-envelope icon"></i>
+            <input name="email" type="email" class="inp" placeholder="email@example.com" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Address</label>
+          <div class="field-with-icon">
+            <i class="fas fa-map-marker-alt icon"></i>
+            <input name="address" class="inp" placeholder="Street address, City, Province" />
+          </div>
         </div>
       </div>
 
-      <div class="field" style="margin-top:12px">
-        <label>Email</label>
-        <input name="email" class="inp" />
-      </div>
-
-      <div class="field" style="margin-top:12px">
-        <label>Address</label>
-        <input name="address" class="inp" />
-      </div>
-
-      <div class="form-grid two" style="margin-top:12px">
-        <div class="field">
-          <label>Account Type</label>
-          <select name="type" class="select">
-            <option value="cash">Cash</option>
-            <option value="credit">Credit</option>
-          </select>
+      <!-- Account Settings -->
+      <div class="field-section">
+        <div class="field-section-title">
+          <i class="fas fa-cog"></i> Account Settings
         </div>
-        <div class="field">
-          <label>Credit Limit (₱)</label>
-          <input name="credit_limit" type="number" min="0" step="0.01" placeholder="0" class="inp" />
+
+        <div class="form-grid two">
+          <div class="field">
+            <label>Account Type</label>
+            <div class="field-with-icon">
+              <i class="fas fa-credit-card icon"></i>
+              <select name="type" class="select">
+                <option value="cash">Cash Customer</option>
+                <option value="credit">Credit Customer</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Credit Limit (₱)</label>
+            <div class="field-with-icon">
+              <i class="fas fa-coins icon"></i>
+              <input name="credit_limit" type="number" min="0" step="0.01" placeholder="0.00" class="inp" />
+            </div>
+          </div>
+        </div>
+
+        <div class="form-grid two">
+          <div class="field">
+            <label>Merchandise Type</label>
+            <div class="field-with-icon">
+              <i class="fas fa-boxes icon"></i>
+              <select name="merchandise_type" class="select">
+                <option value="">-- Select Type --</option>
+                <option value="oil_lube_grease">Oil/Lube/Grease</option>
+                <option value="car_accessories">Car Accessories</option>
+                <option value="oil_fuel_filter">Oil/Fuel Filter</option>
+                <option value="others">Others</option>
+                <option value="multiple">Multiple Types</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Account Status</label>
+            <div class="field-with-icon">
+              <i class="fas fa-signal icon"></i>
+              <select name="status" class="select">
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="field" style="margin-top:12px">
-        <label>Status</label>
-        <select name="status" class="select">
-          <option value="active">Active</option>
-          <option value="suspended">Suspended</option>
-          <option value="inactive">Inactive</option>
-        </select>
+      <!-- Info Box -->
+      <div class="info-box" id="modalInfoBox" style="display:none;">
+        <i class="fas fa-info-circle icon"></i>
+        <div class="text" id="modalInfoText"></div>
       </div>
+
     </div>
-    <div class="modal-foot">
-      <button type="button" class="btn" onclick="document.getElementById('modalCustomer').classList.remove('active')">Cancel</button>
-      <button type="submit" class="btn dark" id="custSaveBtn">Add Customer</button>
+    <div class="modal-foot modal-foot-customer">
+      <button type="button" class="btn ghost" id="custCancelBtn" onclick="document.getElementById('modalCustomer').classList.remove('show')">
+        <i class="fas fa-times"></i> Cancel
+      </button>
+      <button type="submit" class="btn primary" id="custSaveBtn">
+        <i class="fas fa-save"></i> Add Customer
+      </button>
     </div>
     </form>
   </div>
@@ -367,38 +483,110 @@ require_once __DIR__ . '/../partials/header.php';
 <script>
 function openCustomerModal() {
     document.getElementById('custModalTitle').textContent = 'Add New Customer';
-    document.getElementById('custSaveBtn').textContent = 'Add Customer';
-    document.getElementById('modalCustomer').classList.add('active');
+    document.getElementById('custSaveBtn').innerHTML = '<i class="fas fa-plus"></i> Add Customer';
+    document.getElementById('custSaveBtn').style.display = '';
+    document.getElementById('custSaveBtn').className = 'btn primary';
+    document.getElementById('custCancelBtn').innerHTML = '<i class="fas fa-times"></i> Cancel';
+    document.getElementById('modalInfoBox').style.display = 'none';
+    document.getElementById('modalCustomer').classList.add('show');
     // Reset form
     document.querySelector('#modalCustomer form').reset();
     document.querySelector('#modalCustomer input[name="id"]').value = '';
+    // Enable all fields for adding
+    document.querySelectorAll('#modalCustomer input, #modalCustomer select').forEach(el => {
+        el.disabled = false;
+    });
+}
+
+function viewCustomer(id) {
+    // Fetch customer data and populate modal (read-only)
+    fetch('../backend/customers.php?action=get&id=' + id)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('HTTP error ' + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                const c = data.customer;
+                document.getElementById('custModalTitle').textContent = 'View Customer';
+                document.getElementById('custSaveBtn').style.display = 'none';
+                document.getElementById('custCancelBtn').innerHTML = '<i class="fas fa-check"></i> Close';
+                document.querySelector('#modalCustomer input[name="action"]').value = 'view';
+                document.querySelector('#modalCustomer input[name="id"]').value = c.id;
+                document.querySelector('#modalCustomer input[name="name"]').value = c.name || '';
+                document.querySelector('#modalCustomer input[name="contact_person"]').value = c.contact_person || '';
+                document.querySelector('#modalCustomer input[name="phone"]').value = c.phone || '';
+                document.querySelector('#modalCustomer input[name="email"]').value = c.email || '';
+                document.querySelector('#modalCustomer input[name="address"]').value = c.address || '';
+                document.querySelector('#modalCustomer select[name="type"]').value = c.type;
+                document.querySelector('#modalCustomer input[name="credit_limit"]').value = c.credit_limit;
+                document.querySelector('#modalCustomer select[name="merchandise_type"]').value = c.merchandise_type || '';
+                document.querySelector('#modalCustomer select[name="status"]').value = c.status;
+                // Disable all fields for view mode
+                document.querySelectorAll('#modalCustomer input, #modalCustomer select').forEach(el => {
+                    el.disabled = true;
+                });
+                // Show info box
+                const infoBox = document.getElementById('modalInfoBox');
+                const infoText = document.getElementById('modalInfoText');
+                infoBox.style.display = 'flex';
+                infoText.innerHTML = 'You are viewing customer details in read-only mode. To make changes, please contact a Manager or Administrator.';
+                document.getElementById('modalCustomer').classList.add('show');
+            } else {
+                alert('Error loading customer data: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error loading customer data: ' + error.message);
+        });
 }
 
 function editCustomer(id) {
     // Fetch customer data and populate modal
-    fetch('backend/customers.php?action=get&id=' + id)
-        .then(response => response.json())
+    fetch('../backend/customers.php?action=get&id=' + id)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('HTTP error ' + response.status);
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 const c = data.customer;
                 document.getElementById('custModalTitle').textContent = 'Edit Customer';
-                document.getElementById('custSaveBtn').textContent = 'Update Customer';
+                document.getElementById('custSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Customer';
+                document.getElementById('custSaveBtn').style.display = '';
+                document.getElementById('custSaveBtn').className = 'btn primary';
+                document.getElementById('custCancelBtn').innerHTML = '<i class="fas fa-times"></i> Cancel';
                 document.querySelector('#modalCustomer input[name="action"]').value = 'save';
                 document.querySelector('#modalCustomer input[name="id"]').value = c.id;
-                document.querySelector('#modalCustomer input[name="name"]').value = c.name;
-                document.querySelector('#modalCustomer input[name="contact_person"]').value = c.contact_person;
-                document.querySelector('#modalCustomer input[name="phone"]').value = c.phone;
-                document.querySelector('#modalCustomer input[name="email"]').value = c.email;
-                document.querySelector('#modalCustomer input[name="address"]').value = c.address;
+                document.querySelector('#modalCustomer input[name="name"]').value = c.name || '';
+                document.querySelector('#modalCustomer input[name="contact_person"]').value = c.contact_person || '';
+                document.querySelector('#modalCustomer input[name="phone"]').value = c.phone || '';
+                document.querySelector('#modalCustomer input[name="email"]').value = c.email || '';
+                document.querySelector('#modalCustomer input[name="address"]').value = c.address || '';
                 document.querySelector('#modalCustomer select[name="type"]').value = c.type;
                 document.querySelector('#modalCustomer input[name="credit_limit"]').value = c.credit_limit;
+                document.querySelector('#modalCustomer select[name="merchandise_type"]').value = c.merchandise_type || '';
                 document.querySelector('#modalCustomer select[name="status"]').value = c.status;
-                document.getElementById('modalCustomer').classList.add('active');
+                // Enable all fields for editing
+                document.querySelectorAll('#modalCustomer input, #modalCustomer select').forEach(el => {
+                    el.disabled = false;
+                });
+                // Hide info box
+                document.getElementById('modalInfoBox').style.display = 'none';
+                document.getElementById('modalCustomer').classList.add('show');
             } else {
-                alert('Error loading customer data');
+                alert('Error loading customer data: ' + (data.error || 'Unknown error'));
             }
         })
-        .catch(error => console.error('Error:', error));
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error loading customer data: ' + error.message);
+        });
 }
 
 function deleteCustomer(id, name) {
@@ -413,15 +601,17 @@ function deleteCustomer(id, name) {
 
 function filterCustomers() {
     const type = document.getElementById('filterType').value.toLowerCase();
+    const merchType = document.getElementById('filterMerchType').value.toLowerCase();
     const status = document.getElementById('filterStatus').value.toLowerCase();
     const search = document.getElementById('custSearch').value.toLowerCase();
 
     document.querySelectorAll('.cust-row').forEach(row => {
         const rType = row.dataset.type.toLowerCase();
+        const rMerch = (row.dataset.merch || '').toLowerCase();
         const rStatus = row.dataset.status.toLowerCase();
         const rName = row.dataset.name;
 
-        const show = (!type || rType === type) && (!status || rStatus === status) && (!search || rName.includes(search));
+        const show = (!type || rType === type) && (!merchType || rMerch === merchType) && (!status || rStatus === status) && (!search || rName.includes(search));
         row.style.display = show ? '' : 'none';
     });
 }
@@ -429,7 +619,25 @@ function filterCustomers() {
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('custSearch').addEventListener('input', filterCustomers);
     document.getElementById('filterType').addEventListener('change', filterCustomers);
+    document.getElementById('filterMerchType').addEventListener('change', filterCustomers);
     document.getElementById('filterStatus').addEventListener('change', filterCustomers);
+
+    // Close modal when clicking outside
+    document.getElementById('modalCustomer').addEventListener('click', function(e) {
+        if (e.target === this) {
+            this.classList.remove('show');
+        }
+    });
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('modalCustomer');
+            if (modal.classList.contains('show')) {
+                modal.classList.remove('show');
+            }
+        }
+    });
 });
 </script>
 

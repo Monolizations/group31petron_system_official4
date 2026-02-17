@@ -136,11 +136,11 @@ include __DIR__ . '/../partials/header.php';
 
 .table-container {
      flex: 1;
-     overflow: hidden;
+     overflow-y: auto;
      border: 1px solid var(--line);
      border-radius: 8px;
      background: var(--card);
-     min-height: 0;
+     max-height: 500px;
 }
 
 .stations-table {
@@ -155,8 +155,6 @@ include __DIR__ . '/../partials/header.php';
     position: sticky;
     top: 0;
     z-index: 10;
-    display: table;
-    width: 100%;
 }
 
 .stations-table th, .stations-table td {
@@ -165,18 +163,17 @@ include __DIR__ . '/../partials/header.php';
     border-bottom: 1px solid var(--line);
 }
 
-.stations-table tbody {
-    display: block;
-    overflow-y: auto;
-    max-height: 500px;
-}
-
-.stations-table tbody tr {
-    display: table;
-    width: 100%;
-    table-layout: fixed;
-    transition: background-color 0.2s;
-}
+/* Define explicit column widths for alignment */
+.stations-table th:nth-child(1),
+.stations-table td:nth-child(1) { width: 15%; }  /* Station Code */
+.stations-table th:nth-child(2),
+.stations-table td:nth-child(2) { width: 25%; }  /* Location */
+.stations-table th:nth-child(3),
+.stations-table td:nth-child(3) { width: 20%; }  /* Manager */
+.stations-table th:nth-child(4),
+.stations-table td:nth-child(4) { width: 20%; }  /* Status */
+.stations-table th:nth-child(5),
+.stations-table td:nth-child(5) { width: 20%; }  /* Action */
 
 .stations-table tbody tr:hover {
     background-color: rgba(0, 47, 108, 0.05);
@@ -350,7 +347,7 @@ include __DIR__ . '/../partials/header.php';
         <select class="filter-select" id="locationFilter">
             <option value="">All Locations</option>
             <?php 
-            $locations = array_unique(array_filter(array_column($stations, 'location')));
+            $locations = array_unique(array_filter(array_column($stations, 'name')));
             foreach($locations as $location): ?>
                 <option value="<?php echo htmlspecialchars($location); ?>"><?php echo htmlspecialchars($location); ?></option>
             <?php endforeach; ?>
@@ -365,14 +362,13 @@ include __DIR__ . '/../partials/header.php';
             <?php endforeach; ?>
         </select>
         
-        <input type="text" class="filter-input" placeholder="🔍 Search Station Name / Code" id="searchInput">
+        <input type="text" class="filter-input" placeholder="🔍 Search Station Code / Location" id="searchInput">
     </div>
 
     <div class="table-container">
         <table class="stations-table">
             <thead>
                 <tr>
-                    <th>Station Name</th>
                     <th>Station Code</th>
                     <th>Location</th>
                     <th>Manager</th>
@@ -383,13 +379,12 @@ include __DIR__ . '/../partials/header.php';
             <tbody id="stationsTableBody">
                 <?php foreach($stations as $station): ?>
                 <tr data-status="<?php echo htmlspecialchars($station['status']); ?>" 
-                    data-location="<?php echo htmlspecialchars($station['location'] ?? ''); ?>" 
+                    data-location="<?php echo htmlspecialchars($station['name']); ?>" 
                     data-manager="<?php echo htmlspecialchars($station['admin_name'] ?? ''); ?>"
                     data-name="<?php echo htmlspecialchars($station['name']); ?>"
                     data-code="<?php echo str_pad($station['id'], 4, '0', STR_PAD_LEFT); ?>">
-                    <td><?php echo htmlspecialchars($station['name']); ?></td>
                     <td><?php echo str_pad($station['id'], 4, '0', STR_PAD_LEFT); ?></td>
-                    <td><?php echo htmlspecialchars($station['location'] ?? 'Not Set'); ?></td>
+                    <td><?php echo htmlspecialchars($station['name']); ?></td>
                     <td><?php echo htmlspecialchars($station['admin_name'] ?? 'Not Assigned'); ?></td>
                     <td>
                         <span class="status-badge status-<?php echo htmlspecialchars($station['status']); ?>">
@@ -425,10 +420,6 @@ include __DIR__ . '/../partials/header.php';
             <h3 class="modal-title" id="viewModalTitle">Station Details</h3>
         </div>
         <div class="modal-body">
-            <div class="form-group">
-                <label>Station Name</label>
-                <input type="text" id="viewName" readonly>
-            </div>
             <div class="form-group">
                 <label>Station Code</label>
                 <input type="text" id="viewCode" readonly>
@@ -468,16 +459,12 @@ include __DIR__ . '/../partials/header.php';
             <input type="hidden" id="editId" name="id">
             
             <div class="form-group">
-                <label>Station Name</label>
-                <input type="text" id="editName" name="name" required>
-            </div>
-            <div class="form-group">
                 <label>Station Code</label>
-                <input type="text" id="editCode" name="code" required>
+                <input type="text" id="editCode" name="code" readonly>
             </div>
             <div class="form-group">
                 <label>Location</label>
-                <input type="text" id="editLocation" name="location">
+                <input type="text" id="editLocation" name="name" required>
             </div>
             <div class="form-group">
                 <label>Manager</label>
@@ -506,7 +493,6 @@ include __DIR__ . '/../partials/header.php';
 document.getElementById('statusFilter').addEventListener('change', filterTable);
 document.getElementById('locationFilter').addEventListener('change', filterTable);
 document.getElementById('managerFilter').addEventListener('change', filterTable);
-document.getElementById('searchInput').addEventListener('input', filterTable);
 
 function filterTable() {
     const statusFilter = document.getElementById('statusFilter').value;
@@ -545,11 +531,10 @@ function viewStation(id) {
     const row = document.querySelector(`tr:has(button[onclick="viewStation(${id})"])`);
     if (!row) return;
     
-    document.getElementById('viewName').value = row.cells[0].textContent;
-    document.getElementById('viewCode').value = row.cells[1].textContent;
-    document.getElementById('viewLocation').value = row.cells[2].textContent;
-    document.getElementById('viewManager').value = row.cells[3].textContent;
-    document.getElementById('viewStatus').value = row.cells[4].textContent.trim();
+    document.getElementById('viewCode').value = row.cells[0].textContent;
+    document.getElementById('viewLocation').value = row.cells[1].textContent;
+    document.getElementById('viewManager').value = row.cells[2].textContent;
+    document.getElementById('viewStatus').value = row.cells[3].textContent.trim();
     document.getElementById('viewLastUpdated').value = new Date().toLocaleDateString();
     
     document.getElementById('viewModalTitle').textContent = `Station Details - ${row.cells[0].textContent}`;
@@ -561,12 +546,11 @@ function editStation(id) {
     if (!row) return;
     
     document.getElementById('editId').value = id;
-    document.getElementById('editName').value = row.cells[0].textContent;
-    document.getElementById('editCode').value = row.cells[1].textContent;
-    document.getElementById('editLocation').value = row.cells[2].textContent;
-    document.getElementById('editManager').value = row.cells[3].textContent;
+    document.getElementById('editCode').value = row.cells[0].textContent;
+    document.getElementById('editLocation').value = row.cells[1].textContent;
+    document.getElementById('editManager').value = row.cells[2].textContent;
     
-    const statusText = row.cells[4].textContent.trim().toLowerCase();
+    const statusText = row.cells[3].textContent.trim().toLowerCase();
     document.getElementById('editStatus').value = statusText;
     
     document.getElementById('editModalTitle').textContent = `Edit Station - ${row.cells[0].textContent}`;
@@ -582,24 +566,8 @@ function closeModal(modalId) {
     document.getElementById(modalId).style.display = 'none';
 }
 
-// Test function to verify search functionality
-function testSearchFunction() {
-    console.log('Search function test - JavaScript is loaded');
-    console.log('filterTable function exists:', typeof filterTable);
-    
-    // Test search functionality
-    const searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        searchInput.value = 'test';
-        filterTable();
-        console.log('Search test completed');
-    }
-}
-
-// Run test when page loads
+// Run when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    testSearchFunction();
-    
     // Add real-time search with debounce
     let searchTimeout;
     const searchInput = document.getElementById('searchInput');
@@ -608,21 +576,10 @@ document.addEventListener('DOMContentLoaded', function() {
         searchInput.addEventListener('input', function() {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
-                console.log('Real-time search triggered with value:', this.value);
                 filterTable();
             }, 300); // 300ms debounce
         });
     }
-    
-    // Test initial filtering
-    console.log('Initial search test...');
-    setTimeout(() => {
-        if (searchInput) {
-            searchInput.value = 'test';
-            filterTable();
-            searchInput.value = ''; // Clear test
-        }
-    }, 1000);
 });
 
 // Show toast notification

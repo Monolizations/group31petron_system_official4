@@ -356,7 +356,7 @@ include __DIR__ . '/../partials/header.php';
         <select class="filter-select" id="locationFilter">
             <option value="">All Locations</option>
             <?php 
-            $locations = array_unique(array_filter(array_column($stations, 'location')));
+            $locations = array_unique(array_filter(array_column($stations, 'name')));
             foreach($locations as $location): ?>
                 <option value="<?php echo htmlspecialchars($location); ?>"><?php echo htmlspecialchars($location); ?></option>
             <?php endforeach; ?>
@@ -376,9 +376,9 @@ include __DIR__ . '/../partials/header.php';
         <table class="profiles-table">
             <thead>
                 <tr>
-                    <th>Station Name</th>
-                    <th>Manager</th>
+                    <th>Station Code</th>
                     <th>Location</th>
+                    <th>Manager</th>
                     <th>Status</th>
                     <th>Action</th>
                 </tr>
@@ -387,11 +387,12 @@ include __DIR__ . '/../partials/header.php';
                 <?php foreach($stations as $station): ?>
                 <tr data-station="<?php echo htmlspecialchars($station['name']); ?>" 
                     data-status="<?php echo htmlspecialchars($station['status']); ?>" 
-                    data-location="<?php echo htmlspecialchars($station['location'] ?? ''); ?>" 
-                    data-manager="<?php echo htmlspecialchars($station['admin_name'] ?? ''); ?>">
+                    data-location="<?php echo htmlspecialchars($station['name']); ?>" 
+                    data-manager="<?php echo htmlspecialchars($station['admin_name'] ?? ''); ?>"
+                    data-code="<?php echo str_pad($station['id'], 4, '0', STR_PAD_LEFT); ?>">
+                    <td><?php echo str_pad($station['id'], 4, '0', STR_PAD_LEFT); ?></td>
                     <td><?php echo htmlspecialchars($station['name']); ?></td>
                     <td><?php echo htmlspecialchars($station['admin_name'] ?? 'Not Assigned'); ?></td>
-                    <td><?php echo htmlspecialchars($station['location'] ?? 'Not Set'); ?></td>
                     <td>
                         <span class="status-badge status-<?php echo htmlspecialchars($station['status']); ?>">
                             <?php 
@@ -592,10 +593,10 @@ function viewProfile(id) {
     if (!row) return;
     
     // Mock data for demonstration - in real implementation, fetch from database
-    document.getElementById('viewName').value = row.cells[0].textContent;
-    document.getElementById('viewCode').value = String(id).padStart(4, '0');
-    document.getElementById('viewLocation').value = row.cells[2].textContent;
-    document.getElementById('viewManager').value = row.cells[1].textContent;
+    document.getElementById('viewName').value = row.cells[1].textContent;
+    document.getElementById('viewCode').value = row.cells[0].textContent;
+    document.getElementById('viewLocation').value = row.cells[1].textContent;
+    document.getElementById('viewManager').value = row.cells[2].textContent;
     document.getElementById('viewPhone').value = '+63 912 345 6789';
     document.getElementById('viewEmail').value = 'station' + id + '@petron.com';
     document.getElementById('viewOpeningHours').value = '24/7';
@@ -611,10 +612,10 @@ function editProfile(id) {
     if (!row) return;
     
     document.getElementById('editProfileId').value = id;
-    document.getElementById('editName').value = row.cells[0].textContent;
-    document.getElementById('editCode').value = String(id).padStart(4, '0');
-    document.getElementById('editLocation').value = row.cells[2].textContent;
-    document.getElementById('editManager').value = row.cells[1].textContent;
+    document.getElementById('editName').value = row.cells[1].textContent;
+    document.getElementById('editCode').value = row.cells[0].textContent;
+    document.getElementById('editLocation').value = row.cells[1].textContent;
+    document.getElementById('editManager').value = row.cells[2].textContent;
     
     // Mock data for demonstration
     document.getElementById('editPhone').value = '+63 912 345 6789';

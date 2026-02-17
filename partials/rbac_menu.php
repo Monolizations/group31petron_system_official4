@@ -7,7 +7,7 @@ $master_menu = [
     
     // Transactions & POS - Managers and Staff (day-to-day operations)
     ['id'=>'transactions','label'=>'Transactions','ico'=>'fas fa-shopping-cart','href'=>'#','permissions'=>['create_transactions', 'approve_transactions', 'view_transactions'],'station_specific'=>true,'sub_items'=>[
-        ['id'=>'pos_approval','label'=>'Transaction Approval','href'=>'pos.php?view=approval','permissions'=>['approve_transactions']],
+        ['id'=>'pos_approval','label'=>'Transaction Approval','href'=>'pos.php?view=approval','permissions'=>['handle_approvals']],
         ['id'=>'txn_view','label'=>'Transaction View','href'=>'transactions.php','permissions'=>['view_transactions', 'create_transactions', 'approve_transactions']],
         ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php','permissions'=>['create_transactions']],
         ['id'=>'receipt_reprint','label'=>'Receipt Reprint','href'=>'transactions.php?view=reprint','permissions'=>['create_transactions']],
@@ -33,13 +33,13 @@ $master_menu = [
     ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory', 'create_po'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'inventory_manage','label'=>'Inventory Management','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory']],
         ['id'=>'inventory_list','label'=>'Inventory List','href'=>'inventory_list.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory']],
-        ['id'=>'inventory_report','label'=>'Exportable Inventory Data Report','href'=>'export_center.php','permissions'=>['manage_inventory', 'view_inventory', 'export_data']],
-        ['id'=>'receive_inventory','label'=>'Receive Inventory','href'=>'receiving_staff.php','permissions'=>['receive_inventory']],
-        ['id'=>'receiving_review','label'=>'Receiving Review','href'=>'manager_receiving_review.php','permissions'=>['manage_inventory']],
-        ['id'=>'stock_confirmation','label'=>'Stock Confirmation','href'=>'admin_stock_confirmation.php','permissions'=>['manage_inventory']],
+        ['id'=>'inventory_report','label'=>'Exportable Inventory Data Report','href'=>'export_center.php','permissions'=>['view_all_reports', 'view_financial_reports']],
+        ['id'=>'receive_inventory','label'=>'Receive Inventory','href'=>'receiving_staff.php','permissions'=>['view_all_reports']],
+        ['id'=>'receiving_review','label'=>'Receiving Review','href'=>'manager_receiving_review.php','permissions'=>['view_all_reports']],
+        ['id'=>'stock_confirmation','label'=>'Stock Confirmation','href'=>'admin_stock_confirmation.php','permissions'=>['view_all_reports']],
         ['id'=>'create_po','label'=>'Create Purchase Order','href'=>'purchase_order.php','permissions'=>['create_po']],
         ['id'=>'my_pos','label'=>'My Purchase Orders','href'=>'view_po.php?mode=my','permissions'=>['create_po']],
-        ['id'=>'review_po','label'=>'Review Purchase Orders','href'=>'manager_po_review.php','permissions'=>['manage_inventory']],
+        ['id'=>'review_po','label'=>'Review Purchase Orders','href'=>'manager_po_review.php','permissions'=>['view_all_reports']],
     ]],
     
     // Customer Management
