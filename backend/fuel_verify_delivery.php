@@ -17,6 +17,7 @@ if (!in_array($me['role'], ['manager', 'admin', 'superadmin'])) {
 }
 
 $id = $_GET['id'] ?? 0;
+$station_id = $_GET['station_id'] ?? user_station_id();
 
 if (!$id) {
     echo '<div class="alert alert-danger">Invalid delivery ID.</div>';
@@ -26,13 +27,14 @@ if (!$id) {
 // Fetch delivery details
 try {
     $stmt = $pdo->prepare("
-        SELECT d.*, u.name as receiver_name, v.name as verifier_name
+        SELECT d.*, u.name as receiver_name, v.name as verifier_name, ft.name as fuel_type_name
         FROM fuel_deliveries d 
         LEFT JOIN users u ON d.received_by = u.id 
         LEFT JOIN users v ON d.verified_by = v.id 
-        WHERE d.id = ? AND d.station_id = ?
+        LEFT JOIN fuel_types ft ON d.fuel_type = ft.id
+        WHERE d.id = ?
     ");
-    $stmt->execute([$id, user_station_id()]);
+    $stmt->execute([$id]);
     $delivery = $stmt->fetch();
     
     if (!$delivery) {
@@ -41,7 +43,7 @@ try {
     }
     
     // Check if delivery is already verified
-    if ($delivery['status'] !== 'Pending Review' && $delivery['status'] !== 'Pending') {
+    if ($delivery['status'] !== 'Pending Review' && $delivery['status'] !== 'Pending' && $delivery['status'] !== 'Encoded') {
         echo '<div class="alert alert-warning">This delivery has already been ' . strtolower($delivery['status']) . '.</div>';
         exit;
     }
@@ -258,7 +260,7 @@ try {
         </div>
         <div class="info-card">
             <label>Fuel Type</label>
-            <div class="value"><?php echo htmlspecialchars($delivery['fuel_type']); ?></div>
+            <div class="value"><?php echo htmlspecialchars($delivery['fuel_type_name'] ?? $delivery['fuel_type']); ?></div>
         </div>
         <div class="info-card">
             <label>Supplier</label>
@@ -294,6 +296,7 @@ try {
 
     <form id="verifyDeliveryForm">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
+        <input type="hidden" name="station_id" value="<?php echo $station_id; ?>">
         
         <div class="review-form">
             <label class="form-label"><i class="fas fa-tasks"></i> Manager Verify Action</label>
@@ -314,7 +317,7 @@ try {
             </div>
             
             <div class="action-buttons">
-                <button type="button" class="btn-approve" onclick="var id=<?php echo $id; ?>; var action='Verified'; var actualLiters=document.getElementById('actualLiters').value; var quality=document.getElementById('deliveryQuality').value; var reason=''; var notes=''; if(!actualLiters || actualLiters<=0){alert('Please enter valid actual liters.');return;} if(!confirm('Are you sure you want to VERIFY this fuel delivery?')){return;} var fd=new FormData(); fd.append('action','verify_delivery'); fd.append('id',id); fd.append('status',action); fd.append('actual_liters',actualLiters); fd.append('quality',quality); fd.append('reason',reason); fd.append('notes',notes); fetch('../backend/fuel_process_verification.php',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();}).catch(e=>alert('Error:'+e));">
+                <button type="button" class="btn-approve" onclick="var id=<?php echo $id; ?>; var stationId=<?php echo $station_id; ?>; var action='Verified'; var actualLiters=document.getElementById('actualLiters').value; var quality=document.getElementById('deliveryQuality').value; var reason=''; var notes=''; if(!actualLiters || actualLiters<=0){alert('Please enter valid actual liters.');return;} if(!confirm('Are you sure you want to VERIFY this fuel delivery?')){return;} var fd=new FormData(); fd.append('action','verify_delivery'); fd.append('id',id); fd.append('station_id',stationId); fd.append('status',action); fd.append('actual_liters',actualLiters); fd.append('quality',quality); fd.append('reason',reason); fd.append('notes',notes); fetch('../backend/fuel_process_verification.php',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();}).catch(e=>alert('Error:'+e));">
                     <i class="fas fa-check-circle"></i> Approve
                 </button>
                 <button type="button" class="btn-reject" onclick="document.getElementById('rejectionFields').classList.add('show');">
@@ -337,7 +340,7 @@ try {
                 <label style="margin-top: 15px;">Additional Notes</label>
                 <textarea id="verificationNotes" placeholder="Provide additional details about the rejection..."></textarea>
                 
-                <button type="button" class="btn-reject" style="margin-top: 15px; width: 100%;" onclick="var id=<?php echo $id; ?>; var action='Rejected'; var actualLiters=document.getElementById('actualLiters').value; var quality=document.getElementById('deliveryQuality').value; var reason=document.getElementById('rejectionReason').value; var notes=document.getElementById('verificationNotes').value; if(!reason){alert('Please select a reason for rejection.');return;} if(!confirm('Are you sure you want to REJECT this fuel delivery? This action cannot be undone.')){return;} var fd=new FormData(); fd.append('action','verify_delivery'); fd.append('id',id); fd.append('status',action); fd.append('actual_liters',actualLiters); fd.append('quality',quality); fd.append('reason',reason); fd.append('notes',notes); fetch('../backend/fuel_process_verification.php',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();}).catch(e=>alert('Error:'+e));">
+                <button type="button" class="btn-reject" style="margin-top: 15px; width: 100%;" onclick="var id=<?php echo $id; ?>; var stationId=<?php echo $station_id; ?>; var action='Rejected'; var actualLiters=document.getElementById('actualLiters').value; var quality=document.getElementById('deliveryQuality').value; var reason=document.getElementById('rejectionReason').value; var notes=document.getElementById('verificationNotes').value; if(!reason){alert('Please select a reason for rejection.');return;} if(!confirm('Are you sure you want to REJECT this fuel delivery? This action cannot be undone.')){return;} var fd=new FormData(); fd.append('action','verify_delivery'); fd.append('id',id); fd.append('station_id',stationId); fd.append('status',action); fd.append('actual_liters',actualLiters); fd.append('quality',quality); fd.append('reason',reason); fd.append('notes',notes); fetch('../backend/fuel_process_verification.php',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();}).catch(e=>alert('Error:'+e));">
                     <i class="fas fa-times-circle"></i> Confirm Rejection
                 </button>
             </div>

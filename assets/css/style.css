@@ -211,6 +211,7 @@ canvas{width:100%;padding:0 16px 16px 16px}
 .modal{position:fixed;inset:0;background:rgba(16,24,40,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
 .modal.show{display:flex}
 .modal-card{width:min(520px, 95vw);background:#fff;border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+.modal-card-wide{width:min(700px, 95vw);background:#fff;border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
 .receipt-card{width:min(520px, 95vw)}
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line)}
 .modal-title{font-weight:900}

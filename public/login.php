@@ -326,6 +326,153 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background-color: #fff;
+            margin: 5% auto;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-header {
+            background-color: var(--petron-blue);
+            color: white;
+            padding: 20px;
+            border-radius: 10px 10px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-close {
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            color: rgba(255, 255, 255, 0.8);
+            transition: color 0.2s;
+        }
+
+        .modal-close:hover {
+            color: white;
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+            max-height: 50vh;
+        }
+
+        .modal-body h3 {
+            color: var(--petron-blue);
+            font-size: 14px;
+            margin-top: 15px;
+            margin-bottom: 8px;
+        }
+
+        .modal-body h3:first-child {
+            margin-top: 0;
+        }
+
+        .modal-body p {
+            font-size: 13px;
+            line-height: 1.6;
+            color: #555;
+            margin: 0 0 12px 0;
+        }
+
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            border-radius: 0 0 10px 10px;
+        }
+
+        .btn-modal {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-close {
+            background-color: #f0f0f0;
+            color: #555;
+        }
+
+        .btn-close:hover {
+            background-color: #e0e0e0;
+        }
+
+        .btn-agree {
+            background-color: var(--petron-blue);
+            color: white;
+        }
+
+        .btn-agree:hover {
+            background-color: #001f4d;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .modal-content {
+                width: 95%;
+                margin: 10% auto;
+            }
+            
+            .modal-body {
+                max-height: 60vh;
+            }
+        }
     </style>
 </head>
 <body>
@@ -403,7 +550,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             spinner.style.display = 'block';
             btnText.textContent = 'Authenticating...';
         });
+
+        // Terms and Conditions Modal
+        document.addEventListener('DOMContentLoaded', function() {
+            const modal = document.getElementById('termsModal');
+            const termsCheckbox = document.getElementById('terms');
+            const termsLink = document.querySelector('.checkbox-group a');
+            const modalClose = document.getElementById('modalClose');
+            const btnClose = document.getElementById('btnClose');
+            const btnAgree = document.getElementById('btnAgree');
+
+            // Open modal function
+            function openModal() {
+                modal.style.display = 'block';
+                document.body.style.overflow = 'hidden';
+            }
+
+            // Close modal function
+            function closeModal() {
+                modal.style.display = 'none';
+                document.body.style.overflow = 'auto';
+            }
+
+            // Open modal when clicking Terms link
+            if (termsLink) {
+                termsLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    openModal();
+                });
+            }
+
+            // Open modal when checking checkbox
+            if (termsCheckbox) {
+                termsCheckbox.addEventListener('click', (e) => {
+                    if (!e.target.checked) {
+                        e.target.checked = false;
+                    } else {
+                        e.preventDefault();
+                        openModal();
+                    }
+                });
+            }
+
+            // Close modal when clicking X
+            if (modalClose) {
+                modalClose.addEventListener('click', closeModal);
+            }
+
+            // Close modal when clicking Close button
+            if (btnClose) {
+                btnClose.addEventListener('click', closeModal);
+            }
+
+            // Agree and close modal
+            if (btnAgree) {
+                btnAgree.addEventListener('click', () => {
+                    if (termsCheckbox) {
+                        termsCheckbox.checked = true;
+                    }
+                    closeModal();
+                });
+            }
+
+            // Close modal when clicking outside
+            window.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeModal();
+                }
+            });
+
+            // Close modal on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && modal && modal.style.display === 'block') {
+                    closeModal();
+                }
+            });
+        });
     </script>
+
+    <!-- Terms and Conditions Modal -->
+    <div id="termsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-file-contract"></i> Terms and Conditions</h2>
+                <span class="modal-close" id="modalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <h3>1. Acceptance of Terms</h3>
+                <p>By accessing and using the Petron Management System, you agree to comply with these Terms and Conditions. If you do not agree with any part of these terms, please do not use this system.</p>
+                
+                <h3>2. User Responsibilities</h3>
+                <p>You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account. You must notify the administrator immediately of any unauthorized use of your account.</p>
+                
+                <h3>3. System Usage</h3>
+                <p>This system is intended for authorized Petron personnel only. Unauthorized access, use, or distribution of data is strictly prohibited and may result in disciplinary action and legal consequences.</p>
+                
+                <h3>4. Data Privacy</h3>
+                <p>All data entered into the system is subject to our privacy policy. Personal information will be handled in accordance with applicable data protection laws.</p>
+                
+                <h3>5. Intellectual Property</h3>
+                <p>All content, features, and functionality of this system are the exclusive property of Petron Corporation and are protected by copyright and trademark laws.</p>
+                
+                <h3>6. Modifications</h3>
+                <p>We reserve the right to modify these terms at any time. Continued use of the system after changes constitutes acceptance of the new terms.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-modal btn-close" id="btnClose">Close</button>
+                <button type="button" class="btn-modal btn-agree" id="btnAgree">I Agree</button>
+            </div>
+        </div>
+    </div>
 
 </body>
 </html>

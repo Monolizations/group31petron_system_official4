@@ -351,13 +351,14 @@ if ($station_id) {
         $fuel_stations = $stmt->fetchAll();
         
         // Fetch daily readings with filters
-        $filter_date = $_GET['date'] ?? date('Y-m-d');
+        $filter_date = $_GET['date'] ?? '';
         $filter_shift = $_GET['shift'] ?? '';
         $filter_status = $_GET['status'] ?? '';
         
-        $sql = "SELECT dr.*, fs.pump_number, fs.fuel_type, u.name as user_name 
+        $sql = "SELECT dr.*, fp.pump_number, ft.name as fuel_type_name, u.name as user_name 
                 FROM fuel_daily_readings dr 
-                LEFT JOIN fuel_stations fs ON dr.fuel_station_id = fs.id 
+                LEFT JOIN fuel_pumps fp ON dr.pump_id = fp.id 
+                LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id
                 LEFT JOIN users u ON dr.user_id = u.id 
                 WHERE dr.station_id = ?";
         $params = [$station_id];
@@ -374,17 +375,18 @@ if ($station_id) {
             $sql .= " AND dr.status = ?";
             $params[] = $filter_status;
         }
-        $sql .= " ORDER BY dr.reading_date DESC, dr.shift, fs.pump_number";
+        $sql .= " ORDER BY dr.reading_date DESC, dr.shift, fp.pump_number";
         
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $daily_readings = $stmt->fetchAll();
         
         // Fetch deliveries
-        $stmt = $pdo->prepare("SELECT d.*, u.name as receiver_name, v.name as verifier_name 
+        $stmt = $pdo->prepare("SELECT d.*, u.name as receiver_name, v.name as verifier_name, ft.name as fuel_type_name 
                               FROM fuel_deliveries d 
                               LEFT JOIN users u ON d.received_by = u.id 
                               LEFT JOIN users v ON d.verified_by = v.id 
+                              LEFT JOIN fuel_types ft ON d.fuel_type = ft.id
                               WHERE d.station_id = ? 
                               ORDER BY d.delivery_date DESC 
                               LIMIT 50");
@@ -670,7 +672,7 @@ require_once __DIR__ . '/../partials/header.php';
             <td><?php echo date('M d, Y', strtotime($reading['reading_date'])); ?></td>
             <td>
               <b><?php echo htmlspecialchars($reading['pump_number']); ?></b><br>
-              <small style="color:var(--muted);"><?php echo htmlspecialchars($reading['fuel_type']); ?></small>
+              <small style="color:var(--muted);"><?php echo htmlspecialchars($reading['fuel_type_name'] ?? $reading['fuel_type']); ?></small>
             </td>
             <td>
               <span class="fuel-badge <?php echo strtolower($reading['shift']); ?>">
@@ -748,7 +750,7 @@ require_once __DIR__ . '/../partials/header.php';
           <?php foreach($deliveries as $delivery): ?>
           <tr>
             <td><?php echo date('M d, Y', strtotime($delivery['delivery_date'])); ?></td>
-            <td><b><?php echo htmlspecialchars($delivery['fuel_type']); ?></b></td>
+            <td><b><?php echo htmlspecialchars($delivery['fuel_type_name'] ?? $delivery['fuel_type']); ?></b></td>
             <td><?php echo htmlspecialchars($delivery['supplier']); ?></td>
             <td><b><?php echo number_format($delivery['delivery_liters'], 2); ?> L</b></td>
             <td><?php echo htmlspecialchars($delivery['tanker_number']); ?></td>
@@ -759,7 +761,7 @@ require_once __DIR__ . '/../partials/header.php';
               </span>
             </td>
             <td class="right">
-              <?php if($delivery['status'] == 'Pending Review' && $isManager): ?>
+              <?php if(in_array($delivery['status'], ['Pending Review', 'Pending', 'Encoded']) && $isManager): ?>
                 <button class="btn primary small" style="background:var(--blue);" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>)">
                   <i class="fas fa-check-circle"></i> Verify
                 </button>
@@ -1332,6 +1334,7 @@ require_once __DIR__ . '/../partials/header.php';
 <div class="modal" id="modalInvestigateVariance"></div>
 
 <script>
+const currentStationId = <?php echo json_encode($station_id); ?>;
 // Tab Switching (matching inventory.php pattern)
 const fuelTabs = document.querySelectorAll('.tab[data-fueltab]');
 function showFuelTab(key) {
@@ -1422,7 +1425,7 @@ function openReviewReadingModal(id) {
 }
 
 function openVerifyDeliveryModal(id) {
-    fetch(`../backend/fuel_verify_delivery.php?id=${id}`)
+    fetch(`../backend/fuel_verify_delivery.php?id=${id}&station_id=${currentStationId}`)
         .then(response => response.text())
         .then(html => {
             const modal = document.getElementById('modalVerifyDelivery');
@@ -1522,7 +1525,7 @@ function viewDeliveryDetails(id) {
         .then(response => response.text())
         .then(html => {
             const modal = document.getElementById('modalViewDelivery');
-            modal.innerHTML = '<div class="modal-card">' + html + '</div>';
+            modal.innerHTML = '<div class="modal-card modal-card-wide">' + html + '</div>';
             modal.classList.add('show');
         });
 }

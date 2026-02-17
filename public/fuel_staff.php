@@ -347,7 +347,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $notes = $_POST['notes'] ?? '';
             
             try {
-                $stmt = $pdo->prepare("UPDATE fuel_deliveries SET status = ?, verified_by = ?, notes = CONCAT(COALESCE(notes,''), '\n[Manager Verification] ', ?) WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE fuel_deliveries SET status = ?, verified_by = ?, notes = CONCAT(COALESCE(notes,''), '\n[Manager Verification] ', ?) WHERE id = ? AND status IN ('Pending', 'Pending Review', 'Encoded')");
                 $stmt->execute([$status, $me['id'], $notes, $id]);
                 
                 if ($stmt->rowCount() > 0) {
@@ -892,10 +892,11 @@ if ($station_id) {
         $my_readings = $stmt->fetchAll();
         
         // Fetch deliveries
-        $stmt = $pdo->prepare("SELECT d.*, u.name as receiver_name, v.name as verifier_name 
+        $stmt = $pdo->prepare("SELECT d.*, u.name as receiver_name, v.name as verifier_name, ft.name as fuel_type_name 
                               FROM fuel_deliveries d 
                               LEFT JOIN users u ON d.received_by = u.id 
                               LEFT JOIN users v ON d.verified_by = v.id 
+                              LEFT JOIN fuel_types ft ON d.fuel_type = ft.id
                               WHERE d.station_id = ? 
                               ORDER BY d.delivery_date DESC 
                               LIMIT 50");
@@ -903,7 +904,7 @@ if ($station_id) {
         $deliveries = $stmt->fetchAll();
         
         // Get my recent deliveries for staff
-        $stmt = $pdo->prepare("SELECT d.*, u.name as receiver_name, v.name as verifier_name FROM fuel_deliveries d LEFT JOIN users u ON d.received_by = u.id LEFT JOIN users v ON d.verified_by = v.id WHERE d.station_id = ? AND d.received_by = ? ORDER BY d.delivery_date DESC LIMIT 20");
+        $stmt = $pdo->prepare("SELECT d.*, u.name as receiver_name, v.name as verifier_name, ft.name as fuel_type_name FROM fuel_deliveries d LEFT JOIN users u ON d.received_by = u.id LEFT JOIN users v ON d.verified_by = v.id LEFT JOIN fuel_types ft ON d.fuel_type = ft.id WHERE d.station_id = ? AND d.received_by = ? ORDER BY d.delivery_date DESC LIMIT 20");
         $stmt->execute([$station_id, $me['id']]);
         $my_deliveries = $stmt->fetchAll();
         
@@ -1409,7 +1410,7 @@ require_once __DIR__ . '/../partials/header.php';
             <?php foreach($my_deliveries as $delivery): ?>
             <tr>
               <td><?php echo date('m/d', strtotime($delivery['delivery_date'])); ?></td>
-              <td><?php echo htmlspecialchars($delivery['fuel_type']); ?></td>
+              <td><?php echo htmlspecialchars($delivery['fuel_type_name'] ?? $delivery['fuel_type']); ?></td>
               <td><b><?php echo number_format($delivery['delivery_liters'], 0); ?> L</b></td>
               <td>
                 <span class="fuel-badge <?php echo strtolower($delivery['status']); ?>">
@@ -1738,7 +1739,7 @@ require_once __DIR__ . '/../partials/header.php';
           <?php foreach($deliveries as $delivery): ?>
           <tr>
             <td><?php echo date('M d, Y', strtotime($delivery['delivery_date'])); ?></td>
-            <td><b><?php echo htmlspecialchars($delivery['fuel_type']); ?></b></td>
+            <td><b><?php echo htmlspecialchars($delivery['fuel_type_name'] ?? $delivery['fuel_type']); ?></b></td>
             <td><?php echo htmlspecialchars($delivery['supplier']); ?></td>
             <td><b><?php echo number_format($delivery['delivery_liters'], 2); ?> L</b></td>
             <td><?php echo htmlspecialchars($delivery['tanker_number']); ?></td>
@@ -1749,12 +1750,12 @@ require_once __DIR__ . '/../partials/header.php';
               </span>
             </td>
             <td class="right">
-              <?php if($delivery['status'] == 'Encoded'): ?>
-                <button class="btn ghost small" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>, '<?php echo htmlspecialchars($delivery['delivery_date']); ?>', '<?php echo htmlspecialchars(addslashes($delivery['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($delivery['supplier'])); ?>', '<?php echo $delivery['delivery_liters']; ?>', '<?php echo htmlspecialchars(addslashes($delivery['tanker_number'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($delivery['receiver_name'] ?? '')); ?>')">
+              <?php if(in_array($delivery['status'], ['Pending Review', 'Pending', 'Encoded'])): ?>
+                <button class="btn ghost small" onclick="openVerifyDeliveryModal(<?php echo $delivery['id']; ?>, '<?php echo htmlspecialchars($delivery['delivery_date']); ?>', '<?php echo htmlspecialchars(addslashes($delivery['fuel_type_name'] ?? $delivery['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($delivery['supplier'])); ?>', '<?php echo $delivery['delivery_liters']; ?>', '<?php echo htmlspecialchars(addslashes($delivery['tanker_number'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($delivery['receiver_name'] ?? '')); ?>')">
                   <i class="fas fa-check"></i> Verify
                 </button>
               <?php endif; ?>
-              <button class="btn ghost small" onclick="viewDeliveryDetails(<?php echo $delivery['id']; ?>, '<?php echo htmlspecialchars($delivery['delivery_date']); ?>', '<?php echo htmlspecialchars(addslashes($delivery['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($delivery['supplier'])); ?>', '<?php echo $delivery['delivery_liters']; ?>', '<?php echo htmlspecialchars(addslashes($delivery['tanker_number'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($delivery['receiver_name'] ?? '')); ?>', '<?php echo htmlspecialchars($delivery['status']); ?>')">
+              <button class="btn ghost small" onclick="viewDeliveryDetails(<?php echo $delivery['id']; ?>, '<?php echo htmlspecialchars($delivery['delivery_date']); ?>', '<?php echo htmlspecialchars(addslashes($delivery['fuel_type_name'] ?? $delivery['fuel_type'])); ?>', '<?php echo htmlspecialchars(addslashes($delivery['supplier'])); ?>', '<?php echo $delivery['delivery_liters']; ?>', '<?php echo htmlspecialchars(addslashes($delivery['tanker_number'] ?? '')); ?>', '<?php echo htmlspecialchars(addslashes($delivery['receiver_name'] ?? '')); ?>', '<?php echo htmlspecialchars($delivery['status']); ?>')">
                 <i class="fas fa-eye"></i>
               </button>
             </td>
