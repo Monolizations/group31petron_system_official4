@@ -347,7 +347,7 @@ require_once __DIR__ . '/../partials/header.php';
                 </div>
                 <div class="form-group">
                     <label>Station</label>
-                    <select name="station_id" required>
+                    <select name="station_id" id="dev_station_select" required>
                         <option value="">Select Station</option>
                     </select>
                 </div>
@@ -425,108 +425,184 @@ function loadSystemLogs() {
     const logContent = document.getElementById('logContent');
     logContent.innerHTML = 'Loading system logs...';
     
-    // Simulate loading logs (in real implementation, this would fetch from server)
-    setTimeout(() => {
-        const logs = [
-            '[2026-02-07 01:52:00] INFO: System initialized successfully',
-            '[2026-02-07 01:52:15] INFO: User superadmin logged in',
-            '[2026-02-07 01:52:30] INFO: Database connection established',
-            '[2026-02-07 01:52:45] INFO: Inventory system loaded',
-            '[2026-02-07 01:53:00] INFO: Sales reports generated',
-            '[2026-02-07 01:53:15] INFO: Job orders processed',
-            '[2026-02-07 01:53:30] WARNING: Low stock detected for item #2',
-            '[2026-02-07 01:53:45] INFO: User admin logged in',
-            '[2026-07-02-07 01:54:00] INFO: Station status updated',
-            '[2026-02-07 01:54:15] INFO: Reports dashboard accessed',
-            '[2026-02-07 01:54:30] INFO: Database backup completed',
-            '[2026-02-07 01:54:45] INFO: System maintenance performed'
-        ];
-        
-        logContent.innerHTML = logs.join('\n');
-    }, 1000);
+    fetch('../backend/api/developer_operations.php?action=get_system_logs&limit=200')
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            if (result.data && result.data.length > 0) {
+                const logs = result.data.map(log => {
+                    const time = log.created_at || 'N/A';
+                    const type = log.action_type || 'INFO';
+                    const user = log.user_name || 'System';
+                    const desc = log.description || '';
+                    return `[${time}] [${type}] [${user}] ${desc}`;
+                });
+                logContent.innerHTML = logs.join('\n');
+            } else {
+                logContent.innerHTML = 'No logs found. ' + (result.message || '');
+            }
+        } else {
+            logContent.innerHTML = 'Error loading logs: ' + (result.error || 'Unknown error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        logContent.innerHTML = 'Error loading logs: ' + error.message;
+    });
 }
 
 function clearSystemLogs() {
-    if (confirm('Are you sure you want to clear all system logs? This action cannot be undone.')) {
-        // In real implementation, this would clear the log files
-        const logContent = document.getElementById('logContent');
-        logContent.innerHTML = 'System logs cleared successfully.';
-        showToast('System logs cleared', 'success');
+    const days = prompt('Clear logs older than how many days? (Enter 0 to clear all)', '30');
+    if (days === null) return; // User cancelled
+    
+    if (confirm(`Are you sure you want to clear logs older than ${days} days? This action cannot be undone.`)) {
+        showToast('Clearing system logs...', 'info');
+        
+        const formData = new FormData();
+        formData.append('action', 'clear_system_logs');
+        formData.append('older_than_days', days);
+        
+        fetch('../backend/api/developer_operations.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast(result.message || 'System logs cleared', 'success');
+                loadSystemLogs(); // Reload logs
+            } else {
+                showToast(result.error || 'Failed to clear logs', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error clearing logs: ' + error.message, 'error');
+        });
     }
 }
 
 function downloadLogs() {
-    // In real implementation, this would download the log files
-    showToast('Downloading logs...', 'info');
-    setTimeout(() => {
-        showToast('Logs downloaded successfully', 'success');
-    }, 1000);
+    showToast('Preparing logs for download...', 'info');
+    
+    fetch('../backend/api/developer_operations.php?action=get_system_logs&limit=10000')
+    .then(response => response.json())
+    .then(result => {
+        if (result.success && result.data) {
+            // Convert logs to CSV format
+            let csv = 'Timestamp,Type,User,Description,IP Address\n';
+            result.data.forEach(log => {
+                const time = log.created_at || '';
+                const type = log.action_type || '';
+                const user = log.user_name || '';
+                const desc = (log.description || '').replace(/"/g, '""');
+                const ip = log.ip_address || '';
+                csv += `"${time}","${type}","${user}","${desc}","${ip}"\n`;
+            });
+            
+            // Create download
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'system_logs_' + new Date().toISOString().slice(0,10) + '.csv';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            a.remove();
+            
+            showToast('Logs downloaded successfully', 'success');
+        } else {
+            showToast(result.error || 'Failed to download logs', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error downloading logs: ' + error.message, 'error');
+    });
 }
 
 // Database Management Functions
 function viewDatabaseStatus() {
-    const status = {
-        'Database': 'Connected',
-        'Tables': 'All tables operational',
-        'Records': 'Data integrity verified',
-        'Backups': 'Last backup: 2026-02-07 01:54:00',
-        'Performance': 'Query response time: < 100ms'
-    };
+    showToast('Retrieving database status...', 'info');
     
-    let statusHtml = '<div class="alert alert-success">';
-    for (const [key, value] of Object.entries(status)) {
-        statusHtml += `<strong>${key}:</strong> ${value}<br>`;
-    }
-    statusHtml += '</div>';
-    
-    showToast('Database Status Retrieved', 'success');
-    
-    // Create a temporary modal to show status
-    const tempModal = document.createElement('div');
-    tempModal.className = 'modal';
-    tempModal.style.display = 'flex';
-    tempModal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">Database Status</h3>
-                <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                ${statusHtml}
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(tempModal);
+    fetch('../backend/api/developer_operations.php?action=get_database_status')
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const data = result.data;
+            let statusHtml = '<div class="alert alert-success" style="text-align: left;">';
+            statusHtml += `<strong>Database:</strong> ${data.database}<br>`;
+            statusHtml += `<strong>MySQL Version:</strong> ${data.mysql_version}<br>`;
+            statusHtml += `<strong>Database Size:</strong> ${data.size_mb} MB<br>`;
+            statusHtml += `<strong>Last Backup:</strong> ${data.last_backup}<br>`;
+            statusHtml += `<strong>Backup Count:</strong> ${data.backup_count}<br><br>`;
+            statusHtml += '<strong>Table Records:</strong><br>';
+            statusHtml += '<ul style="margin: 5px 0; padding-left: 20px;">';
+            for (const [table, info] of Object.entries(data.tables)) {
+                const status = info.status === 'ok' ? '✅' : '⚠️';
+                statusHtml += `<li>${table}: ${info.count} records ${status}</li>`;
+            }
+            statusHtml += '</ul></div>';
+            
+            // Create a temporary modal to show status
+            const tempModal = document.createElement('div');
+            tempModal.className = 'modal';
+            tempModal.style.display = 'flex';
+            tempModal.innerHTML = `
+                <div class="modal-content" style="max-width: 600px;">
+                    <div class="modal-header">
+                        <h3 class="modal-title">Database Status</h3>
+                        <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        ${statusHtml}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(tempModal);
+            showToast('Database status retrieved', 'success');
+        } else {
+            showToast(result.error || 'Failed to get database status', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error getting database status: ' + error.message, 'error');
+    });
 }
 
 function backupDatabase() {
     if (confirm('Are you sure you want to backup the database? This may take a few moments.')) {
         showToast('Starting database backup...', 'info');
-        setTimeout(() => {
-            showToast('Database backup completed successfully', 'success');
-        }, 2000);
+        
+        const formData = new FormData();
+        formData.append('action', 'backup_database');
+        
+        fetch('../backend/api/developer_operations.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast(result.message + ' (' + result.size_kb + ' KB)', 'success');
+            } else {
+                showToast(result.error || 'Backup failed', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error during backup: ' + error.message, 'error');
+        });
     }
 }
 
 function resetDatabase() {
-    if (confirm('⚠️ WARNING: This will reset all data to initial state. This action cannot be undone. Are you absolutely sure?')) {
-        if (confirm('🚨 FINAL WARNING: All data will be permanently deleted. Type "RESET" to confirm:')) {
-            const confirmation = prompt('Type "RESET" to confirm database reset:');
-            if (confirmation === 'RESET') {
-                showToast('Database reset initiated...', 'warning');
-                setTimeout(() => {
-                    showToast('Database reset completed', 'success');
-                }, 3000);
-            } else {
-                showToast('Database reset cancelled', 'info');
-            }
-        } else {
-            showToast('Database reset cancelled', 'info');
-        }
-    }
+    showToast('Database reset is disabled for safety. Use individual reset functions instead.', 'warning');
 }
 
 // User Administration Functions
@@ -540,38 +616,48 @@ function showAddUserModal() {
 }
 
 function loadStationsForUser() {
-    const stationSelect = document.querySelector('#addUserForm select[name="station_id"]');
-    stationSelect.innerHTML = '<option value="">Select Station</option>';
-
-    DataHelper.populateStations('assigned_station', 'Select Station')
+    DataHelper.populateStations('dev_station_select', 'Select Station')
         .then(() => console.log('Stations loaded'))
         .catch(error => {
             console.error('Failed to load stations:', error);
-            alert('Failed to load stations. Please refresh.');
+            showToast('Failed to load stations. Please refresh.', 'error');
         });
 }
 
 function addUser() {
     const form = document.getElementById('addUserForm');
     const formData = new FormData(form);
+    formData.append('action', 'create_user');
     
-    // In real implementation, this would send data to server
     showToast('Adding user...', 'info');
     
-    setTimeout(() => {
-        showToast('User added successfully', 'success');
-        closeModal('addUserModal');
-        form.reset();
-    }, 1500);
+    fetch('../backend/api/developer_operations.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast(result.message || 'User added successfully', 'success');
+            closeModal('addUserModal');
+            form.reset();
+        } else {
+            showToast(result.error || 'Failed to add user', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error adding user: ' + error.message, 'error');
+    });
 }
 
 function managePermissions() {
-    window.location.href = 'permissions.php';
+    window.location.href = 'rbac.php';
 }
 
 // Station Management Functions
 function viewAllStations() {
-    window.location.href = 'view_all_stations.php';
+    window.location.href = 'view_stations.php';
 }
 
 function showAddStationModal() {
@@ -581,15 +667,28 @@ function showAddStationModal() {
 function addStation() {
     const form = document.getElementById('addStationForm');
     const formData = new FormData(form);
+    formData.append('action', 'add');
     
-    // In real implementation, this would send data to server
     showToast('Adding station...', 'info');
     
-    setTimeout(() => {
-        showToast('Station added successfully', 'success');
-        closeModal('addStationModal');
-        form.reset();
-    }, 1500);
+    fetch('../backend/api/stations.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast(result.message || 'Station added successfully', 'success');
+            closeModal('addStationModal');
+            form.reset();
+        } else {
+            showToast(result.error || 'Failed to add station', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error adding station: ' + error.message, 'error');
+    });
 }
 
 function resetStationData() {
@@ -597,147 +696,251 @@ function resetStationData() {
     if (stationId) {
         if (confirm(`Reset all data for station ${stationId}? This action cannot be undone.`)) {
             showToast('Resetting station data...', 'warning');
-            setTimeout(() => {
-                showToast(`Station ${stationId} data reset successfully`, 'success');
-            }, 2000);
+            
+            const formData = new FormData();
+            formData.append('action', 'reset_station_data');
+            formData.append('station_id', stationId);
+            
+            fetch('../backend/api/developer_operations.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    showToast(result.message || 'Station data reset successfully', 'success');
+                } else {
+                    showToast(result.error || 'Failed to reset station data', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showToast('Error resetting station: ' + error.message, 'error');
+            });
         }
     }
 }
 
 // Data Operations Functions
 function viewDataStats() {
-    const stats = {
-        'Users': '8 total',
-        'Stations': '3 active',
-        'Products': '15 available',
-        'Inventory Items': '45 tracked',
-        'Sales Records': '1,247',
-        'Job Orders': '89',
-        'Reports Generated': '156'
-    };
+    showToast('Retrieving data statistics...', 'info');
     
-    let statsHtml = '<div class="alert alert-success">';
-    for (const [key, value] of Object.entries(stats)) {
-        statsHtml += `<strong>${key}:</strong> ${value}<br>`;
-    }
-    statsHtml += '</div>';
-    
-    showToast('Data statistics retrieved', 'success');
-    
-    // Create a temporary modal to show stats
-    const tempModal = document.createElement('div');
-    tempModal.className = 'modal';
-    tempModal.style.display = 'flex';
-    tempModal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">Data Statistics</h3>
-                <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                ${statsHtml}
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(tempModal);
+    fetch('../backend/api/developer_operations.php?action=get_data_stats')
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const stats = result.data;
+            let statsHtml = '<div class="alert alert-success" style="text-align: left;">';
+            
+            statsHtml += '<strong>Users:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total: ${stats.users.total}<br>`;
+            statsHtml += `&nbsp;&nbsp;Active: ${stats.users.active}<br>`;
+            if (Object.keys(stats.users.by_role).length > 0) {
+                statsHtml += '&nbsp;&nbsp;By Role: ';
+                statsHtml += Object.entries(stats.users.by_role).map(([role, count]) => `${role}: ${count}`).join(', ');
+                statsHtml += '<br>';
+            }
+            
+            statsHtml += '<strong>Stations:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total: ${stats.stations.total}, Active: ${stats.stations.active}<br>`;
+            
+            statsHtml += '<strong>Products:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total: ${stats.products.total}<br>`;
+            
+            statsHtml += '<strong>Inventory:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total Items: ${stats.inventory.total}, Low Stock: ${stats.inventory.low_stock}<br>`;
+            
+            statsHtml += '<strong>Sales:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total: ${stats.sales.total}, Today: ${stats.sales.today}, This Month: ${stats.sales.this_month}<br>`;
+            
+            statsHtml += '<strong>Job Orders:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total: ${stats.job_orders.total}, Pending: ${stats.job_orders.pending}, Completed: ${stats.job_orders.completed}<br>`;
+            
+            statsHtml += '<strong>Fuel:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Types: ${stats.fuel.types}, Pumps: ${stats.fuel.pumps}<br>`;
+            
+            statsHtml += '<strong>Activity Logs:</strong><br>';
+            statsHtml += `&nbsp;&nbsp;Total: ${stats.activity_logs.total}<br>`;
+            
+            statsHtml += '</div>';
+            
+            // Create a temporary modal to show stats
+            const tempModal = document.createElement('div');
+            tempModal.className = 'modal';
+            tempModal.style.display = 'flex';
+            tempModal.innerHTML = `
+                <div class="modal-content" style="max-width: 600px;">
+                    <div class="modal-header">
+                        <h3 class="modal-title">Data Statistics</h3>
+                        <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        ${statsHtml}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(tempModal);
+            showToast('Data statistics retrieved', 'success');
+        } else {
+            showToast(result.error || 'Failed to get statistics', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error getting statistics: ' + error.message, 'error');
+    });
 }
 
 function cleanupData() {
-    if (confirm('Are you sure you want to cleanup old data? This will remove old records and optimize the database.')) {
+    const days = prompt('Remove data older than how many days?', '90');
+    if (days === null) return; // User cancelled
+    
+    const dryRun = confirm('Run in DRY RUN mode first? (Recommended - will show what would be deleted without actually deleting)');
+    
+    if (confirm(`Are you sure you want to cleanup data older than ${days} days? ${dryRun ? '(DRY RUN - no data will be deleted)' : 'This action cannot be undone.'}`)) {
         showToast('Starting data cleanup...', 'info');
-        setTimeout(() => {
-            showToast('Data cleanup completed successfully', 'success');
-        }, 2000);
+        
+        const formData = new FormData();
+        formData.append('action', 'cleanup_old_data');
+        formData.append('days', days);
+        formData.append('dry_run', dryRun ? 'true' : 'false');
+        
+        fetch('../backend/api/developer_operations.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const data = result.data;
+                let message = dryRun ? 'Dry run complete. ' : 'Cleanup complete. ';
+                
+                if (Object.keys(data.tables_cleaned).length > 0) {
+                    for (const [table, info] of Object.entries(data.tables_cleaned)) {
+                        if (info.error) {
+                            message += `${table}: Error - ${info.error}. `;
+                        } else if (dryRun) {
+                            message += `${table}: ${info.records_found} records would be deleted. `;
+                        } else {
+                            message += `${table}: ${info.records_deleted} records deleted. `;
+                        }
+                    }
+                } else {
+                    message += 'No records found to clean.';
+                }
+                
+                showToast(message, dryRun ? 'info' : 'success');
+            } else {
+                showToast(result.error || 'Cleanup failed', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error during cleanup: ' + error.message, 'error');
+        });
     }
 }
 
 function deleteAllData() {
-    if (confirm('⚠️ CRITICAL WARNING: This will delete ALL data from the system. This action cannot be undone. Are you absolutely sure?')) {
-        if (confirm('🚨 FINAL WARNING: ALL DATA WILL BE PERMANENTLY DELETED. Type "DELETE" to confirm:')) {
-            const confirmation = prompt('Type "DELETE" to confirm data deletion:');
-            if (confirmation === 'DELETE') {
-                if (confirm('🔴 IRREVERSIBLE ACTION: All system data will be permanently deleted. Type "DELETE_ALL" to final confirm:')) {
-                    const finalConfirmation = prompt('Type "DELETE_ALL" to confirm complete data deletion:');
-                    if (finalConfirmation === 'DELETE_ALL') {
-                        showToast('Deleting all data...', 'danger');
-                        setTimeout(() => {
-                            showToast('All data deleted successfully', 'success');
-                        }, 3000);
-                    } else {
-                        showToast('Data deletion cancelled', 'info');
-                    }
-                } else {
-                    showToast('Data deletion cancelled', 'info');
-                }
-            } else {
-                showToast('Data deletion cancelled', 'info');
-            }
-        } else {
-            showToast('Data deletion cancelled', 'info');
-        }
-    }
+    showToast('Delete All Data is disabled for safety. Use individual cleanup functions or database reset.', 'warning');
 }
 
 // System Configuration Functions
 function viewSystemConfig() {
-    const config = {
-        'System Version': '2.0.1',
-        'Database Version': 'MySQL 8.0',
-        'PHP Version': '8.2.0',
-        'Environment': 'Production',
-        'Debug Mode': 'Disabled',
-        'Cache Enabled': 'Yes',
-        'Backup Schedule': 'Daily at 2:00 AM',
-        'Max Upload Size': '10MB',
-        'Session Timeout': '30 minutes'
-    };
+    showToast('Retrieving system configuration...', 'info');
     
-    let configHtml = '<div class="alert alert-success">';
-    for (const [key, value] of Object.entries(config)) {
-        configHtml += `<strong>${key}:</strong> ${value}<br>`;
-    }
-    configHtml += '</div>';
-    
-    showToast('System configuration retrieved', 'success');
-    
-    // Create a temporary modal to show config
-    const tempModal = document.createElement('div');
-    tempModal.className = 'modal';
-    tempModal.style.display = 'flex';
-    tempModal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">System Configuration</h3>
-                <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                ${configHtml}
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(tempModal);
+    fetch('../backend/api/developer_operations.php?action=get_system_config')
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const config = result.data;
+            let configHtml = '<div class="alert alert-success" style="text-align: left;">';
+            
+            configHtml += '<strong>System Information:</strong><br>';
+            configHtml += `&nbsp;&nbsp;System Version: ${config.system_version}<br>`;
+            configHtml += `&nbsp;&nbsp;Environment: ${config.environment}<br>`;
+            configHtml += `&nbsp;&nbsp;Timezone: ${config.timezone}<br>`;
+            configHtml += `&nbsp;&nbsp;Current Time: ${config.current_time}<br><br>`;
+            
+            configHtml += '<strong>Software Versions:</strong><br>';
+            configHtml += `&nbsp;&nbsp;PHP Version: ${config.php_version}<br>`;
+            configHtml += `&nbsp;&nbsp;MySQL Version: ${config.mysql_version}<br>`;
+            configHtml += `&nbsp;&nbsp;Server Software: ${config.server_software}<br><br>`;
+            
+            configHtml += '<strong>PHP Settings:</strong><br>';
+            configHtml += `&nbsp;&nbsp;Max Upload Size: ${config.max_upload_size}<br>`;
+            configHtml += `&nbsp;&nbsp;Post Max Size: ${config.post_max_size}<br>`;
+            configHtml += `&nbsp;&nbsp;Memory Limit: ${config.memory_limit}<br>`;
+            configHtml += `&nbsp;&nbsp;Max Execution Time: ${config.max_execution_time}s<br>`;
+            configHtml += `&nbsp;&nbsp;Session Timeout: ${config.session_timeout}<br><br>`;
+            
+            configHtml += '<strong>Database:</strong><br>';
+            configHtml += `&nbsp;&nbsp;Name: ${config.database.name}<br>`;
+            configHtml += `&nbsp;&nbsp;Host: ${config.database.host}<br>`;
+            
+            configHtml += '</div>';
+            
+            // Create a temporary modal to show config
+            const tempModal = document.createElement('div');
+            tempModal.className = 'modal';
+            tempModal.style.display = 'flex';
+            tempModal.innerHTML = `
+                <div class="modal-content" style="max-width: 600px;">
+                    <div class="modal-header">
+                        <h3 class="modal-title">System Configuration</h3>
+                        <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        ${configHtml}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(tempModal);
+            showToast('System configuration retrieved', 'success');
+        } else {
+            showToast(result.error || 'Failed to get configuration', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error getting configuration: ' + error.message, 'error');
+    });
 }
 
 function resetConfig() {
-    if (confirm('Are you sure you want to reset system configuration to defaults?')) {
-        showToast('Resetting configuration...', 'warning');
-        setTimeout(() => {
-            showToast('Configuration reset successfully', 'success');
-        }, 1500);
-    }
+    showToast('Reset configuration is disabled for safety. Manual configuration reset required.', 'warning');
 }
 
 function exportConfig() {
     showToast('Exporting configuration...', 'info');
-    setTimeout(() => {
-        showToast('Configuration exported successfully', 'success');
-    }, 1000);
+    
+    fetch('../backend/api/developer_operations.php?action=export_config')
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            // Download the config file
+            const link = document.createElement('a');
+            link.href = result.download_url;
+            link.download = result.file;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            
+            showToast(result.message || 'Configuration exported successfully', 'success');
+        } else {
+            showToast(result.error || 'Failed to export configuration', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error exporting configuration: ' + error.message, 'error');
+    });
 }
 
 // Toast notification function

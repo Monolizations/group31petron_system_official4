@@ -115,17 +115,23 @@ function get_user_permissions($role) {
             $permissions = [
                 // Basic access
                 'view_dashboard',
-                
+
+                // Transactions - view only
+                'view_transactions',
+
+                // Fuel management - view only
+                'view_fuel_variance',
+
                 // Inventory - view only
                 'view_inventory',
-                
+
                 // Customers - view only
                 'manage_customers_basic',
-                
+
                 // Station-related
                 'manage_stations',
                 'manage_users_station',
-                
+
                 // Admin reports
                 'view_all_reports',
                 'view_financial_reports',
@@ -135,24 +141,33 @@ function get_user_permissions($role) {
             break;
             
         case 'manager':
-            // Manager: Approval, inventory oversight, and managerial reports only
+            // Manager: Approval, oversight, and managerial reports
             $permissions = [
                 // Basic access
                 'view_dashboard',
-                
-                // Approvals only (no creation)
+
+                // Transaction approvals (no creation)
                 'approve_transactions',
                 'handle_approvals',
-                
-                // Inventory oversight (view only, no management)
+
+                // Fuel management
+                'manage_fuel',
+
+                // Inventory oversight
                 'view_inventory',
-                
+                'manage_inventory',
+
+                // Customer management
+                'manage_customers_basic',
+
+                // Staff management
+                'manage_staff',
+
+                // Job order management
+                'manage_job_orders',
+
                 // Managerial reports (operational oversight)
                 'view_operational_reports',
-                'view_personal_reports',
-                
-                // Purchase order approval
-                'manage_inventory'
             ];
             break;
             

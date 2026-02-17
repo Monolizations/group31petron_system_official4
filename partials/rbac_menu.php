@@ -6,33 +6,34 @@ $master_menu = [
     ['id'=>'dashboard','label'=>'Dashboard','ico'=>'fas fa-gauge','href'=>'dashboard.php', 'permissions'=>['view_dashboard'], 'station_specific'=>false],
     
     // Transactions & POS - Managers and Staff (day-to-day operations)
-    ['id'=>'transactions','label'=>'Transactions','ico'=>'fas fa-shopping-cart','href'=>'#','permissions'=>['create_transactions', 'approve_transactions'],'station_specific'=>true,'sub_items'=>[
-        ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php','permissions'=>['create_transactions']],
+    ['id'=>'transactions','label'=>'Transactions','ico'=>'fas fa-shopping-cart','href'=>'#','permissions'=>['create_transactions', 'approve_transactions', 'view_transactions'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'pos_approval','label'=>'Transaction Approval','href'=>'pos.php?view=approval','permissions'=>['approve_transactions']],
-        ['id'=>'txn_history','label'=>'Transaction History','href'=>'transactions.php','permissions'=>['create_transactions', 'approve_transactions']],
+        ['id'=>'txn_view','label'=>'Transaction View','href'=>'transactions.php','permissions'=>['view_transactions', 'create_transactions', 'approve_transactions']],
+        ['id'=>'pos_new','label'=>'New Transaction','href'=>'pos.php','permissions'=>['create_transactions']],
         ['id'=>'receipt_reprint','label'=>'Receipt Reprint','href'=>'transactions.php?view=reprint','permissions'=>['create_transactions']],
     ]],
     
     // Job Orders - Managers handle operations, Staff create
     ['id'=>'job_orders','label'=>'Job Orders','ico'=>'fas fa-wrench','href'=>'joborder.php','permissions'=>['manage_job_orders', 'create_job_orders'],'station_specific'=>true,'sub_items'=>[
-        ['id'=>'job_create','label'=>'Create Job Order','href'=>'joborder.php?tab=create','permissions'=>['create_job_orders', 'manage_job_orders']],
+        ['id'=>'job_create','label'=>'Create Job Order','href'=>'joborder.php?tab=create','permissions'=>['create_job_orders']],
         ['id'=>'job_manage','label'=>'Manage Job Orders','href'=>'joborder.php','permissions'=>['manage_job_orders']],
         ['id'=>'job_history','label'=>'Job Order History','href'=>'joborder.php?tab=history','permissions'=>['manage_job_orders']],
     ]],
     
     // Fuel Management - Managers handle operations, Staff do encoding
-    ['id'=>'fuel','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','permissions'=>['manage_fuel', 'encode_fuel'],'station_specific'=>true,'sub_items'=>[
+    ['id'=>'fuel','label'=>'Fuel Management','ico'=>'fas fa-gas-pump','href'=>'#','permissions'=>['manage_fuel', 'encode_fuel', 'view_fuel_variance'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'fuel_encode','label'=>'Encode Fuel Reading','href'=>'fuel_staff.php','permissions'=>['encode_fuel']],
         ['id'=>'fuel_delivery','label'=>'Fuel Delivery','href'=>'fuel_management.php','permissions'=>['manage_fuel']],
         ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php','permissions'=>['manage_fuel']],
         ['id'=>'fuel_pricing','label'=>'Fuel Pricing','href'=>'fuel_pricing_manager.php','permissions'=>['manage_fuel']],
-        ['id'=>'pump_management','label'=>'Pump Management','href'=>'admin_pump_management.php','permissions'=>['manage_fuel']],
+        ['id'=>'fuel_variance','label'=>'Fuel Variance','href'=>'variance_reports.php','permissions'=>['manage_fuel', 'view_fuel_variance']],
     ]],
     
     // Inventory - All roles have some level of access
     ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory', 'create_po'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'inventory_manage','label'=>'Inventory Management','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory']],
         ['id'=>'inventory_list','label'=>'Inventory List','href'=>'inventory_list.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory']],
+        ['id'=>'inventory_report','label'=>'Exportable Inventory Data Report','href'=>'export_center.php','permissions'=>['manage_inventory', 'view_inventory', 'export_data']],
         ['id'=>'receive_inventory','label'=>'Receive Inventory','href'=>'receiving_staff.php','permissions'=>['receive_inventory']],
         ['id'=>'receiving_review','label'=>'Receiving Review','href'=>'manager_receiving_review.php','permissions'=>['manage_inventory']],
         ['id'=>'stock_confirmation','label'=>'Stock Confirmation','href'=>'admin_stock_confirmation.php','permissions'=>['manage_inventory']],
@@ -67,8 +68,8 @@ $master_menu = [
     ]],
     
     // User Management - Admin and Superadmin
-    ['id'=>'users','label'=>'User Management','ico'=>'fas fa-user-cog','href'=>'users.php','permissions'=>['manage_users_station', 'manage_all_users'],'station_specific'=>false,'sub_items'=>[
-        ['id'=>'user_list','label'=>'Manage Users','href'=>'users.php','permissions'=>['manage_users_station', 'manage_all_users']],
+    ['id'=>'users','label'=>'User Management','ico'=>'fas fa-user-cog','href'=>'users.php','permissions'=>['manage_all_users'],'station_specific'=>false,'sub_items'=>[
+        ['id'=>'user_list','label'=>'Manage Users','href'=>'users.php','permissions'=>['manage_all_users']],
         ['id'=>'create_users','label'=>'Create Users','href'=>'users.php?view=create','permissions'=>['manage_all_users']],
     ]],
     

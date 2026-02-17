@@ -224,9 +224,22 @@ require_once __DIR__ . '/../partials/header.php';
         <div class="panel-title">
           <?php echo $view === 'my_customers' ? 'My Customers' : 'Customer Directory'; ?>
         </div>
-        <div class="search">
-          <span class="ico"><i class="fas fa-search"></i></span>
-          <input id="custSearch" placeholder="Search customers..." />
+        <div style="display:flex; gap:10px; align-items:center;">
+          <select id="filterType" class="inp" style="width:auto;">
+            <option value="">All Types</option>
+            <option value="cash">Cash</option>
+            <option value="credit">Credit</option>
+          </select>
+          <select id="filterStatus" class="inp" style="width:auto;">
+            <option value="">All Status</option>
+            <option value="active">Active</option>
+            <option value="suspended">Suspended</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <div class="search">
+            <span class="ico"><i class="fas fa-search"></i></span>
+            <input id="custSearch" placeholder="Search customers..." />
+          </div>
         </div>
       </div>
 
@@ -245,9 +258,23 @@ require_once __DIR__ . '/../partials/header.php';
         </thead>
         <tbody id="custTbody">
             <?php foreach($customers as $c): ?>
-            <tr>
+            <tr data-name="<?php echo htmlspecialchars(strtolower($c['name'])); ?>" data-type="<?php echo htmlspecialchars($c['type']); ?>" data-status="<?php echo htmlspecialchars($c['status']); ?>" class="cust-row">
                 <td><b><?php echo htmlspecialchars($c['name']); ?></b></td>
-                <td><?php echo htmlspecialchars($c['contact_person'] . ' (' . $c['phone'] . ')'); ?></td>
+                <td>
+                    <?php
+                    $contact_parts = [];
+                    if (!empty($c['contact_person'])) {
+                        $contact_parts[] = htmlspecialchars($c['contact_person']);
+                    }
+                    if (!empty($c['phone'])) {
+                        $contact_parts[] = htmlspecialchars($c['phone']);
+                    }
+                    if (!empty($c['email'])) {
+                        $contact_parts[] = htmlspecialchars($c['email']);
+                    }
+                    echo !empty($contact_parts) ? implode('<br>', $contact_parts) : '<span class="muted">—</span>';
+                    ?>
+                </td>
                 <td><span style="text-transform:capitalize;"><?php echo htmlspecialchars($c['type']); ?></span></td>
                 <td>₱<?php echo number_format($c['credit_limit'], 2); ?></td>
                 <td style="color:<?php echo $c['current_balance']>0?'red':'green'; ?>">₱<?php echo number_format($c['current_balance'], 2); ?></td>
@@ -388,16 +415,22 @@ function filterCustomers() {
     const type = document.getElementById('filterType').value.toLowerCase();
     const status = document.getElementById('filterStatus').value.toLowerCase();
     const search = document.getElementById('custSearch').value.toLowerCase();
-    
+
     document.querySelectorAll('.cust-row').forEach(row => {
         const rType = row.dataset.type.toLowerCase();
         const rStatus = row.dataset.status.toLowerCase();
         const rName = row.dataset.name;
-        
+
         const show = (!type || rType === type) && (!status || rStatus === status) && (!search || rName.includes(search));
         row.style.display = show ? '' : 'none';
     });
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('custSearch').addEventListener('input', filterCustomers);
+    document.getElementById('filterType').addEventListener('change', filterCustomers);
+    document.getElementById('filterStatus').addEventListener('change', filterCustomers);
+});
 </script>
 
 <?php require_once __DIR__ . '/../partials/footer.php'; ?>

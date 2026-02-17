@@ -3,12 +3,24 @@ require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/../public/db_connect.php';
 require_login();
 
-$customers = read_json('customers.json', []);
-
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$action = $_GET['action'] ?? '';
 
 if($method === 'GET'){
-  json_response(['ok'=>true, 'data'=>['customers'=>$customers]]);
+  if ($action === 'get' && !empty($_GET['id'])) {
+    $stmt = $pdo->prepare("SELECT * FROM customers WHERE id = ?");
+    $stmt->execute([$_GET['id']]);
+    $customer = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($customer) {
+      json_response(['success'=>true, 'customer'=>$customer]);
+    } else {
+      json_response(['success'=>false, 'error'=>'Customer not found'], 404);
+    }
+  } else {
+    $stmt = $pdo->query("SELECT * FROM customers ORDER BY name ASC");
+    $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    json_response(['ok'=>true, 'data'=>['customers'=>$customers]]);
+  }
 }
 
 if($method === 'POST'){

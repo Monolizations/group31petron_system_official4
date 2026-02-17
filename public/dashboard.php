@@ -65,37 +65,31 @@ try {
     $stmt->execute($station_param);
     $metrics['today_sales'] = $stmt->fetchColumn() ?: 0;
 } catch(Exception $e){
-    // Fallback: use sample data if query fails
-    $metrics['today_sales'] = rand(15000, 35000);
+    $metrics['today_sales'] = 0;
 }
 
-// Total Fuel - Check if inventory table exists, otherwise use sample data
+// Total Fuel - Query fuel inventory
 try {
-    $stmt = $pdo->prepare("SELECT SUM(i.stock_level) FROM station_inventory i 
-                           JOIN products p ON i.product_id = p.id 
-                           JOIN product_types pt ON p.type_id = pt.id 
+    $stmt = $pdo->prepare("SELECT SUM(i.stock_level) FROM station_inventory i
+                           JOIN products p ON i.product_id = p.id
+                           JOIN product_types pt ON p.type_id = pt.id
                            WHERE pt.name = 'fuel'" . $station_filter);
     $stmt->execute($station_param);
     $metrics['total_fuel'] = $stmt->fetchColumn() ?: 0;
-    
-    // If no fuel data, generate realistic sample data
-    if ($metrics['total_fuel'] == 0) {
-        $metrics['total_fuel'] = rand(3000, 12000);
-    }
 } catch(Exception $e){
-    $metrics['total_fuel'] = rand(3000, 12000);
+    $metrics['total_fuel'] = 0;
 }
 
 // Merchandise Items Count
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM station_inventory i 
-                           JOIN products p ON i.product_id = p.id 
-                           JOIN product_types pt ON p.type_id = pt.id 
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM station_inventory i
+                           JOIN products p ON i.product_id = p.id
+                           JOIN product_types pt ON p.type_id = pt.id
                            WHERE pt.name = 'merch'" . $station_filter);
     $stmt->execute($station_param);
     $metrics['merch_count'] = $stmt->fetchColumn() ?: 0;
 } catch(Exception $e){
-    $metrics['merch_count'] = rand(20, 50);
+    $metrics['merch_count'] = 0;
 }
 
 // Active Jobs (Pending + In Progress)
@@ -103,13 +97,8 @@ try {
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM job_orders WHERE status IN ('Pending', 'In Progress', 'Awaiting Parts')" . $station_filter);
     $stmt->execute($station_param);
     $metrics['active_jobs'] = $stmt->fetchColumn() ?: 0;
-    
-    // If no job orders, generate sample data
-    if ($metrics['active_jobs'] == 0) {
-        $metrics['active_jobs'] = rand(3, 12);
-    }
 } catch(Exception $e){
-    $metrics['active_jobs'] = rand(3, 12);
+    $metrics['active_jobs'] = 0;
 }
 
 // Total Revenue
@@ -118,7 +107,7 @@ try {
     $stmt->execute($station_param);
     $metrics['total_revenue'] = $stmt->fetchColumn() ?: 0;
 } catch(Exception $e){
-    $metrics['total_revenue'] = rand(150000, 350000);
+    $metrics['total_revenue'] = 0;
 }
 
 // Hours Worked Today
@@ -127,7 +116,7 @@ try {
     $stmt->execute($station_param);
     $metrics['hours_today'] = $stmt->fetchColumn() ?: 0;
 } catch(Exception $e){
-    $metrics['hours_today'] = rand(20, 45);
+    $metrics['hours_today'] = 0;
 }
 
 // --- NEW METRICS FOR REDESIGNED DASHBOARD ---
@@ -443,11 +432,25 @@ try {
 $alerts_count = 0;
 $alerts_html = '';
 
-// 1. Low Fuel Alert (as per enhancement request)
-// Note: This is a static example for demonstration. A real implementation would query fuel inventory levels.
+// 1. Low Fuel/Inventory Alert (Database-driven)
 if ($role === 'admin' || $role === 'superadmin') {
-    $alerts_count++;
-    $alerts_html .= "<div style='color:red; font-size:0.9em;'><i class='fas fa-exclamation-triangle'></i> XCS Advance below 40%</div>";
+    try {
+        $low_stock_query = "SELECT COUNT(*) FROM station_inventory si
+                            JOIN products p ON si.product_id = p.id
+                            WHERE si.stock_level <= si.reorder_level";
+        if ($f_station) {
+            $low_stock_query .= " AND si.station_id = ?";
+            $stmt = $pdo->prepare($low_stock_query);
+            $stmt->execute([$f_station]);
+        } else {
+            $stmt = $pdo->query($low_stock_query);
+        }
+        $low_stock_count = $stmt->fetchColumn();
+        if ($low_stock_count > 0) {
+            $alerts_count += $low_stock_count;
+            $alerts_html .= "<div style='color:red; font-size:0.9em;'><i class='fas fa-exclamation-triangle'></i> $low_stock_count items below reorder level</div>";
+        }
+    } catch(Exception $e) {}
 }
 
 // 2. Active Job Orders
@@ -528,12 +531,96 @@ if ($role === 'manager') {
 
     // List: Pending Reports
     try {
-        $stmt = $pdo->prepare("SELECT id, reading_date as date, 'Pump Reading' as type FROM fuel_daily_readings WHERE station_id = ? AND status = 'Pending' 
-                               UNION ALL 
-                               SELECT id, adjustment_date as date, 'Adjustment' as type FROM fuel_adjustments WHERE station_id = ? AND status = 'Pending' 
+        $stmt = $pdo->prepare("SELECT id, reading_date as date, 'Pump Reading' as type FROM fuel_daily_readings WHERE station_id = ? AND status = 'Pending'
+                               UNION ALL
+                               SELECT id, adjustment_date as date, 'Adjustment' as type FROM fuel_adjustments WHERE station_id = ? AND status = 'Pending'
                                ORDER BY date DESC LIMIT 5");
         $stmt->execute([$f_station, $f_station]);
         $pending_reports_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(Exception $e) {}
+}
+
+// --- ADMIN DYNAMIC ALERTS DATA ---
+$admin_alerts = [];
+$admin_sales_trend = [];
+if ($role === 'admin' || $role === 'superadmin') {
+    // 1. Pending reconciliations
+    try {
+        $reconcile_query = "SELECT COUNT(*) FROM fuel_reconciliation WHERE status = 'Pending'";
+        if ($f_station) {
+            $reconcile_query .= " AND station_id = ?";
+            $stmt = $pdo->prepare($reconcile_query);
+            $stmt->execute([$f_station]);
+        } else {
+            $stmt = $pdo->query($reconcile_query);
+        }
+        $pending_reconcile = $stmt->fetchColumn();
+        if ($pending_reconcile > 0) {
+            $admin_alerts[] = [
+                'icon' => 'exclamation-triangle',
+                'color' => '#f59e0b',
+                'text' => "$pending_reconcile reconciliation(s) pending"
+            ];
+        }
+    } catch(Exception $e) {}
+
+    // 2. Pending purchase orders
+    try {
+        $po_query = "SELECT COUNT(*) FROM purchase_orders WHERE status IN ('Pending', 'Submitted')";
+        if ($f_station) {
+            $po_query .= " AND station_id = ?";
+            $stmt = $pdo->prepare($po_query);
+            $stmt->execute([$f_station]);
+        } else {
+            $stmt = $pdo->query($po_query);
+        }
+        $pending_po = $stmt->fetchColumn();
+        if ($pending_po > 0) {
+            $admin_alerts[] = [
+                'icon' => 'file-invoice',
+                'color' => '#3b82f6',
+                'text' => "$pending_po purchase order(s) pending approval"
+            ];
+        }
+    } catch(Exception $e) {}
+
+    // 3. Low fuel alerts
+    try {
+        $fuel_low_query = "SELECT COUNT(*) FROM fuel_inventory fi
+                           JOIN stations s ON fi.station_id = s.id
+                           WHERE fi.stock_level <= fi.reorder_level AND s.status = 'active'";
+        if ($f_station) {
+            $fuel_low_query .= " AND fi.station_id = ?";
+            $stmt = $pdo->prepare($fuel_low_query);
+            $stmt->execute([$f_station]);
+        } else {
+            $stmt = $pdo->query($fuel_low_query);
+        }
+        $fuel_low_count = $stmt->fetchColumn();
+        if ($fuel_low_count > 0) {
+            $admin_alerts[] = [
+                'icon' => 'gas-pump',
+                'color' => '#ef4444',
+                'text' => "$fuel_low_count fuel tank(s) below reorder level"
+            ];
+        }
+    } catch(Exception $e) {}
+
+    // 4. Sales Trend Data (Last 7 days)
+    try {
+        $sales_trend_query = "SELECT DATE(sale_date) as sale_date, SUM(total) as daily_total
+                              FROM sales
+                              WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)";
+        if ($f_station) {
+            $sales_trend_query .= " AND station_id = ?";
+            $sales_trend_query .= " GROUP BY DATE(sale_date) ORDER BY sale_date ASC";
+            $stmt = $pdo->prepare($sales_trend_query);
+            $stmt->execute([$f_station]);
+        } else {
+            $sales_trend_query .= " GROUP BY DATE(sale_date) ORDER BY sale_date ASC";
+            $stmt = $pdo->query($sales_trend_query);
+        }
+        $admin_sales_trend = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch(Exception $e) {}
 }
 
@@ -799,24 +886,46 @@ if ($role === 'manager') {
         </div>
         <div>
           <?php
-          // Simulated alerts
-          $inv_alerts = [
-             ['name'=>'Engine Oil 1L', 'status'=>'Critical', 'color'=>'red'],
-             ['name'=>'Brake Fluid', 'status'=>'Low', 'color'=>'orange'],
-             ['name'=>'Coolant', 'status'=>'Low', 'color'=>'orange']
-          ];
-          foreach($inv_alerts as $ia):
+          // Database-driven inventory alerts
+          $inv_alerts = [];
+          try {
+              $inv_alert_query = "SELECT p.name, si.stock_level, si.reorder_level
+                                  FROM station_inventory si
+                                  JOIN products p ON si.product_id = p.id
+                                  WHERE si.stock_level <= si.reorder_level";
+              if ($f_station) {
+                  $inv_alert_query .= " AND si.station_id = ? ORDER BY si.stock_level ASC LIMIT 5";
+                  $stmt = $pdo->prepare($inv_alert_query);
+                  $stmt->execute([$f_station]);
+              } else {
+                  $inv_alert_query .= " ORDER BY si.stock_level ASC LIMIT 5";
+                  $stmt = $pdo->query($inv_alert_query);
+              }
+              $inv_alerts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+          } catch(Exception $e) {}
+
+          if (!empty($inv_alerts)):
+              foreach($inv_alerts as $ia):
+                  $is_critical = $ia['stock_level'] <= ($ia['reorder_level'] * 0.5);
+                  $status = $is_critical ? 'Critical' : 'Low';
+                  $color = $is_critical ? 'red' : 'orange';
           ?>
-          <div class="list-item">
-            <div class="list-main">
-              <span class="kpi-dot dot-<?php echo $ia['color']; ?>" style="margin-right:8px; margin-left:0;"></span>
-              <?php echo $ia['name']; ?>
-            </div>
-            <div class="list-sub" style="color:<?php echo $ia['color']=='red'?'#ef4444':'#f59e0b'; ?>; font-weight:600;"><?php echo $ia['status']; ?></div>
+           <div class="list-item">
+             <div class="list-main">
+               <span class="kpi-dot dot-<?php echo $color; ?>" style="margin-right:8px; margin-left:0;"></span>
+               <?php echo htmlspecialchars($ia['name']); ?>
+             </div>
+             <div class="list-sub" style="color:<?php echo $color=='red'?'#ef4444':'#f59e0b'; ?>; font-weight:600;"><?php echo $status; ?></div>
+           </div>
+           <?php endforeach;
+          else: ?>
+          <div style="padding:20px; text-align:center; color:#22c55e;">
+            <i class="fas fa-check-circle" style="font-size:18px;"></i>
+            <div style="font-size:11px; margin-top:5px;">All inventory at normal levels</div>
           </div>
-          <?php endforeach; ?>
-        </div>
-      </div>
+          <?php endif; ?>
+         </div>
+       </div>
       <!-- Job Order Status -->
       <div class="dash-card">
         <div class="dash-head">
@@ -849,23 +958,34 @@ if ($role === 'manager') {
           <div class="dash-title">Overdue Accounts</div>
         </div>
         <table class="tbl-mini">
-          <thead><tr><th>Customer</th><th class="right">Balance</th><th class="right">Last Pay</th></tr></thead>
+          <thead><tr><th>Customer</th><th class="right">Balance</th><th class="right">Status</th></tr></thead>
           <tbody>
             <?php
-            // Simulated overdue
-            $overdue = [
-              ['name'=>'ABC Trucking', 'bal'=>15400, 'last'=>'Oct 12'],
-              ['name'=>'City Transport', 'bal'=>8200, 'last'=>'Oct 20'],
-              ['name'=>'Juan Dela Cruz', 'bal'=>3500, 'last'=>'Nov 01']
-            ];
-            foreach($overdue as $od):
+            // Database-driven overdue accounts
+            $overdue = [];
+            try {
+                $overdue_query = "SELECT name, current_balance, due_date, status
+                                  FROM customers
+                                  WHERE type = 'credit' AND current_balance > 0
+                                  ORDER BY current_balance DESC LIMIT 5";
+                $stmt = $pdo->query($overdue_query);
+                $overdue = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            } catch(Exception $e) {}
+
+            if (!empty($overdue)):
+                foreach($overdue as $od):
+                    $is_overdue = !empty($od['due_date']) && $od['due_date'] < date('Y-m-d');
+                    $status = $is_overdue ? 'Overdue' : ($od['status'] ?? 'Active');
             ?>
             <tr>
-              <td><?php echo $od['name']; ?></td>
-              <td class="right" style="color:#ef4444; font-weight:600;">₱<?php echo number_format($od['bal']); ?></td>
-              <td class="right"><?php echo $od['last']; ?></td>
+              <td><?php echo htmlspecialchars($od['name']); ?></td>
+              <td class="right" style="color:<?php echo $is_overdue ? '#ef4444' : '#f59e0b'; ?>; font-weight:600;">₱<?php echo number_format($od['current_balance']); ?></td>
+              <td class="right" style="font-size:10px; color:<?php echo $is_overdue ? '#ef4444' : '#888'; ?>"><?php echo $status; ?></td>
             </tr>
-            <?php endforeach; ?>
+            <?php endforeach;
+            else: ?>
+            <tr><td colspan="3" style="text-align:center; color:#888; padding:20px;">No overdue accounts</td></tr>
+            <?php endif; ?>
           </tbody>
         </table>
       </div>
@@ -876,22 +996,41 @@ if ($role === 'manager') {
         </div>
         <div>
           <?php
-          // Simulated staff
-          $top_staff = [
-            ['name'=>'Maria Santos', 'sales'=>12500],
-            ['name'=>'Jose Reyes', 'sales'=>9800],
-            ['name'=>'Pedro Penduko', 'sales'=>7600]
-          ];
-          foreach($top_staff as $ts):
+          // Database-driven staff performance
+          $top_staff = [];
+          try {
+                $staff_query = "SELECT u.name, SUM(s.total) as sales
+                                FROM sales s
+                                JOIN users u ON s.user_id = u.id
+                                WHERE DATE(s.sale_date) = CURDATE()";
+                if ($f_station) {
+                    $staff_query .= " AND s.station_id = ?";
+                    $staff_query .= " GROUP BY u.id, u.name ORDER BY sales DESC LIMIT 5";
+                    $stmt = $pdo->prepare($staff_query);
+                    $stmt->execute([$f_station]);
+                } else {
+                    $staff_query .= " GROUP BY u.id, u.name ORDER BY sales DESC LIMIT 5";
+                    $stmt = $pdo->query($staff_query);
+                }
+                $top_staff = $stmt->fetchAll(PDO::FETCH_ASSOC);
+          } catch(Exception $e) {}
+
+          if (!empty($top_staff)):
+              foreach($top_staff as $ts):
           ?>
           <div class="list-item">
             <div class="list-main">
               <i class="fas fa-user-circle" style="color:#ccc; margin-right:8px;"></i>
-              <?php echo $ts['name']; ?>
+              <?php echo htmlspecialchars($ts['name']); ?>
             </div>
             <div class="list-sub" style="color:#22c55e; font-weight:700;">₱<?php echo number_format($ts['sales']); ?></div>
           </div>
-          <?php endforeach; ?>
+          <?php endforeach;
+          else: ?>
+          <div style="padding:20px; text-align:center; color:#888;">
+            <div style="font-size:11px;">No sales data for today</div>
+          </div>
+          <?php endif; ?>
         </div>
       </div>
     </div>
@@ -899,9 +1038,20 @@ if ($role === 'manager') {
     <!-- ROW 5: ALERTS BAR -->
     <div class="alert-bar">
       <span class="alert-tag alert-urgent">ALERTS</span>
-      <span><i class="fas fa-exclamation-triangle" style="color:#f59e0b; margin-right:5px;"></i> Reconciliation pending for yesterday</span>
-      <span style="color:#ccc;">|</span>
-      <span><i class="fas fa-file-invoice" style="color:#3b82f6; margin-right:5px;"></i> 3 Purchase Orders pending approval</span>
+      <?php if (!empty($admin_alerts)): ?>
+          <?php foreach($admin_alerts as $i => $alert): ?>
+              <?php if ($i > 0): ?><span style="color:#ccc;">|</span><?php endif; ?>
+              <span>
+                  <i class="fas fa-<?php echo $alert['icon']; ?>" style="color:<?php echo $alert['color']; ?>; margin-right:5px;"></i>
+                  <?php echo $alert['text']; ?>
+              </span>
+          <?php endforeach; ?>
+      <?php else: ?>
+          <span style="color:#22c55e;">
+              <i class="fas fa-check-circle" style="margin-right:5px;"></i>
+              All systems normal
+          </span>
+      <?php endif; ?>
     </div>
 
   </div>
@@ -1221,16 +1371,30 @@ if ($role === 'manager') {
   <!-- Chart.js for Sales Trend -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
-    // Sales Trend Chart
+    // Sales Trend Chart (Admin)
     const salesCtx = document.getElementById('salesTrendChart');
     if (salesCtx) {
+      const adminSalesData = <?php
+        if(!empty($admin_sales_trend)) {
+          $labels = [];
+          $data = [];
+          foreach($admin_sales_trend as $day) {
+            $labels[] = date('M d', strtotime($day['sale_date']));
+            $data[] = $day['daily_total'];
+          }
+          echo json_encode(['labels' => $labels, 'data' => $data]);
+        } else {
+          echo json_encode(['labels' => ['Today'], 'data' => [0]]);
+        }
+      ?>;
+
       new Chart(salesCtx, {
         type: 'line',
         data: {
-          labels: ['6AM', '8AM', '10AM', '12PM', '2PM', '4PM', '6PM', '8PM'],
+          labels: adminSalesData.labels,
           datasets: [{
             label: 'Sales',
-            data: [2500, 4800, 6200, 8900, 7200, 9100, 6500, 4200],
+            data: adminSalesData.data,
             borderColor: '#003366',
             backgroundColor: 'rgba(0, 51, 102, 0.1)',
             borderWidth: 2,

@@ -47,30 +47,14 @@ if (!in_array($sort, $allowed_sorts)) {
 }
 
 // Build query
-$where_clauses = [];
-$params = [];
+// Use INNER JOIN for station_inventory when filtering by station to ensure only that station's items are shown
+$join_type = ($station_id && in_array($role, ['manager', 'staff'])) ? 'INNER JOIN' : 'LEFT JOIN';
 
-// Manager and staff can only see their station's inventory, admin/superadmin see all
-if ($station_id && in_array($role, ['manager', 'staff'])) {
-    $where_clauses[] = "si.station_id = ?";
-    $params[] = $station_id;
-}
+// Debug: Log what's happening (commented out for production)
+// error_log("Inventory List - User role: $role, Station ID: " . ($station_id ?? 'NULL') . ", Join type: $join_type");
 
-// Search filter
-if (!empty($search)) {
-    $where_clauses[] = "(p.name LIKE ? OR p.sku LIKE ?)";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-}
-
-$where_sql = '';
-if (!empty($where_clauses)) {
-    $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-}
-
-// Build the query
 $sql = "
-    SELECT 
+    SELECT
         p.id,
         p.name,
         p.sku,
@@ -81,11 +65,11 @@ $sql = "
         si.last_updated,
         s.name as station_name
     FROM products p
-    LEFT JOIN station_inventory si ON p.id = si.product_id
-    LEFT JOIN stations s ON si.station_id = s.id
+    {$join_type} station_inventory si ON p.id = si.product_id
+    {$join_type} stations s ON si.station_id = s.id
     {$where_sql}
     ORDER BY p.{$sort} {$order}
-";
+    ";
 
 try {
     $stmt = $pdo->prepare($sql);

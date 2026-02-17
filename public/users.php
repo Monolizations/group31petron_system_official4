@@ -88,30 +88,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $hashed = password_hash($password, PASSWORD_DEFAULT);
-            
+
             // Use StationManager for consistent station assignment
             try {
                 $station_target = StationManager::getTargetStationForUserCreation(
-                    $me['role'], 
-                    $my_station_id, 
+                    $me['role'],
+                    $my_station_id,
                     $_POST['station_id'] ?? null
                 );
-                
-                // Log the station assignment attempt
+
+                // Log station assignment attempt
                 StationManager::logStationAssignmentAttempt(
-                    $me['id'], 
-                    $me['role'], 
-                    $my_station_id, 
-                    $station_target, 
+                    $me['id'],
+                    $me['role'],
+                    $my_station_id,
+                    $station_target,
                     true
                 );
             } catch (Exception $e) {
                 // Log failed attempt
                 StationManager::logStationAssignmentAttempt(
-                    $me['id'], 
-                    $me['role'], 
-                    $my_station_id, 
-                    $_POST['station_id'] ?? null, 
+                    $me['id'],
+                    $me['role'],
+                    $my_station_id,
+                    $_POST['station_id'] ?? null,
                     false
                 );
                 throw $e;
@@ -629,26 +629,29 @@ function openAddModal() {
 }
 
 function openEditModal(user) {
+    console.log('Opening edit modal for user:', user);
     document.getElementById('edit_user_id').value = user.id;
     document.getElementById('edit_name').value = user.name;
-    
+
     // Normalize role to lowercase for proper dropdown matching
     const normalizedRole = (user.role || '').toLowerCase().trim();
-    document.getElementById('edit_role').value = normalizedRole;
-    
+    const roleSelect = document.getElementById('user_role_edit');
+    console.log('Setting role to:', normalizedRole);
+    roleSelect.value = normalizedRole;
+
     // Debug: log if role not set
     if (!normalizedRole) {
         console.warn('Warning: Role not found for user', user);
     }
-    
+
     document.getElementById('edit_phone').value = user.phone || '';
     document.getElementById('edit_email').value = user.email || '';
-    
+
     // Reset password checkbox and fields
     document.getElementById('changePassword').checked = false;
     document.getElementById('edit_password').value = '';
     document.getElementById('passwordFieldGroup').style.display = 'none';
-    
+
     document.getElementById('editModal').classList.add('show');
 }
 
