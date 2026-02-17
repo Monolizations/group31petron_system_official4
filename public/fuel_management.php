@@ -37,16 +37,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $current_reading = (float)$_POST['current_reading'];
             $notes = $_POST['notes'] ?? '';
             
-            // Calculate sales liters
-            $sales_liters = $current_reading - $previous_reading;
+            // Get pump calibration value
+            $calibration = 0;
+            if ($fuel_station_id) {
+                $stmt = $pdo->prepare("SELECT calibration_value FROM fuel_pumps WHERE id = ?");
+                $stmt->execute([$fuel_station_id]);
+                $pump = $stmt->fetch(PDO::FETCH_ASSOC);
+                $calibration = (float)($pump['calibration_value'] ?? 0);
+            }
+            
+            // Calculate sales liters (excluding calibration)
+            $sales_liters = $current_reading - $previous_reading - $calibration;
+            
+            // Ensure sales is not negative
+            if ($sales_liters < 0) {
+                $sales_liters = 0;
+            }
             
             if ($fuel_station_id && $reading_date && $shift) {
                 try {
-                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, fuel_station_id, reading_date, shift, previous_reading, current_reading, sales_liters, user_id, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([$station_id, $fuel_station_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $me['id'], $notes]);
+                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, fuel_station_id, reading_date, shift, previous_reading, current_reading, sales_liters, calibration, user_id, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$station_id, $fuel_station_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $calibration, $me['id'], $notes]);
                     
-                    log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$fuel_station_id ($shift shift)", 'fuel_management');
-                    $msg = "✅ Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters";
+                    log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$fuel_station_id ($shift shift). Sales: $sales_liters L (Calibration: $calibration L excluded)", 'fuel_management');
+                    $msg = "✅ Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters (Calibration: " . number_format($calibration, 2) . " L excluded)";
                 } catch (PDOException $e) {
                     if ($e->errorInfo[1] == 1062) { // Duplicate entry
                         $msg = "❌ Error: Reading already recorded for this pump, date, and shift.";

@@ -375,7 +375,9 @@ include __DIR__ . '/../partials/header.php';
   <section class="card" id="fuelInv">
     <div class="card-head">
       <div class="card-title">Fuel Inventory</div>
-      <?php if ($canStock): ?>
+      <?php if ($role === 'staff'): ?>
+        <a href="purchase_order.php" class="btn primary">+ Create PO</a>
+      <?php elseif ($canStock): ?>
         <button class="btn primary" onclick="openFuelModal()">+ Stock In</button>
       <?php endif; ?>
     </div>
@@ -411,10 +413,14 @@ include __DIR__ . '/../partials/header.php';
               </td>
               <td>₱<?php echo number_format($item['price'] ?? 0, 2); ?></td>
               <td class="right">
-                <?php if ($canStock): ?>
+                <?php if ($role === 'staff'): ?>
+                  <a href="purchase_order.php?item=<?= urlencode($item['product_name']) ?>&qty=<?= max(1, ceil(($item['reorder_level'] ?? 1000) * 1.5 - $item['stock_level'])) ?>" class="btn btn-sm btn-primary" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 12px;">
+                    <i class="fas fa-file-invoice"></i> Create PO
+                  </a>
+                <?php elseif ($canStock): ?>
                   <button class="btn ghost small" onclick="editFuel('<?php echo $item['product_name']; ?>', <?php echo $item['stock_level']; ?>)">Edit</button>
                 <?php else: ?>
-                  <span class="muted"><a href="stock_request.php?item_id=<?= $item['id'] ?>" class="btn btn-sm btn-outline-primary"><i class="fas fa-plus-circle"></i> Request Stock</a></span>
+                  <span class="muted">View Only</span>
                 <?php endif; ?>
               </td>
             </tr>
@@ -431,7 +437,9 @@ include __DIR__ . '/../partials/header.php';
   <section class="card hidden" id="merchInv">
     <div class="card-head">
       <div class="card-title">Merchandise Inventory</div>
-      <?php if ($canStock): ?>
+      <?php if ($role === 'staff'): ?>
+        <a href="purchase_order.php" class="btn primary">+ Create PO</a>
+      <?php elseif ($canStock): ?>
         <button class="btn primary" onclick="openMerchModal()">+ Add Item</button>
       <?php endif; ?>
     </div>
@@ -468,11 +476,15 @@ include __DIR__ . '/../partials/header.php';
               <td>₱<?php echo number_format($item['cost'] ?? 0, 2); ?></td>
               <td>₱<?php echo number_format($item['price'] ?? 0, 2); ?></td>
               <td class="right">
-                <?php if ($canStock): ?>
+                <?php if ($role === 'staff'): ?>
+                  <a href="purchase_order.php?item=<?= urlencode($item['product_name']) ?>&qty=<?= max(1, ceil(($item['reorder_level'] ?? 10) * 1.5 - $item['stock_level'])) ?>" class="btn btn-sm btn-primary" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 12px;">
+                    <i class="fas fa-file-invoice"></i> Create PO
+                  </a>
+                <?php elseif ($canStock): ?>
                   <button class="btn ghost small" onclick="editMerch(<?php echo $item['id']; ?>)">Edit</button>
                   <button class="btn ghost small red" onclick="deleteMerch(<?php echo $item['id']; ?>, '<?php echo htmlspecialchars($item['product_name']); ?>')">Delete</button>
                 <?php else: ?>
-                  <span class="muted"><a href="stock_request.php?item_id=<?= $item['id'] ?>" class="btn btn-sm btn-outline-primary"><i class="fas fa-plus-circle"></i> Request Stock</a></span>
+                  <span class="muted">View Only</span>
                 <?php endif; ?>
               </td>
             </tr>
@@ -827,8 +839,12 @@ include __DIR__ . '/../partials/header.php';
               <td><?php echo number_format($part['stock_level'], 0); ?></td>
               <td>₱<?php echo number_format($part['price'] ?? 0, 2); ?></td>
               <td class="right">
-                <?php if ($canStock): ?>
-                  <button class="btn ghost small" onclick="editMerch(<?php echo $part['id']; ?>)">Edit</button>
+                <?php if ($role === 'staff'): ?>
+                  <a href="purchase_order.php?item=<?= urlencode($item['product_name']) ?>&qty=<?= max(1, ceil(($item['reorder_level'] ?? 10) * 1.5 - $item['stock_level'])) ?>" class="btn btn-sm btn-primary" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 12px;">
+                    <i class="fas fa-file-invoice"></i> Create PO
+                  </a>
+                <?php elseif ($canStock): ?>
+                  <button class="btn ghost small" onclick="editMerch(<?php echo $item['id']; ?>)" data-close="merchModal">✕</button>
                 <?php else: ?>
                   <span class="muted">View Only</span>
                 <?php endif; ?>
@@ -847,7 +863,7 @@ include __DIR__ . '/../partials/header.php';
   <section class="card hidden" id="lowStockInv">
     <div class="card-head">
       <div class="card-title">Low Stock Alerts</div>
-      <div class="muted">Items that need immediate restocking</div>
+      <div class="muted">Items at 50% or below reorder level (applies to fuel and merchandise)</div>
     </div>
 
     <div class="table-wrap">
@@ -859,6 +875,7 @@ include __DIR__ . '/../partials/header.php';
             <th>Category</th>
             <th>Current Stock</th>
             <th>Reorder Level</th>
+            <th>% of Reorder</th>
             <th>Status</th>
             <th>Last Updated</th>
             <th class="right">Actions</th>
@@ -866,29 +883,34 @@ include __DIR__ . '/../partials/header.php';
         </thead>
         <tbody>
           <?php
-          // Fetch low stock items
+          // Fetch low stock items (50% or less of reorder level)
           $low_stock_items = [];
           try {
             if ($role === 'superadmin') {
               $stmt = $pdo->query("
-                  SELECT si.*, s.name as station_name, p.name as product_name, pc.name as category_name
+                  SELECT si.*, s.name as station_name, p.name as product_name, pc.name as category_name, pt.name as product_type
                   FROM station_inventory si 
                   LEFT JOIN stations s ON si.station_id = s.id 
                   LEFT JOIN products p ON si.product_id = p.id
+                  LEFT JOIN product_types pt ON p.type_id = pt.id
                   LEFT JOIN product_categories pc ON p.category_id = pc.id
-                  WHERE si.stock_level <= COALESCE(si.reorder_level, 5) OR si.stock_level = 0
-                  ORDER BY si.stock_level ASC
+                  WHERE si.stock_level <= (COALESCE(si.reorder_level, 10) * 0.5) 
+                     OR si.stock_level = 0
+                  ORDER BY (si.stock_level / NULLIF(si.reorder_level, 0)) ASC
               ");
               $low_stock_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
             } else {
               $stmt = $pdo->prepare("
-                  SELECT si.*, s.name as station_name, p.name as product_name, pc.name as category_name
+                  SELECT si.*, s.name as station_name, p.name as product_name, pc.name as category_name, pt.name as product_type
                   FROM station_inventory si 
                   LEFT JOIN stations s ON si.station_id = s.id 
                   LEFT JOIN products p ON si.product_id = p.id
+                  LEFT JOIN product_types pt ON p.type_id = pt.id
                   LEFT JOIN product_categories pc ON p.category_id = pc.id
-                  WHERE si.station_id = ? AND (si.stock_level <= COALESCE(si.reorder_level, 5) OR si.stock_level = 0)
-                  ORDER BY si.stock_level ASC
+                  WHERE si.station_id = ? 
+                    AND (si.stock_level <= (COALESCE(si.reorder_level, 10) * 0.5) 
+                     OR si.stock_level = 0)
+                  ORDER BY (si.stock_level / NULLIF(si.reorder_level, 0)) ASC
               ");
               $stmt->execute([$station_id]);
               $low_stock_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -897,33 +919,42 @@ include __DIR__ . '/../partials/header.php';
             $low_stock_items = [];
           }
           ?>
-          <?php foreach ($low_stock_items as $item): ?>
-            <tr style="background-color: #fff2f2;">
+          <?php foreach ($low_stock_items as $item): 
+            $percentage = $item['reorder_level'] > 0 ? round(($item['stock_level'] / $item['reorder_level']) * 100, 1) : 0;
+            $status_color = $percentage <= 25 ? '#dc3545' : ($percentage <= 50 ? '#fd7e14' : '#ffc107');
+            $status_text = $percentage <= 25 ? 'CRITICAL' : ($percentage <= 50 ? 'LOW' : 'WARNING');
+          ?>
+            <tr style="background-color: <?php echo $percentage <= 25 ? '#fff2f2' : '#fff8e6'; ?>;">
               <?php if ($role === 'superadmin'): ?><td><?php echo htmlspecialchars($item['station_name'] ?? 'Unknown'); ?></td><?php endif; ?>
               <td><?php echo htmlspecialchars($item['product_name']); ?></td>
-              <td><?php echo htmlspecialchars($item['category_name'] ?? ''); ?></td>
+              <td><?php echo htmlspecialchars($item['category_name'] ?? $item['product_type'] ?? ''); ?></td>
               <td>
                 <span style="color: #dc3545; font-weight: bold;"><?php echo number_format($item['stock_level'], 0); ?></span>
                 <span style="color: #6c757d;"> / <?php echo number_format($item['reorder_level'], 0); ?></span>
               </td>
               <td><?php echo number_format($item['reorder_level'], 0); ?></td>
               <td>
-                <span class="badge" style="background: #dc3545; color: white; padding: 2px 6px; border-radius: 12px; font-size: 11px;">
-                  CRITICAL
+                <span style="color: <?php echo $status_color; ?>; font-weight: bold;"><?php echo $percentage; ?>%</span>
+              </td>
+              <td>
+                <span class="badge" style="background: <?php echo $status_color; ?>; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">
+                  <?php echo $status_text; ?>
                 </span>
               </td>
               <td><?php echo date('M d, Y', strtotime($item['last_updated'] ?? $item['created_at'])); ?></td>
               <td class="right">
                 <?php if ($canStock): ?>
-                  <button class="btn primary small" onclick="openStockModal()">Restock</button>
+                  <a href="purchase_order.php?item=<?= urlencode($item['product_name']) ?>&qty=<?= max(1, ceil($item['reorder_level'] * 1.5 - $item['stock_level'])) ?>" class="btn btn-sm btn-primary" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 12px;">
+                    <i class="fas fa-file-invoice"></i> Create PO
+                  </a>
                 <?php else: ?>
-                  <span class="muted">Request Stock</span>
+                  <span class="muted">Contact Manager</span>
                 <?php endif; ?>
               </td>
             </tr>
           <?php endforeach; ?>
           <?php if (empty($low_stock_items)): ?>
-            <tr><td colspan="<?php echo $role === 'superadmin' ? 8 : 7; ?>" style="text-align:center;">No low stock items. All items are adequately stocked!</td></tr>
+            <tr><td colspan="<?php echo $role === 'superadmin' ? 9 : 8; ?>" style="text-align:center;">✅ No low stock items. All inventory levels are above 50% of reorder level!</td></tr>
           <?php endif; ?>
         </tbody>
       </table>
@@ -1038,17 +1069,62 @@ include __DIR__ . '/../partials/header.php';
 
 <script>
 // Tab switching (fixed)
-const invTabs = document.querySelectorAll('.tab[data-invtab]');
-function showInvTab(key){
-  invTabs.forEach(b => b.classList.toggle('active', b.dataset.invtab === key));
-  document.getElementById('fuelInv')?.classList.toggle('hidden', key !== 'fuel');
-  document.getElementById('merchInv')?.classList.toggle('hidden', key !== 'merch');
-  document.getElementById('partsInv')?.classList.toggle('hidden', key !== 'parts');
-  document.getElementById('lowStockInv')?.classList.toggle('hidden', key !== 'low_stock');
-  document.getElementById('reqInv')?.classList.toggle('hidden', key !== 'req');
-}
-invTabs.forEach(btn => btn.addEventListener('click', () => showInvTab(btn.dataset.invtab)));
-showInvTab('fuel');
+document.addEventListener('DOMContentLoaded', function() {
+  const invTabs = document.querySelectorAll('.tab[data-invtab]');
+  
+  function showInvTab(key){
+    console.log('Switching to tab:', key);
+    
+    // Update tab button active states
+    invTabs.forEach(b => {
+      if (b.dataset.invtab === key) {
+        b.classList.add('active');
+      } else {
+        b.classList.remove('active');
+      }
+    });
+    
+    // Hide all sections first
+    document.getElementById('fuelInv')?.classList.add('hidden');
+    document.getElementById('merchInv')?.classList.add('hidden');
+    document.getElementById('partsInv')?.classList.add('hidden');
+    document.getElementById('lowStockInv')?.classList.add('hidden');
+    document.getElementById('reqInv')?.classList.add('hidden');
+    document.getElementById('receivedInv')?.classList.add('hidden');
+    document.getElementById('deliveryInv')?.classList.add('hidden');
+    
+    // Show selected section
+    const sectionMap = {
+      'fuel': 'fuelInv',
+      'merch': 'merchInv',
+      'parts': 'partsInv',
+      'low_stock': 'lowStockInv',
+      'req': 'reqInv',
+      'received': 'receivedInv',
+      'delivery': 'deliveryInv'
+    };
+    
+    const sectionId = sectionMap[key];
+    if (sectionId) {
+      const section = document.getElementById(sectionId);
+      if (section) {
+        section.classList.remove('hidden');
+        console.log('Showing section:', sectionId);
+      } else {
+        console.error('Section not found:', sectionId);
+      }
+    }
+  }
+  
+  invTabs.forEach(btn => {
+    btn.addEventListener('click', function() {
+      showInvTab(this.dataset.invtab);
+    });
+  });
+  
+  // Show fuel tab by default
+  showInvTab('fuel');
+});
 
 // Fuel Modal Functions
 function openFuelModal() {

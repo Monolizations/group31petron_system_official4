@@ -78,6 +78,21 @@ function recordStockMovement($pdo, $station_id, $fuel_type_id, $quantity, $trans
             ];
         }
 
+        // Check for duplicate transaction (prevent double-deducting same reading)
+        if ($reference_type && $reference_id) {
+            $stmt = $pdo->prepare("
+                SELECT id FROM inventory_transactions 
+                WHERE reference_type = ? AND reference_id = ? AND transaction_type = ?
+            ");
+            $stmt->execute([$reference_type, $reference_id, $transaction_type]);
+            if ($stmt->fetch()) {
+                return [
+                    'success' => false,
+                    'message' => 'Stock already ' . ($quantity < 0 ? 'deducted' : 'added') . ' for this ' . str_replace('_', ' ', $reference_type)
+                ];
+            }
+        }
+
         // Get or create inventory record for this fuel product at this station
         $stmt = $pdo->prepare("
             SELECT si.id as inventory_id, si.stock_level
@@ -198,6 +213,72 @@ function recordStockMovement($pdo, $station_id, $fuel_type_id, $quantity, $trans
         return [
             'success' => false,
             'message' => 'Error: ' . $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * getCurrentStock()
+ * 
+ * Gets current stock level for a fuel type at a station
+ * 
+ * @param PDO $pdo - Database connection
+ * @param int $station_id - Station ID
+ * @param int $fuel_type_id - Fuel type ID
+ * 
+ * @return array [
+ *   'stock_level' => float,
+ *   'fuel_type_name' => string,
+ *   'inventory_id' => int|null
+ * ]
+ */
+function getCurrentStock($pdo, $station_id, $fuel_type_id) {
+    try {
+        // Get fuel type name
+        $stmt = $pdo->prepare("SELECT name FROM fuel_types WHERE id = ?");
+        $stmt->execute([$fuel_type_id]);
+        $fuel_type_name = $stmt->fetchColumn();
+        
+        if (!$fuel_type_name) {
+            return [
+                'stock_level' => 0,
+                'fuel_type_name' => 'Unknown',
+                'inventory_id' => null
+            ];
+        }
+        
+        // Get inventory record
+        $stmt = $pdo->prepare("
+            SELECT si.id as inventory_id, si.stock_level
+            FROM station_inventory si
+            INNER JOIN products p ON si.product_id = p.id
+            WHERE si.station_id = ? 
+              AND p.name = ? 
+              AND p.type_id = (SELECT id FROM product_types WHERE name = 'fuel')
+        ");
+        $stmt->execute([$station_id, $fuel_type_name]);
+        $inventory = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($inventory) {
+            return [
+                'stock_level' => (float)$inventory['stock_level'],
+                'fuel_type_name' => $fuel_type_name,
+                'inventory_id' => $inventory['inventory_id']
+            ];
+        } else {
+            return [
+                'stock_level' => 0,
+                'fuel_type_name' => $fuel_type_name,
+                'inventory_id' => null
+            ];
+        }
+        
+    } catch (Exception $e) {
+        return [
+            'stock_level' => 0,
+            'fuel_type_name' => 'Unknown',
+            'inventory_id' => null,
+            'error' => $e->getMessage()
         ];
     }
 }

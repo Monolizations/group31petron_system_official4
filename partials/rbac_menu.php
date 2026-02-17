@@ -26,23 +26,25 @@ $master_menu = [
         ['id'=>'fuel_delivery','label'=>'Fuel Delivery','href'=>'fuel_management.php','permissions'=>['manage_fuel']],
         ['id'=>'fuel_reconciliation','label'=>'Fuel Reconciliation','href'=>'reconciliation.php','permissions'=>['manage_fuel']],
         ['id'=>'fuel_pricing','label'=>'Fuel Pricing','href'=>'fuel_pricing_manager.php','permissions'=>['manage_fuel']],
+        ['id'=>'pump_management','label'=>'Pump Management','href'=>'admin_pump_management.php','permissions'=>['manage_fuel']],
     ]],
     
     // Inventory - All roles have some level of access
-    ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory'],'station_specific'=>true,'sub_items'=>[
+    ['id'=>'inventory','label'=>'Inventory','ico'=>'fas fa-box','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory', 'create_po'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'inventory_manage','label'=>'Inventory Management','href'=>'inventory.php','permissions'=>['manage_inventory', 'view_inventory']],
         ['id'=>'inventory_list','label'=>'Inventory List','href'=>'inventory_list.php','permissions'=>['manage_inventory', 'view_inventory', 'receive_inventory']],
         ['id'=>'receive_inventory','label'=>'Receive Inventory','href'=>'receiving_staff.php','permissions'=>['receive_inventory']],
         ['id'=>'receiving_review','label'=>'Receiving Review','href'=>'manager_receiving_review.php','permissions'=>['manage_inventory']],
         ['id'=>'stock_confirmation','label'=>'Stock Confirmation','href'=>'admin_stock_confirmation.php','permissions'=>['manage_inventory']],
-        ['id'=>'stock_requests','label'=>'Stock Requests','href'=>'manager_approve_stock_requests.php','permissions'=>['manage_inventory']],
-        ['id'=>'purchase_orders','label'=>'Purchase Orders','href'=>'supplier_confirmation.php','permissions'=>['manage_inventory']],
+        ['id'=>'create_po','label'=>'Create Purchase Order','href'=>'purchase_order.php','permissions'=>['create_po']],
+        ['id'=>'my_pos','label'=>'My Purchase Orders','href'=>'view_po.php?mode=my','permissions'=>['create_po']],
+        ['id'=>'review_po','label'=>'Review Purchase Orders','href'=>'manager_po_review.php','permissions'=>['manage_inventory']],
     ]],
     
     // Customer Management
     ['id'=>'customers','label'=>'Customers','ico'=>'fas fa-users','href'=>'customers.php','permissions'=>['manage_customers', 'manage_customers_basic'],'station_specific'=>true,'sub_items'=>[
         ['id'=>'customer_list','label'=>'Customer List','href'=>'customers.php','permissions'=>['manage_customers', 'manage_customers_basic']],
-        ['id'=>'customer_create','label'=>'Create Customer','href'=>'customers.php?view=create','permissions'=>['manage_customers_basic', 'manage_customers']],
+        ['id'=>'customer_create','label'=>'Create Customer','href'=>'customers.php?view=create','permissions'=>['manage_customers']],
     ]],
     
     // Staff Management - Managers only (they run day-to-day)

@@ -9,8 +9,8 @@ $me = current_user();
 $station_id = user_station_id();
 $role = function_exists('role_key') ? role_key($me['role'] ?? '') : strtolower(trim($me['role'] ?? ''));
 
-// Staff only
-if (!in_array($role, ['staff'])) {
+// Staff and Manager can receive inventory
+if (!in_array($role, ['staff', 'manager'])) {
     header("Location: dashboard.php");
     exit;
 }

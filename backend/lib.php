@@ -92,7 +92,72 @@ function get_user_permissions($role) {
     
     switch($role) {
         case 'superadmin':
-            // Superadmin: Complete system access - all permissions
+            // Superadmin: Developer and system administration only
+            $permissions = [
+                // Basic access
+                'view_dashboard',
+                
+                // System administration permissions (developer only)
+                'manage_system_settings',
+                'view_audit_logs',
+                'developer_access',
+                
+                // User management (full access)
+                'manage_all_users',
+                
+                // Station management
+                'manage_stations'
+            ];
+            break;
+            
+        case 'admin':
+            // Admin: View-only access to inventory, customers, station-related, and admin reports
+            $permissions = [
+                // Basic access
+                'view_dashboard',
+                
+                // Inventory - view only
+                'view_inventory',
+                
+                // Customers - view only
+                'manage_customers_basic',
+                
+                // Station-related
+                'manage_stations',
+                'manage_users_station',
+                
+                // Admin reports
+                'view_all_reports',
+                'view_financial_reports',
+                'view_nationwide_reports',
+                'export_data'
+            ];
+            break;
+            
+        case 'manager':
+            // Manager: Approval, inventory oversight, and managerial reports only
+            $permissions = [
+                // Basic access
+                'view_dashboard',
+                
+                // Approvals only (no creation)
+                'approve_transactions',
+                'handle_approvals',
+                
+                // Inventory oversight (view only, no management)
+                'view_inventory',
+                
+                // Managerial reports (operational oversight)
+                'view_operational_reports',
+                'view_personal_reports',
+                
+                // Purchase order approval
+                'manage_inventory'
+            ];
+            break;
+            
+        case 'staff':
+            // Staff: Operational access (excluding system admin and financial reports)
             $permissions = [
                 // Basic access
                 'view_dashboard',
@@ -115,47 +180,18 @@ function get_user_permissions($role) {
                 // Staff management permissions
                 'manage_staff', 'manage_shifts',
                 
-                // Report permissions (all types)
-                'view_personal_reports', 'view_operational_reports', 'view_financial_reports', 'view_all_reports',
+                // Report permissions (staff-related only)
+                'view_personal_reports', 'view_operational_reports',
                 
-                // User management permissions
-                'manage_users_station', 'manage_all_users',
+                // User management permissions (station only)
+                'manage_users_station',
                 
-                // Station management permissions
-                'manage_stations',
-                
-                // System administration permissions
-                'manage_system_settings', 'view_audit_logs', 'developer_access',
-                
-                // Additional admin permissions
+                // Additional operational permissions
                 'export_data', 'audit_oversight', 'manage_pricing', 'manage_pricing_station',
-                'handle_approvals', 'unlock_records', 'view_nationwide_reports', 'view_audit_logs_station'
-            ];
-            break;
-            
-        case 'admin':
-            // Admin: Oversight and management, not always on-site
-            $permissions = [
-                'view_dashboard', 'view_financial_reports', 'export_data', 'manage_customers',
-                'manage_users_station', 'view_inventory', 'view_reports', 'audit_oversight',
-                'manage_pricing_station', 'unlock_records'
-            ];
-            break;
-            
-        case 'manager':
-            // Manager: Day-to-day operations, actually running the store
-            $permissions = [
-                'view_dashboard', 'approve_transactions', 'manage_inventory', 'manage_job_orders',
-                'manage_fuel', 'manage_staff', 'view_operational_reports', 'approve_pricing',
-                'handle_approvals', 'manage_shifts', 'view_audit_logs_station'
-            ];
-            break;
-            
-        case 'staff':
-            // Staff: Front-line operations
-            $permissions = [
-                'view_dashboard', 'create_transactions', 'create_job_orders', 'encode_fuel',
-                'receive_inventory', 'manage_customers_basic', 'view_personal_reports', 'manage_shift'
+                'handle_approvals', 'unlock_records', 'view_audit_logs_station',
+                
+                // Purchase order permissions
+                'create_po', 'view_own_pos'
             ];
             break;
     }

@@ -99,15 +99,17 @@ $role_permissions = [
         // Approvals permissions
         APPROVE_REPORTS,
         
-        // Station-specific permissions
+        // Station-specific permissions (same as admin)
         VIEW_STATION_PROFILE,
         RESET_PASSWORD, // Limited to their station staff
+        DEACTIVATE_USER, // Limited to their station
         VIEW_ALL_USERS, // Limited to their station
         GENERATE_NATIONWIDE_SALES_REPORT, // Limited to their station
         GENERATE_FUEL_REPORT, // Limited to their station
         GENERATE_JOB_ORDER_REPORT, // Limited to their station
         VIEW_USER_LOGS, // Limited to their station
         VIEW_TRANSACTION_LOGS, // Limited to their station
+        VIEW_INVENTORY_LOGS, // Limited to their station
     ],
     
     'staff' => [

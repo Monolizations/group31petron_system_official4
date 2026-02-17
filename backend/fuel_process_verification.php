@@ -102,6 +102,72 @@ function handleVerifyReading() {
             throw new Exception('Reading not found or already processed');
         }
         
+        // DEDUCT STOCK ON VERIFICATION
+        if ($status === 'Verified') {
+            // Get reading details with fuel type info
+            $stmt = $pdo->prepare("
+                SELECT dr.sales_liters, dr.pump_id, fp.fuel_type_id, ft.name as fuel_type_name
+                FROM fuel_daily_readings dr
+                JOIN fuel_pumps fp ON dr.pump_id = fp.id
+                JOIN fuel_types ft ON fp.fuel_type_id = ft.id
+                WHERE dr.id = ?
+            ");
+            $stmt->execute([$id]);
+            $reading = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($reading && $reading['sales_liters'] > 0) {
+                require_once __DIR__ . '/inventory_automation.php';
+                
+                // Check if stock already deducted for this reading
+                $stmt = $pdo->prepare("
+                    SELECT id FROM inventory_transactions 
+                    WHERE reference_type = 'fuel_daily_readings' AND reference_id = ? AND transaction_type = 'pump_reading'
+                ");
+                $stmt->execute([$id]);
+                if ($stmt->fetch()) {
+                    throw new Exception('Stock already deducted for this reading');
+                }
+                
+                // Get current stock level
+                $stock_check = getCurrentStock($pdo, user_station_id(), $reading['fuel_type_id']);
+                
+                // BLOCK if insufficient stock
+                if ($stock_check['stock_level'] < $reading['sales_liters']) {
+                    $pdo->rollBack();
+                    throw new Exception(sprintf(
+                        'Insufficient stock for %s. Available: %.2f L, Required: %.2f L. Please verify fuel delivery before approving.',
+                        $reading['fuel_type_name'],
+                        $stock_check['stock_level'],
+                        $reading['sales_liters']
+                    ));
+                }
+                
+                // Deduct stock (negative quantity)
+                $result = recordStockMovement(
+                    $pdo,
+                    user_station_id(),
+                    $reading['fuel_type_id'],
+                    -$reading['sales_liters'],
+                    'pump_reading',
+                    'fuel_daily_readings',
+                    $id,
+                    $me['id'],
+                    "Stock deducted after shift reading verification - Sales: {$reading['sales_liters']} L"
+                );
+                
+                if (!$result['success']) {
+                    $pdo->rollBack();
+                    throw new Exception('Failed to deduct stock: ' . $result['message']);
+                }
+                
+                // Add stock deduction info to response
+                $response['stock_deducted'] = true;
+                $response['stock_before'] = $result['stock_before'];
+                $response['stock_after'] = $result['stock_after'];
+                $response['fuel_type'] = $reading['fuel_type_name'];
+            }
+        }
+        
         // Log the activity
         log_activity($pdo, $me['id'], 
             'Manager ' . ($status === 'Verified' ? 'Verified' : 'Rejected') . ' Reading', 

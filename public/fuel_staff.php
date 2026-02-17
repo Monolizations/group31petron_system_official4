@@ -183,19 +183,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $current_reading = (float)$_POST['current_reading'];
             $notes = $_POST['notes'] ?? '';
             
-            // Calculate sales liters
-            $sales_liters = $current_reading - $previous_reading;
+            // Get pump calibration value
+            $calibration = 0;
+            if ($pump_id) {
+                $stmt = $pdo->prepare("SELECT calibration_value FROM fuel_pumps WHERE id = ?");
+                $stmt->execute([$pump_id]);
+                $pump = $stmt->fetch(PDO::FETCH_ASSOC);
+                $calibration = (float)($pump['calibration_value'] ?? 0);
+            }
+            
+            // Calculate sales liters (excluding calibration)
+            $sales_liters = $current_reading - $previous_reading - $calibration;
+            
+            // Ensure sales is not negative
+            if ($sales_liters < 0) {
+                $sales_liters = 0;
+            }
             
             if ($pump_id && $reading_date && $shift) {
                 try {
-                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, sales_liters, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
-                    $stmt->execute([$station_id, $pump_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $me['id'], $notes]);
+                    $stmt = $pdo->prepare("INSERT INTO fuel_daily_readings (station_id, pump_id, reading_date, shift, previous_reading, current_reading, sales_liters, calibration, user_id, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
+                    $stmt->execute([$station_id, $pump_id, $reading_date, $shift, $previous_reading, $current_reading, $sales_liters, $calibration, $me['id'], $notes]);
                     
                     // NOTE: Stock deduction is NOT done here. It happens at verification
                     // time (verify_reading action) so rejected readings don't affect inventory.
                     
-                    log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$pump_id ($shift shift)", 'fuel_management');
-                    $msg = "Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters. Awaiting manager verification.";
+                    log_activity($pdo, $me['id'], 'Record Pump Reading', "Recorded reading for pump #$pump_id ($shift shift). Sales: $sales_liters L (Calibration: $calibration L excluded)", 'fuel_management');
+                    $msg = "Pump reading recorded successfully. Sales: " . number_format($sales_liters, 2) . " liters (Calibration: " . number_format($calibration, 2) . " L excluded). Awaiting manager verification.";
                 } catch (PDOException $e) {
                     if ($e->errorInfo[1] == 1062) { // Duplicate entry
                         $msg = "❌ Error: Reading already recorded for this pump, date, and shift.";
@@ -518,7 +532,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $deliveries = $deliveries_data['total'] ?? 0;
                     
                     // Get total sales for the day
-                    $stmt = $pdo->prepare("SELECT SUM(dr.sales_liters) as total FROM fuel_daily_readings dr LEFT JOIN fuel_pumps fp ON dr.fuel_station_id = fp.id LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE dr.station_id = ? AND ft.name = ? AND dr.reading_date = ? AND dr.status IN ('Verified', 'Finalized')");
+                    $stmt = $pdo->prepare("SELECT SUM(dr.sales_liters) as total FROM fuel_daily_readings dr LEFT JOIN fuel_pumps fp ON dr.pump_id = fp.id LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id WHERE dr.station_id = ? AND ft.name = ? AND dr.reading_date = ? AND dr.status IN ('Verified', 'Finalized')");
                     $stmt->execute([$station_id, $fuel_type, $reconciliation_date]);
                     $sales_data = $stmt->fetch();
                     $sales = $sales_data['total'] ?? 0;
@@ -848,7 +862,7 @@ if ($station_id) {
         
         $sql = "SELECT dr.*, fp.pump_number, ft.name as fuel_type, u.name as user_name 
                 FROM fuel_daily_readings dr 
-                LEFT JOIN fuel_pumps fp ON dr.fuel_station_id = fp.id 
+                LEFT JOIN fuel_pumps fp ON dr.pump_id = fp.id 
                 LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id 
                 LEFT JOIN users u ON dr.user_id = u.id 
                 WHERE dr.station_id = ?";
@@ -873,7 +887,7 @@ if ($station_id) {
         $daily_readings = $stmt->fetchAll();
         
         // Get my recent readings for staff
-        $stmt = $pdo->prepare("SELECT dr.*, fp.pump_number, ft.name as fuel_type, u.name as user_name FROM fuel_daily_readings dr LEFT JOIN fuel_pumps fp ON dr.fuel_station_id = fp.id LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id LEFT JOIN users u ON dr.user_id = u.id WHERE dr.station_id = ? AND dr.user_id = ? ORDER BY dr.reading_date DESC LIMIT 20");
+        $stmt = $pdo->prepare("SELECT dr.*, fp.pump_number, ft.name as fuel_type, u.name as user_name FROM fuel_daily_readings dr LEFT JOIN fuel_pumps fp ON dr.pump_id = fp.id LEFT JOIN fuel_types ft ON fp.fuel_type_id = ft.id LEFT JOIN users u ON dr.user_id = u.id WHERE dr.station_id = ? AND dr.user_id = ? ORDER BY dr.reading_date DESC LIMIT 20");
         $stmt->execute([$station_id, $me['id']]);
         $my_readings = $stmt->fetchAll();
         
@@ -1235,9 +1249,6 @@ require_once __DIR__ . '/../partials/header.php';
         <label>Shift</label>
         <select id="pumpFilterShift" class="select" style="width:140px;" onchange="applyPumpFilters()">
           <option value="">All Shifts</option>
-          <option value="Morning" <?php echo $filter_shift == 'Morning' ? 'selected' : ''; ?>>Morning</option>
-          <option value="Afternoon" <?php echo $filter_shift == 'Afternoon' ? 'selected' : ''; ?>>Afternoon</option>
-          <option value="Evening" <?php echo $filter_shift == 'Evening' ? 'selected' : ''; ?>>Evening</option>
         </select>
       </div>
       <div class="filter-group">
@@ -1618,9 +1629,6 @@ require_once __DIR__ . '/../partials/header.php';
         <label>Shift</label>
         <select id="filterShift" class="select" style="width:140px;" onchange="applyFilters()">
           <option value="">All Shifts</option>
-          <option value="Morning">Morning</option>
-          <option value="Afternoon">Afternoon</option>
-          <option value="Evening">Evening</option>
         </select>
       </div>
       <div class="filter-group">
@@ -2639,6 +2647,17 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(() => DataHelper.populateFuelTypes('addNozzleFuelTypeId', '-- Select Fuel Type --'))
         .then(() => DataHelper.populateFuelTypes('editNozzleFuelTypeId', '-- Select Fuel Type --'))
         .then(() => DataHelper.populateShifts('shift_delivery', '-- Select Shift --'))
+        .then(() => DataHelper.populateShifts('pumpFilterShift', 'All Shifts'))
+        .then(() => DataHelper.populateShifts('filterShift', 'All Shifts'))
+        .then(() => {
+            // Set selected value from URL parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const shiftParam = urlParams.get('shift');
+            if (shiftParam) {
+                document.getElementById('pumpFilterShift').value = shiftParam;
+                document.getElementById('filterShift').value = shiftParam;
+            }
+        })
         .then(() => DataHelper.populateAdjustmentTypes('adjustment_type_fuel', '-- Select Type --'))
         .catch(error => console.error('Failed to load fuel types/shifts/adjustment types:', error));
 
